@@ -324,11 +324,15 @@ Nothing is signed yet. `electron-builder.yml` carries the signing and
 notarization options as commented configuration, so enabling them is a
 credentials change rather than a code change.
 
-Two known gaps. There is no application icon, so builds carry the default
-Electron one. And auto-update is not wired up, which matters more here than for
-most apps: the shell renders remote content in Chromium, so tracking Electron
-releases is a standing security obligation. macOS auto-update does not work
+One known gap: auto-update is not wired up. That matters more here than for
+most apps, because the shell renders remote content in Chromium and so carries
+a standing obligation to track Electron releases. macOS auto-update cannot work
 without a Developer ID, so signing and updates land together.
+
+`build/icon.png` is RomM's own mark, rendered at 1024 from the project's
+`favicon.svg`. It is circular with transparent corners rather than full bleed,
+because macOS applies no mask of its own and a hard-edged square reads as
+unfinished in the dock.
 
 Linux ships an AppImage rather than a Flatpak deliberately. A Flatpak cannot
 casually launch the emulators installed on the host, which is the one thing
