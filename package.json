@@ -1,0 +1,44 @@
+{
+  "name": "romm-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Optional desktop shell for RomM that launches games in a locally installed emulator",
+  "author": "Sam Dornan <https://github.com/sdornan>",
+  "license": "AGPL-3.0-only",
+  "homepage": "https://github.com/sdornan/romm-desktop",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sdornan/romm-desktop.git"
+  },
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test \"src/**/*.test.ts\"",
+    "dev": "npm run build && electron .",
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.13.14",
+    "electron": "^44.3.0",
+    "eslint": "^10.0.3",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^16.0.0",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.56.1"
+  },
+  "engines": {
+    "node": "24"
+  },
+  "bugs": {
+    "url": "https://github.com/sdornan/romm-desktop/issues"
+  },
+  "keywords": [
+    "romm",
+    "emulator",
+    "retroarch",
+    "electron",
+    "desktop"
+  ]
+}
