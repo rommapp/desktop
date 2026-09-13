@@ -32,3 +32,18 @@ test("the script bails out rather than duplicating its panel", () => {
   assert.match(script, /getElementById\(ID\)\) return "already-injected"/);
   assert.match(script, /if \(!window\.rommNative\) return "no-bridge"/);
 });
+
+test("the panel can cancel an in-flight download", () => {
+  const script = spikeScript();
+  assert.match(script, /window\.rommNative\.cancel\(rom\.id\)/);
+  // The cancel control must start hidden, or it shows with nothing to cancel.
+  assert.match(script, /cancel\.hidden = true/);
+});
+
+test("a cancelled launch is not reported as a failure", () => {
+  const script = spikeScript();
+  // launch() rejects on cancel and the state handler also fires, so both paths
+  // have to check the flag or one overwrites the other with "Failed".
+  assert.match(script, /cancelling \? "Cancelled\."/);
+  assert.match(script, /if \(!cancelling\) say/);
+});

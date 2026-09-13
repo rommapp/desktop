@@ -58,21 +58,33 @@ export function spikeScript(): string {
   const body = document.createElement("div");
   body.style.cssText = "margin-bottom:10px;min-height:2.9em";
 
+  const BUTTON = [
+    "width:100%", "padding:9px", "border:0", "border-radius:7px",
+    "font:inherit", "font-weight:600", "cursor:pointer",
+  ].join(";");
+
   const button = document.createElement("button");
   button.textContent = "Launch";
   button.disabled = true;
-  button.style.cssText = [
-    "width:100%", "padding:9px", "border:0", "border-radius:7px",
-    "background:#5a67f2", "color:#fff", "font:inherit", "font-weight:600", "cursor:pointer",
-  ].join(";");
+  button.style.cssText = BUTTON + ";background:#5a67f2;color:#fff";
 
-  panel.append(title, body, button);
+  const cancel = document.createElement("button");
+  cancel.textContent = "Cancel download";
+  cancel.hidden = true;
+  cancel.style.cssText = BUTTON + ";background:#3a2b38;color:#f1a7bb";
+
+  panel.append(title, body, button, cancel);
   document.body.appendChild(panel);
 
   let rom = null;
   let romId = null;
+  // A cancelled download surfaces as a failed launch, so remember that we asked
+  // for it and report it as a cancellation rather than an error.
+  let cancelling = false;
 
   const say = (html) => { body.innerHTML = html; };
+  // Only one of the two buttons is ever useful, so swap rather than stack.
+  const showCancel = (on) => { cancel.hidden = !on; button.hidden = on; };
 
   window.rommNative.onLaunchState((s) => {
     if (!rom || s.romId !== rom.id) return;
@@ -80,14 +92,19 @@ export function spikeScript(): string {
       const pct = s.progress === undefined ? "" : " " + Math.round(s.progress * 100) + "%";
       say("Downloading" + pct + "...");
       button.disabled = true;
+      cancel.disabled = false;
+      showCancel(true);
     } else if (s.status === "running") {
       say("<b>Running.</b> Emulator has the game.");
+      showCancel(false);
     } else if (s.status === "exited") {
       say("Emulator exited (code " + s.exitCode + ").");
       button.disabled = false;
+      showCancel(false);
     } else if (s.status === "failed") {
-      say("<b>Failed:</b> " + (s.error ? s.error.message : "unknown"));
+      say(cancelling ? "Cancelled." : "<b>Failed:</b> " + (s.error ? s.error.message : "unknown"));
       button.disabled = false;
+      showCancel(false);
     }
   });
 
@@ -103,6 +120,8 @@ export function spikeScript(): string {
     romId = match[1];
     say("Loading game...");
     button.disabled = true;
+    cancelling = false;
+    showCancel(false);
     try {
       const res = await fetch("/api/roms/" + romId, { credentials: "same-origin" });
       if (!res.ok) throw new Error("API " + res.status);
@@ -130,6 +149,7 @@ export function spikeScript(): string {
   button.addEventListener("click", async () => {
     if (!rom) return;
     button.disabled = true;
+    cancelling = false;
     say("Starting...");
     try {
       await window.rommNative.launch({
@@ -141,8 +161,25 @@ export function spikeScript(): string {
         name: rom.name || rom.fs_name,
       });
     } catch (e) {
-      say("<b>Failed:</b> " + (e && e.message ? e.message : e));
+      // launch() also rejects when we cancelled it; the state handler already
+      // said so, so do not overwrite that with an error.
+      if (!cancelling) say("<b>Failed:</b> " + (e && e.message ? e.message : e));
       button.disabled = false;
+      showCancel(false);
+    }
+  });
+
+  cancel.addEventListener("click", async () => {
+    if (!rom) return;
+    cancelling = true;
+    cancel.disabled = true;
+    say("Cancelling...");
+    try {
+      await window.rommNative.cancel(rom.id);
+    } catch (e) {
+      cancelling = false;
+      cancel.disabled = false;
+      say("<b>Cancel failed:</b> " + (e && e.message ? e.message : e));
     }
   });
 
