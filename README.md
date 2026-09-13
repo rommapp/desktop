@@ -136,6 +136,12 @@ Config lives in `desktop-config.json` in Electron's `userData` directory:
 | macOS    | `~/Library/Application Support/romm-desktop/` |
 | Windows  | `%APPDATA%\romm-desktop\`                     |
 
+Edits are picked up while the app is running: the file is re-read whenever it
+changes on disk, so a setting takes effect on the next launch attempt without a
+restart, and an edit made while the app is open is no longer overwritten by the
+next save. The spike panel has an "Edit settings" link that opens the file
+directly, so there is no need to go looking for it.
+
 ### RetroArch (default)
 
 RetroArch and its cores directory are detected from the usual install

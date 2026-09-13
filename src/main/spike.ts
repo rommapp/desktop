@@ -73,7 +73,18 @@ export function spikeScript(): string {
   cancel.hidden = true;
   cancel.style.cssText = BUTTON + ";background:#3a2b38;color:#f1a7bb";
 
-  panel.append(title, body, button, cancel);
+  const settings = document.createElement("button");
+  settings.textContent = "Edit settings";
+  settings.style.cssText = [
+    "display:block", "margin:8px auto 0", "padding:0", "border:0",
+    "background:none", "color:#8b93ad", "font:inherit", "font-size:11px",
+    "text-decoration:underline", "cursor:pointer",
+  ].join(";");
+  settings.addEventListener("click", () => {
+    void window.rommNative.openSettings();
+  });
+
+  panel.append(title, body, button, cancel, settings);
   document.body.appendChild(panel);
 
   let rom = null;
