@@ -1,13 +1,41 @@
 # RomM Desktop
 
-An optional desktop shell for [RomM](https://github.com/rommapp/romm). It opens
-your existing RomM server in a native window and adds the one thing a browser
-cannot do: launching a game in a locally installed emulator instead of an
-in-browser core.
+A desktop shell for [RomM](https://github.com/rommapp/romm) that runs your
+server's own web interface in a native window and launches games in a locally
+installed emulator instead of an in-browser core.
+
+The distinguishing part is what it does not do: it has no interface of its own.
+Other desktop clients talk to the RomM API and rebuild the browsing experience,
+which means reimplementing collections, search, filtering, metadata and scanning,
+then keeping all of it in step with upstream. This loads the frontend your server
+is already serving, so each of those is whatever RomM shipped and stays current
+when you update the server. The shell adds exactly one thing to that page: a
+bridge that hands a game to a real emulator.
 
 > **Early work in progress.** Two known regressions are documented under
 > [Known issues](#known-issues), and the launch path has not been tested against
 > a real RetroArch install on macOS or Windows.
+
+## How this compares
+
+Native emulator launching is well covered in the RomM ecosystem, and for many
+people one of the alternatives is the better fit:
+
+| Option                                                                                              | Emulator runs | Interface                |
+| --------------------------------------------------------------------------------------------------- | ------------- | ------------------------ |
+| RomM emulator streaming                                                                             | On the server | RomM's own, in a browser |
+| [Argosy, Grout, Playnite plugin](https://docs.romm.app/) (first party)                              | Your device   | Their own, per platform  |
+| [romm-client](https://github.com/chaun14/romm-client), [RomMix](https://github.com/leclercb/rommix) | Your machine  | Their own                |
+| RomM Desktop                                                                                        | Your machine  | RomM's own, at runtime   |
+
+Streaming needs a host powerful enough to run the emulator and gives one session
+per container, so it suits a beefy server and any client device, phones and TVs
+included. The API clients own their interface, which makes them independent of
+RomM's frontend but leaves them reimplementing it. This shell takes the opposite
+trade: nothing to reimplement, at the cost of depending on RomM's frontend.
+
+If you want save syncing, offline mode, or a client for a device that is not a
+desktop, check those projects first. They are further along.
 
 ## How this relates to RomM
 
