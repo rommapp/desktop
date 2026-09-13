@@ -43,6 +43,18 @@ npm run dev
 On first launch it asks for your server address, then loads it. Log in exactly
 as you would in a browser; the shell holds no credentials of its own.
 
+### Changing the server address
+
+The address is saved in `desktop-config.json`, and the setup window normally
+appears only when none is set. To correct a mistyped one:
+
+```bash
+npm run dev -- --setup
+```
+
+That forces the setup window for this launch, then loads whatever you enter.
+Quitting without saving leaves the stored address untouched.
+
 ## Trying it before the RomM side exists
 
 ```bash
@@ -170,6 +182,7 @@ shell runs from source with `npm run dev`.
 ```
 src/
   main/             Main process
+    argv.ts         Command-line flag parsing
     config.ts       Persisted settings and RetroArch autodetection
     emulator/       Platform to emulator/core resolution
     index.ts        App lifecycle, single-instance lock, initial window

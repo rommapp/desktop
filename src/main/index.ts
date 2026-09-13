@@ -1,4 +1,5 @@
 import { BrowserWindow, app } from "electron";
+import { isSetupMode } from "./argv.ts";
 import { loadConfig } from "./config.ts";
 import { broadcastLaunchState, registerIpc } from "./ipc.ts";
 import { Launcher } from "./launcher.ts";
@@ -9,6 +10,10 @@ import {
 } from "./window.ts";
 
 const launcher = new Launcher(broadcastLaunchState);
+
+// Consumed the first time a window opens, so re-activating later returns to
+// the server rather than reopening setup.
+let forceSetup = isSetupMode();
 
 // One instance owns the ROM cache and the launch registry; a second would race
 // both, so hand the argv to the window that is already running instead.
@@ -27,10 +32,11 @@ if (!app.requestSingleInstanceLock()) {
 
 async function openInitialWindow(): Promise<void> {
   const config = await loadConfig();
-  if (config.serverUrl) {
+  if (config.serverUrl && !forceSetup) {
     createMainWindow(config.serverUrl);
     return;
   }
+  forceSetup = false;
   createSetupWindow((serverUrl) => createMainWindow(serverUrl));
 }
 
