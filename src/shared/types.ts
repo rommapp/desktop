@@ -97,7 +97,9 @@ export interface PlatformSupport {
  */
 export interface EmulatorMapping {
   platformSlug: string;
-  /** Absolute path to the emulator executable. */
+  /** Path to the emulator executable. Relative paths resolve against
+   *  `emulatorsBasePath`, so a frontend that keeps its emulators in one tree
+   *  only needs naming once. */
   command: string;
   /** Argument template: "{rom}" becomes the cached ROM path, "{core}" the
    *  resolved core path. Substituted per argv entry, so no shell is involved. */
@@ -113,6 +115,10 @@ export interface DesktopConfig {
   retroarchPath: string | null;
   /** Directory holding RetroArch's libretro cores. */
   retroarchCoresPath: string | null;
+  /** Directory the frontends install emulators under, so an emulators entry can
+   *  name a relative path instead of repeating an absolute one. Null means every
+   *  command must be absolute. */
+  emulatorsBasePath: string | null;
   /** Per-platform overrides, consulted before the RetroArch default. */
   emulators: EmulatorMapping[];
   /** Where downloaded ROMs are cached. Defaults to userData/rom-cache. */

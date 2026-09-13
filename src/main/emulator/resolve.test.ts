@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
   DEFAULT_CACHE_LIMIT_BYTES,
   type DesktopConfig,
+  LaunchError,
 } from "../../shared/types.ts";
 import {
   applyTokens,
   coreFileName,
   isSafeCoreName,
   resolveCore,
+  resolveEmulatorCommand,
   resolveLaunch,
 } from "./resolve.ts";
 
@@ -252,4 +254,76 @@ test("resolveLaunch leaves a mapping without {core} alone when no core exists", 
     romPath: "/cache/9-game.iso",
   });
   assert.deepEqual(launch.args, ["-batch", "/cache/9-game.iso"]);
+});
+
+test("resolveEmulatorCommand joins a relative command onto the base path", () => {
+  assert.equal(
+    resolveEmulatorCommand("pcsx2/pcsx2-qt.exe", "E:/RetroBat/emulators"),
+    join("E:/RetroBat/emulators", "pcsx2/pcsx2-qt.exe"),
+  );
+});
+
+test("resolveEmulatorCommand leaves an absolute command alone", () => {
+  const absolute = join(tmpdir(), "elsewhere", "duckstation");
+  assert.equal(
+    resolveEmulatorCommand(absolute, "E:/RetroBat/emulators"),
+    absolute,
+  );
+});
+
+test("resolveEmulatorCommand is a no-op without a base path", () => {
+  assert.equal(
+    resolveEmulatorCommand("pcsx2/pcsx2-qt.exe", null),
+    "pcsx2/pcsx2-qt.exe",
+  );
+});
+
+test("resolveLaunch runs a mapping named relative to the base path", () => {
+  const { root } = fakeInstall([]);
+  mkdirSync(join(root, "pcsx2"), { recursive: true });
+  const exe = join(root, "pcsx2", "pcsx2-qt.exe");
+  writeFileSync(exe, "");
+
+  const launch = resolveLaunch({
+    config: baseConfig({
+      emulatorsBasePath: root,
+      emulators: [
+        {
+          platformSlug: "ps2",
+          label: "PCSX2",
+          command: "pcsx2/pcsx2-qt.exe",
+          args: ["-batch", "{rom}"],
+        },
+      ],
+    }),
+    platformSlug: "ps2",
+    cores: [],
+    romPath: "/cache/10-game.chd",
+  });
+
+  assert.equal(launch.command, exe);
+  assert.deepEqual(launch.args, ["-batch", "/cache/10-game.chd"]);
+});
+
+test("resolveLaunch reports the resolved path when a relative command is missing", () => {
+  const { root } = fakeInstall([]);
+  assert.throws(
+    () =>
+      resolveLaunch({
+        config: baseConfig({
+          emulatorsBasePath: root,
+          emulators: [
+            { platformSlug: "ps2", command: "pcsx2/pcsx2-qt.exe", args: [] },
+          ],
+        }),
+        platformSlug: "ps2",
+        cores: [],
+        romPath: "/cache/11-game.chd",
+      }),
+    // The message has to name where it actually looked, not what was typed.
+    (error: unknown) =>
+      error instanceof LaunchError &&
+      error.code === "emulator-not-found" &&
+      error.message.includes(join(root, "pcsx2", "pcsx2-qt.exe")),
+  );
 });

@@ -187,6 +187,39 @@ be findable.
 `platformSlug` uses RomM's own slugs (`snes`, `n64`, `ps2`). The `*` row is the
 fallback for any platform without an entry of its own.
 
+#### Emulator base path
+
+A frontend like RetroBat keeps every emulator under one tree. Set
+`emulatorsBasePath` and a `command` can be relative to it, so entries stop
+repeating the same prefix and moving the install becomes a one-line change:
+
+```json
+{
+  "emulatorsBasePath": "E:/RetroBat/emulators",
+  "emulators": [
+    {
+      "platformSlug": "ps2",
+      "label": "PCSX2",
+      "command": "pcsx2/pcsx2-qt.exe",
+      "args": ["-batch", "-fullscreen", "{rom}"]
+    }
+  ]
+}
+```
+
+An absolute `command` is always used as given, so emulators installed outside
+that tree still work and existing configs are unaffected.
+
+The executable name is not guessable from the directory name, and one platform
+often has several candidates installed, so the shell does not try to infer
+either. RetroBat alone ships `pcsx2`, `pcsx2-16` and `pcsx2x6`, and the binary
+inside `pcsx2` is `pcsx2-qt.exe` next to an `updater.exe`. List a directory to
+see what is actually there:
+
+```powershell
+Get-ChildItem E:\RetroBat\emulators\<name> -Filter *.exe
+```
+
 ### Local library
 
 When the server runs on the same machine, downloading a ROM copies a file that

@@ -15,6 +15,7 @@ function emptyConfig(): DesktopConfig {
     serverUrl: null,
     retroarchPath: null,
     retroarchCoresPath: null,
+    emulatorsBasePath: null,
     emulators: [],
     cachePath: null,
     libraryPath: null,

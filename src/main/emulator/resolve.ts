@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import {
   type DesktopConfig,
   type EmulatorMapping,
@@ -92,6 +92,22 @@ function describeMissingCore(
   return `none of ${cores.join(", ")} are installed in ${config.retroarchCoresPath}`;
 }
 
+/**
+ * Resolve a mapping's command against the configured emulator directory.
+ *
+ * A frontend like RetroBat keeps every emulator under one tree, so entries can
+ * name "pcsx2/pcsx2-qt.exe" and moving the whole install becomes a one-line
+ * change. An absolute command is always left alone, so existing configs and
+ * emulators installed anywhere else keep working untouched.
+ */
+export function resolveEmulatorCommand(
+  command: string,
+  basePath: string | null,
+): string {
+  if (!basePath || isAbsolute(command)) return command;
+  return join(basePath, command);
+}
+
 /** Work out what to run for a platform. A user mapping wins over the RetroArch
  *  default. */
 export function resolveLaunch({
@@ -107,10 +123,14 @@ export function resolveLaunch({
 }): ResolvedLaunch {
   const mapping = findMapping(config, platformSlug);
   if (mapping) {
-    if (!existsSync(mapping.command)) {
+    const command = resolveEmulatorCommand(
+      mapping.command,
+      config.emulatorsBasePath,
+    );
+    if (!existsSync(command)) {
       throw new LaunchError(
         "emulator-not-found",
-        `Configured emulator for ${platformSlug} is missing: ${mapping.command}`,
+        `Configured emulator for ${platformSlug} is missing: ${command}`,
       );
     }
     // A mapping may still reference {core}, so resolve one when cores are
@@ -127,7 +147,7 @@ export function resolveLaunch({
       );
     }
     return {
-      command: mapping.command,
+      command,
       args: applyTokens(mapping.args, {
         rom: romPath,
         core: core?.path ?? null,
