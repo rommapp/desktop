@@ -54,7 +54,7 @@ function confineToServer(window: BrowserWindow, serverUrl: string): void {
   );
 }
 
-function createWindow(preload: string): BrowserWindow {
+function createWindow(preload: string, fullscreen = false): BrowserWindow {
   return new BrowserWindow({
     width: 1440,
     height: 900,
@@ -62,6 +62,7 @@ function createWindow(preload: string): BrowserWindow {
     minHeight: 480,
     backgroundColor: "#000000",
     autoHideMenuBar: true,
+    fullscreen,
     title: "RomM",
     webPreferences: {
       preload,
@@ -110,8 +111,14 @@ export function normalizeServerUrl(raw: unknown): string {
   return url.origin;
 }
 
-export function createMainWindow(serverUrl: string): BrowserWindow {
-  const window = createWindow(join(__dirname, "../preload/index.js"));
+export function createMainWindow(
+  serverUrl: string,
+  fullscreen = false,
+): BrowserWindow {
+  const window = createWindow(
+    join(__dirname, "../preload/index.js"),
+    fullscreen,
+  );
   confineToServer(window, serverUrl);
   if (isSpikeMode()) installSpike(window);
   void window.loadURL(serverUrl);

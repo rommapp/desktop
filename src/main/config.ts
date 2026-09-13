@@ -20,6 +20,7 @@ function emptyConfig(): DesktopConfig {
     cachePath: null,
     libraryPath: null,
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
+    fullscreen: false,
     trustedCertificates: [],
   };
 }

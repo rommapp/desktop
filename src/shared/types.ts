@@ -129,6 +129,9 @@ export interface DesktopConfig {
   libraryPath: string | null;
   /** Upper bound on the ROM cache before least-recently-used eviction. */
   cacheLimitBytes: number;
+  /** Open the main window fullscreen. Intended for a TV or cabinet, where
+   *  there is no reason to see a title bar. */
+  fullscreen: boolean;
   /** Trusted certificate fingerprints for self-signed servers. */
   trustedCertificates: string[];
 }

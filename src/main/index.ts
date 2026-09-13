@@ -9,7 +9,21 @@ import {
   installCertificateTrust,
 } from "./window.ts";
 
-const launcher = new Launcher(broadcastLaunchState);
+const launcher = new Launcher((state) => {
+  broadcastLaunchState(state);
+  // Quitting the emulator should land back in the shell rather than on the
+  // desktop. A player on a couch has no mouse to click the window with.
+  if (state.status === "exited") focusMainWindow();
+});
+
+/** Bring the existing window forward, whatever state it was left in. */
+function focusMainWindow(): void {
+  const [window] = BrowserWindow.getAllWindows();
+  if (!window || window.isDestroyed()) return;
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
 
 // Consumed the first time a window opens, so re-activating later returns to
 // the server rather than reopening setup.
@@ -20,12 +34,7 @@ let forceSetup = isSetupMode();
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    const [window] = BrowserWindow.getAllWindows();
-    if (!window) return;
-    if (window.isMinimized()) window.restore();
-    window.focus();
-  });
+  app.on("second-instance", focusMainWindow);
 
   void start();
 }
@@ -33,11 +42,15 @@ if (!app.requestSingleInstanceLock()) {
 async function openInitialWindow(): Promise<void> {
   const config = await loadConfig();
   if (config.serverUrl && !forceSetup) {
-    createMainWindow(config.serverUrl);
+    createMainWindow(config.serverUrl, config.fullscreen);
     return;
   }
   forceSetup = false;
-  createSetupWindow((serverUrl) => createMainWindow(serverUrl));
+  // Setup stays windowed whatever the setting says: filling a screen to ask
+  // for one address is hostile, and it is the one screen needing a keyboard.
+  createSetupWindow((serverUrl) =>
+    createMainWindow(serverUrl, config.fullscreen),
+  );
 }
 
 async function start(): Promise<void> {

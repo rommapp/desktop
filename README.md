@@ -121,6 +121,22 @@ Beyond those two, the in-browser emulators (EmulatorJS, Ruffle, js-dos,
 PICO-8), file downloads, and clipboard actions are all untested in this shell
 and worth exercising.
 
+## Using a controller
+
+RomM's own interface handles controller navigation, so the shell does not add
+any. Recent versions fold that into the main UI, and
+`/settings/controller-debug` shows whether the input system can see your pad.
+
+Two things are worth knowing:
+
+The Gamepad API is restricted to secure contexts. A server reached over
+`https://` or at `http://localhost` works; one reached at a plain
+`http://192.168.x.x` does not, and fails silently rather than reporting
+anything. That is a browser rule, not a shell one.
+
+Quitting the emulator brings the window back to the front, so a session that
+started with a controller does not need a mouse to continue.
+
 ## Scope
 
 Saves and states are left wherever the local emulator writes them. Syncing them
@@ -246,6 +262,21 @@ be used to name an arbitrary file.
 Note that emulators write save files and states next to the ROM. Launching in
 place puts those in your library rather than in the cache, where RomM may then
 scan them. That is the main reason this is opt-in rather than automatic.
+
+### Fullscreen
+
+Set `fullscreen` to open the main window with no title bar, for a TV or
+cabinet:
+
+```json
+{
+  "fullscreen": true
+}
+```
+
+The setup window stays windowed regardless, since it is the one screen that
+needs a keyboard. F11 toggles fullscreen at runtime on Windows and Linux, and
+Control Command F on macOS.
 
 ### ROM cache
 
