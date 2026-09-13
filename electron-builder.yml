@@ -1,0 +1,41 @@
+# Packaging for romm-desktop. Signing is deliberately absent rather than
+# faked: see the commented blocks below, which become a credentials change
+# rather than a code change once certificates exist.
+appId: app.romm.desktop
+productName: RomM Desktop
+
+directories:
+  # tsc already owns dist/, so installers go somewhere else entirely.
+  output: release
+
+# The app has no runtime dependencies, so the bundle is the compiled main and
+# preload code, the setup page, and Electron itself.
+files:
+  - dist/**/*
+  - resources/**/*
+  - package.json
+
+linux:
+  category: Game
+  # Lets the desktop environment link a running window to the .desktop entry.
+  syncDesktopName: true
+  target:
+    - target: AppImage
+      arch: [x64]
+
+win:
+  # A portable zip rather than an installer: unsigned NSIS gets the harshest
+  # SmartScreen treatment, and an installer earns its place once signing does.
+  target:
+    - target: zip
+      arch: [x64]
+
+mac:
+  category: public.app-category.games
+  target:
+    - target: zip
+      arch: [x64, arm64]
+# macOS auto-update does not work without a Developer ID, so notarization and
+# updates land together:
+#   notarize: true
+#   hardenedRuntime: true

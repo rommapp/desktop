@@ -305,10 +305,34 @@ from third-party metadata providers, so the renderer is treated as untrusted:
 
 ## Packaging
 
-Not set up. Producing installers needs code signing to be useful (an Apple
-Developer ID plus notarization on macOS, a signing certificate on Windows), so
-the packaging toolchain lands with that rather than ahead of it. Until then the
-shell runs from source with `npm run dev`.
+```bash
+npm run package            # for this machine
+npm run package -- --linux # or --win, --mac
+```
+
+Output lands in `release/`. Tagging `v*` runs the same build on all three
+platforms and opens a draft GitHub release; a manual workflow run builds the
+artifacts without releasing them, for checking packaging changes.
+
+| Platform | Format   | Unsigned experience                                   |
+| -------- | -------- | ----------------------------------------------------- |
+| Linux    | AppImage | Normal, nothing is signed on Linux anyway             |
+| Windows  | zip      | SmartScreen warns until the binary earns reputation   |
+| macOS    | zip      | Gatekeeper blocks; approve under Privacy and Security |
+
+Nothing is signed yet. `electron-builder.yml` carries the signing and
+notarization options as commented configuration, so enabling them is a
+credentials change rather than a code change.
+
+Two known gaps. There is no application icon, so builds carry the default
+Electron one. And auto-update is not wired up, which matters more here than for
+most apps: the shell renders remote content in Chromium, so tracking Electron
+releases is a standing security obligation. macOS auto-update does not work
+without a Developer ID, so signing and updates land together.
+
+Linux ships an AppImage rather than a Flatpak deliberately. A Flatpak cannot
+casually launch the emulators installed on the host, which is the one thing
+this shell exists to do.
 
 ## Layout
 

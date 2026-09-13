@@ -11,17 +11,20 @@
     "url": "git+https://github.com/sdornan/romm-desktop.git"
   },
   "main": "dist/main/index.js",
+  "desktopName": "romm-desktop.desktop",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"src/**/*.test.ts\"",
     "dev": "npm run build && electron .",
-    "start": "electron ."
+    "start": "electron .",
+    "package": "npm run build && electron-builder"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.13.14",
     "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^10.0.3",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^16.0.0",
