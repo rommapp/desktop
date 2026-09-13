@@ -35,6 +35,13 @@ export interface LaunchRequest {
   cores: string[];
   /** Display name, used for window titles and logs. */
   name?: string;
+  /** The ROM's path relative to the server's library root, as RomM reports it
+   *  in full_path. Only ever joined onto the user's own libraryPath, never
+   *  treated as a path in its own right. */
+  serverPath?: string;
+  /** Size in bytes as the server reports it. Checked against a local file
+   *  before it stands in for a download. */
+  fileSize?: number;
 }
 
 export type LaunchStatus = "downloading" | "running" | "exited" | "failed";
@@ -110,6 +117,10 @@ export interface DesktopConfig {
   emulators: EmulatorMapping[];
   /** Where downloaded ROMs are cached. Defaults to userData/rom-cache. */
   cachePath: string | null;
+  /** Root of the RomM library as this machine sees it. When the server runs
+   *  here, a ROM found under this path is launched in place rather than
+   *  downloaded back to the same disk. Null disables the lookup. */
+  libraryPath: string | null;
   /** Upper bound on the ROM cache before least-recently-used eviction. */
   cacheLimitBytes: number;
   /** Trusted certificate fingerprints for self-signed servers. */

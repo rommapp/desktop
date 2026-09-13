@@ -185,6 +185,8 @@ export function spikeScript(): string {
         platformSlug: rom.platform_slug,
         cores: CORES[rom.platform_slug] || [],
         name: rom.name || rom.fs_name,
+        serverPath: rom.full_path,
+        fileSize: rom.fs_size_bytes,
       });
     } catch (e) {
       // launch() also rejects when we cancelled it; the state handler already

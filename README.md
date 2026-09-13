@@ -181,6 +181,33 @@ be findable.
 `platformSlug` uses RomM's own slugs (`snes`, `n64`, `ps2`). The `*` row is the
 fallback for any platform without an entry of its own.
 
+### Local library
+
+When the server runs on the same machine, downloading a ROM copies a file that
+is already on local disk, costing both the wait and a second copy of a
+multi-gigabyte game. Point `libraryPath` at the library root as this machine
+sees it and the ROM is launched in place instead:
+
+```json
+{
+  "libraryPath": "E:/library"
+}
+```
+
+RomM reports each ROM's path relative to its own library root, so only the root
+needs configuring. The lookup is skipped, and the download happens as usual,
+whenever `libraryPath` is unset, the file is not there, or its size does not
+match what the server reports. That last check means a local file that is not
+the one the server meant never gets launched in its place.
+
+The server supplies only the path below the root, and anything resolving
+outside the configured root is rejected rather than normalised, so this cannot
+be used to name an arbitrary file.
+
+Note that emulators write save files and states next to the ROM. Launching in
+place puts those in your library rather than in the cache, where RomM may then
+scan them. That is the main reason this is opt-in rather than automatic.
+
 ### ROM cache
 
 Downloaded ROMs are cached under `cachePath`, which defaults to `rom-cache`

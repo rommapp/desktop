@@ -17,6 +17,7 @@ function emptyConfig(): DesktopConfig {
     retroarchCoresPath: null,
     emulators: [],
     cachePath: null,
+    libraryPath: null,
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
     trustedCertificates: [],
   };

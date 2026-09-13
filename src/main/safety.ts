@@ -1,7 +1,46 @@
 // Validation for the two pieces of launch input that come from the renderer.
 // Deliberately free of Electron imports so it can be unit tested directly.
 
+import { statSync } from "node:fs";
+import { resolve, sep } from "node:path";
 import { LaunchError, type LaunchRequest } from "../shared/types.ts";
+
+/**
+ * Find a ROM inside the user's own copy of the library, so a server running on
+ * this machine does not have to send back a file that is already on local disk.
+ *
+ * The root comes from the user's config and the server only supplies a suffix,
+ * so this can never name an arbitrary file. The containment check is what
+ * enforces that: an absolute path, or one built out of traversal segments,
+ * resolves outside the root and is rejected rather than normalised.
+ *
+ * Returns null whenever the file cannot be used, so a caller falls back to
+ * downloading instead of failing the launch.
+ */
+export function resolveLibraryRom(
+  libraryPath: string | null,
+  serverPath: string | undefined,
+  expectedSize?: number,
+): string | null {
+  if (!libraryPath || !serverPath) return null;
+
+  const root = resolve(libraryPath);
+  const candidate = resolve(root, serverPath);
+  if (candidate !== root && !candidate.startsWith(root + sep)) return null;
+
+  let info;
+  try {
+    info = statSync(candidate);
+  } catch {
+    return null;
+  }
+  if (!info.isFile()) return null;
+  // A size mismatch means this is not the file the server meant, so fall back
+  // rather than launch a different game that happens to share a name.
+  if (expectedSize !== undefined && info.size !== expectedSize) return null;
+
+  return candidate;
+}
 
 /** Resolve the renderer's download path against the bound server. Anything that
  *  lands off-origin or outside /api/ is rejected rather than normalised. */
@@ -96,6 +135,24 @@ export function validateLaunchRequest(value: unknown): LaunchRequest {
     throw new LaunchError("invalid-request", "name must be a string.");
   }
 
+  const serverPath = candidate.serverPath;
+  if (serverPath !== undefined && typeof serverPath !== "string") {
+    throw new LaunchError("invalid-request", "serverPath must be a string.");
+  }
+
+  const fileSize = candidate.fileSize;
+  if (
+    fileSize !== undefined &&
+    (typeof fileSize !== "number" ||
+      !Number.isInteger(fileSize) ||
+      fileSize < 0)
+  ) {
+    throw new LaunchError(
+      "invalid-request",
+      "fileSize must be a non-negative integer.",
+    );
+  }
+
   return {
     romId,
     downloadPath,
@@ -103,5 +160,7 @@ export function validateLaunchRequest(value: unknown): LaunchRequest {
     platformSlug,
     cores: cores as string[],
     ...(name === undefined ? {} : { name }),
+    ...(serverPath === undefined ? {} : { serverPath }),
+    ...(fileSize === undefined ? {} : { fileSize }),
   };
 }

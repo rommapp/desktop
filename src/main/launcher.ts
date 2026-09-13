@@ -12,6 +12,7 @@ import { loadConfig } from "./config.ts";
 import { resolveLaunch } from "./emulator/resolve.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
+import { resolveLibraryRom } from "./safety.ts";
 
 interface ActiveLaunch {
   controller: AbortController;
@@ -94,37 +95,53 @@ export class Launcher {
         romPath: "",
       });
 
-      this.emit({ romId: request.romId, status: "downloading", progress: 0 });
-      // ensureRom reports every chunk. Sending all of them would cost more than
-      // the download itself on a large ROM, so rate limit before the IPC hop.
-      const shouldReport = createProgressGate();
-      const rateOf = createRateMeter();
-      const rom = await ensureRom({
-        config,
-        session,
-        romId: request.romId,
-        fileName: request.fileName,
-        downloadPath: request.downloadPath,
-        signal: controller.signal,
-        onProgress: (received, total) => {
-          const progress = total ? received / total : undefined;
-          if (!shouldReport(progress)) return;
-          this.emit({
-            romId: request.romId,
-            status: "downloading",
-            progress,
-            received,
-            total: total ?? undefined,
-            bytesPerSecond: rateOf(received),
-          });
-        },
-      });
+      // When the server runs on this machine the file is already on local disk,
+      // so copying it into the cache would mean holding a second multi-gigabyte
+      // copy and waiting for a transfer that never needed to happen.
+      const inLibrary = resolveLibraryRom(
+        config.libraryPath,
+        request.serverPath,
+        request.fileSize,
+      );
+
+      let romPath: string;
+      if (inLibrary) {
+        romPath = inLibrary;
+      } else {
+        this.emit({ romId: request.romId, status: "downloading", progress: 0 });
+        // ensureRom reports every chunk. Sending all of them would cost more
+        // than the download itself on a large ROM, so rate limit before the
+        // IPC hop.
+        const shouldReport = createProgressGate();
+        const rateOf = createRateMeter();
+        const rom = await ensureRom({
+          config,
+          session,
+          romId: request.romId,
+          fileName: request.fileName,
+          downloadPath: request.downloadPath,
+          signal: controller.signal,
+          onProgress: (received, total) => {
+            const progress = total ? received / total : undefined;
+            if (!shouldReport(progress)) return;
+            this.emit({
+              romId: request.romId,
+              status: "downloading",
+              progress,
+              received,
+              total: total ?? undefined,
+              bytesPerSecond: rateOf(received),
+            });
+          },
+        });
+        romPath = rom.path;
+      }
 
       const launch = resolveLaunch({
         config,
         platformSlug: request.platformSlug,
         cores: request.cores,
-        romPath: rom.path,
+        romPath,
       });
 
       // argv form, never a shell string, so a path containing shell
