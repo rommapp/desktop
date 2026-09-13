@@ -180,3 +180,76 @@ test("resolveLaunch reports a configured emulator that has been removed", () => 
     { code: "emulator-not-found" },
   );
 });
+
+test("resolveLaunch refuses a mapping whose {core} cannot be resolved", () => {
+  const { root } = fakeInstall([]);
+  const generic = join(root, "generic");
+  writeFileSync(generic, "");
+  assert.throws(
+    () =>
+      resolveLaunch({
+        config: baseConfig({
+          retroarchCoresPath: root,
+          emulators: [
+            {
+              platformSlug: "*",
+              command: generic,
+              args: ["-L", "{core}", "{rom}"],
+            },
+          ],
+        }),
+        platformSlug: "snes",
+        cores: ["snes9x"],
+        romPath: "/cache/7-game.sfc",
+      }),
+    // An empty -L argument would fail inside the emulator instead.
+    { code: "no-emulator-configured" },
+  );
+});
+
+test("resolveLaunch still fills {core} for a mapping when one is installed", () => {
+  const { root } = fakeInstall(["snes9x"]);
+  const generic = join(root, "generic");
+  writeFileSync(generic, "");
+  const launch = resolveLaunch({
+    config: baseConfig({
+      retroarchCoresPath: root,
+      emulators: [
+        {
+          platformSlug: "*",
+          command: generic,
+          args: ["-L", "{core}", "{rom}"],
+        },
+      ],
+    }),
+    platformSlug: "snes",
+    cores: ["snes9x"],
+    romPath: "/cache/8-game.sfc",
+  });
+  assert.deepEqual(launch.args, [
+    "-L",
+    join(root, coreFileName("snes9x")),
+    "/cache/8-game.sfc",
+  ]);
+});
+
+test("resolveLaunch leaves a mapping without {core} alone when no core exists", () => {
+  const { root } = fakeInstall([]);
+  const standalone = join(root, "pcsx2");
+  writeFileSync(standalone, "");
+  const launch = resolveLaunch({
+    config: baseConfig({
+      emulators: [
+        {
+          platformSlug: "ps2",
+          command: standalone,
+          args: ["-batch", "{rom}"],
+        },
+      ],
+    }),
+    platformSlug: "ps2",
+    cores: [],
+    romPath: "/cache/9-game.iso",
+  });
+  assert.deepEqual(launch.args, ["-batch", "/cache/9-game.iso"]);
+});

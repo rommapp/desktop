@@ -51,9 +51,17 @@ export class Launcher {
         case "unsupported-platform":
         case "no-emulator-configured":
         case "emulator-not-found":
-          return { supported: false, reason: launchError.code };
+          return {
+            supported: false,
+            reason: launchError.code,
+            detail: launchError.message,
+          };
         default:
-          return { supported: false, reason: "no-emulator-configured" };
+          return {
+            supported: false,
+            reason: "no-emulator-configured",
+            detail: launchError.message,
+          };
       }
     }
   }

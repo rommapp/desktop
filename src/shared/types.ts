@@ -72,6 +72,10 @@ export interface PlatformSupport {
     LaunchErrorCode,
     "unsupported-platform" | "no-emulator-configured" | "emulator-not-found"
   >;
+  /** The resolver's own message for the unsupported case. A bare reason code
+   *  cannot tell a missing emulator from an uninstalled core, and the paths
+   *  involved are the whole diagnosis. */
+  detail?: string;
 }
 
 /**

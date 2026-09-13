@@ -79,6 +79,19 @@ export function resolveCore(
   return null;
 }
 
+/** Explain why no core could be resolved, for a mapping that needs one. */
+function describeMissingCore(
+  config: DesktopConfig,
+  platformSlug: string,
+  cores: string[],
+): string {
+  if (!config.retroarchCoresPath)
+    return "no libretro cores directory is configured";
+  if (cores.length === 0)
+    return `no libretro core is known for ${platformSlug}`;
+  return `none of ${cores.join(", ")} are installed in ${config.retroarchCoresPath}`;
+}
+
 /** Work out what to run for a platform. A user mapping wins over the RetroArch
  *  default. */
 export function resolveLaunch({
@@ -105,6 +118,14 @@ export function resolveLaunch({
     const core = config.retroarchCoresPath
       ? resolveCore(config.retroarchCoresPath, cores)
       : null;
+    // Substituting an empty {core} would hand the emulator a blank argument and
+    // fail somewhere far less legible, so refuse here instead.
+    if (!core && mapping.args.some((arg) => arg.includes("{core}"))) {
+      throw new LaunchError(
+        "no-emulator-configured",
+        `${mapping.label ?? mapping.command} needs a libretro core, but ${describeMissingCore(config, platformSlug, cores)}.`,
+      );
+    }
     return {
       command: mapping.command,
       args: applyTokens(mapping.args, {

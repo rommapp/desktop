@@ -112,7 +112,8 @@ export function spikeScript(): string {
         platformSlug: rom.platform_slug, cores,
       });
       if (!support.supported) {
-        say("<b>" + rom.platform_slug + "</b> not launchable.<br>Reason: " + support.reason
+        say("<b>" + rom.platform_slug + "</b> not launchable.<br>"
+          + (support.detail || support.reason)
           + (cores.length ? "" : "<br>(no core in the spike map)"));
         button.disabled = true;
         return;

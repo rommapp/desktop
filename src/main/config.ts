@@ -31,11 +31,32 @@ function retroarchCandidates(): string[] {
         "/Applications/RetroArch.app/Contents/MacOS/RetroArch",
         join(home, "Applications/RetroArch.app/Contents/MacOS/RetroArch"),
       ];
-    case "win32":
+    case "win32": {
+      // RetroArch ships portable about as often as it is installed, and
+      // frontends bundle their own copy, so cover the usual roots. An install
+      // on another drive still needs retroarchPath set by hand.
+      const programFiles = process.env.ProgramFiles ?? "C:\\Program Files";
+      const programFilesX86 =
+        process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)";
+      const localAppData =
+        process.env.LOCALAPPDATA ?? join(home, "AppData\\Local");
       return [
         "C:\\RetroArch-Win64\\retroarch.exe",
+        join(programFiles, "RetroArch\\retroarch.exe"),
+        join(programFilesX86, "RetroArch\\retroarch.exe"),
+        join(localAppData, "Programs\\RetroArch\\retroarch.exe"),
         join(home, "scoop\\apps\\retroarch\\current\\retroarch.exe"),
+        join(
+          programFilesX86,
+          "Steam\\steamapps\\common\\RetroArch\\retroarch.exe",
+        ),
+        join(
+          programFiles,
+          "Steam\\steamapps\\common\\RetroArch\\retroarch.exe",
+        ),
+        "C:\\RetroBat\\emulators\\retroarch\\retroarch.exe",
       ];
+    }
     default:
       return [
         "/usr/bin/retroarch",
@@ -54,9 +75,20 @@ function coresCandidates(retroarchPath: string | null): string[] {
         join(home, "Library/Application Support/RetroArch/cores"),
       );
       break;
-    case "win32":
+    case "win32": {
+      // A portable install keeps cores beside the binary; an installed one puts
+      // them under the user profile. Probe both, so the cores directory can
+      // still be found when the binary was set by hand or not found at all.
+      const appData = process.env.APPDATA ?? join(home, "AppData\\Roaming");
+      const localAppData =
+        process.env.LOCALAPPDATA ?? join(home, "AppData\\Local");
       if (retroarchPath) candidates.push(join(dirname(retroarchPath), "cores"));
+      candidates.push(
+        join(appData, "RetroArch\\cores"),
+        join(localAppData, "RetroArch\\cores"),
+      );
       break;
+    }
     default:
       candidates.push(
         join(home, ".config/retroarch/cores"),

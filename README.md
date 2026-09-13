@@ -112,16 +112,24 @@ Config lives in `desktop-config.json` in Electron's `userData` directory:
 
 RetroArch and its cores directory are detected from the usual install
 locations. When a game is launched, RomM's own platform/core map decides which
-libretro cores are candidates, and the first one actually installed wins. Set
-`retroarchPath` and `retroarchCoresPath` explicitly if your install lives
-somewhere unusual.
+libretro cores are candidates, and the first one actually installed wins.
+
+Detection covers the standard package locations on Linux and macOS, and on
+Windows the portable `C:\RetroArch-Win64` layout, both Program Files
+directories, the per-user Programs directory, scoop, Steam, and RetroBat's
+bundled copy. An install anywhere else, notably on a drive other than C:, needs
+`retroarchPath` set by hand. Point it at the executable and the cores directory
+is derived from its parent, so `retroarchCoresPath` is usually unnecessary.
 
 ### Standalone emulators
 
 `emulators` maps a platform to any executable. `{rom}` is replaced with the
 cached ROM path and `{core}` with the resolved libretro core path.
 Substitution happens per argv entry, so no shell is involved and paths
-containing spaces need no quoting.
+containing spaces need no quoting. An entry that uses `{core}` when no core can
+be resolved fails with an explanation rather than passing an empty argument to
+the emulator, so a wildcard RetroArch row still needs `retroarchCoresPath` to
+be findable.
 
 ```json
 {
