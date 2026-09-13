@@ -10,6 +10,7 @@ import {
 } from "../shared/types.ts";
 import { loadConfig } from "./config.ts";
 import { resolveLaunch } from "./emulator/resolve.ts";
+import { createProgressGate } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
 
 interface ActiveLaunch {
@@ -94,6 +95,9 @@ export class Launcher {
       });
 
       this.emit({ romId: request.romId, status: "downloading", progress: 0 });
+      // ensureRom reports every chunk. Sending all of them would cost more than
+      // the download itself on a large ROM, so rate limit before the IPC hop.
+      const shouldReport = createProgressGate();
       const rom = await ensureRom({
         config,
         session,
@@ -102,10 +106,12 @@ export class Launcher {
         downloadPath: request.downloadPath,
         signal: controller.signal,
         onProgress: (received, total) => {
+          const progress = total ? received / total : undefined;
+          if (!shouldReport(progress)) return;
           this.emit({
             romId: request.romId,
             status: "downloading",
-            progress: total ? received / total : undefined,
+            progress,
           });
         },
       });
