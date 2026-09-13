@@ -44,6 +44,12 @@ export interface LaunchState {
   status: LaunchStatus;
   /** 0..1 while downloading, absent otherwise. */
   progress?: number;
+  /** Bytes transferred so far, while downloading. */
+  received?: number;
+  /** Total bytes, when the server declared a length. */
+  total?: number;
+  /** Smoothed transfer rate, once there are two samples to compare. */
+  bytesPerSecond?: number;
   /** Set when status is "failed". */
   error?: { code: LaunchErrorCode; message: string };
   /** Process exit code, set when status is "exited". */

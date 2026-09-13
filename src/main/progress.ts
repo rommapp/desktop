@@ -31,3 +31,44 @@ export function createProgressGate(
     return true;
   };
 }
+
+/** How quickly the reported rate forgets an older sample. */
+export const RATE_HALF_LIFE_MS = 2_000;
+
+/**
+ * Track transfer speed in bytes per second.
+ *
+ * The instantaneous rate between two samples swings wildly, because chunks
+ * arrive unevenly and the samples are only a tenth of a second apart, so this
+ * smooths them. The weight is derived from elapsed time rather than a fixed
+ * factor, so an irregular sampling interval does not distort the result.
+ *
+ * Returns undefined until there are two samples to compare.
+ */
+export function createRateMeter(
+  halfLifeMs: number = RATE_HALF_LIFE_MS,
+  now: () => number = Date.now,
+): (received: number) => number | undefined {
+  let lastAt: number | null = null;
+  let lastBytes = 0;
+  let rate: number | undefined;
+
+  return (received) => {
+    const at = now();
+    if (lastAt === null) {
+      lastAt = at;
+      lastBytes = received;
+      return undefined;
+    }
+    const elapsed = at - lastAt;
+    if (elapsed <= 0) return rate;
+
+    const instant = ((received - lastBytes) * 1000) / elapsed;
+    const weight = 1 - Math.exp(-elapsed / halfLifeMs);
+    rate = rate === undefined ? instant : rate + (instant - rate) * weight;
+
+    lastAt = at;
+    lastBytes = received;
+    return rate;
+  };
+}

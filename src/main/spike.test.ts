@@ -47,3 +47,11 @@ test("a cancelled launch is not reported as a failure", () => {
   assert.match(script, /cancelling \? "Cancelled\."/);
   assert.match(script, /if \(!cancelling\) say/);
 });
+
+test("the panel reports speed and remaining time, not just a percentage", () => {
+  const script = spikeScript();
+  assert.match(script, /s\.bytesPerSecond/);
+  assert.match(script, /" left"/);
+  // The formatters have to tolerate a server that declares no length.
+  assert.match(script, /if \(n === undefined \|\| n === null\) return ""/);
+});

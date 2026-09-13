@@ -83,6 +83,20 @@ export function spikeScript(): string {
   let cancelling = false;
 
   const say = (html) => { body.innerHTML = html; };
+
+  const size = (n) => {
+    if (n === undefined || n === null) return "";
+    const units = ["B", "KB", "MB", "GB"];
+    let value = n, unit = 0;
+    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+    return (unit === 0 ? Math.round(value) : value.toFixed(1)) + " " + units[unit];
+  };
+
+  const eta = (seconds) => {
+    if (!isFinite(seconds) || seconds <= 0) return "";
+    if (seconds < 60) return Math.round(seconds) + "s";
+    return Math.floor(seconds / 60) + "m " + Math.round(seconds % 60) + "s";
+  };
   // Only one of the two buttons is ever useful, so swap rather than stack.
   const showCancel = (on) => { cancel.hidden = !on; button.hidden = on; };
 
@@ -90,7 +104,19 @@ export function spikeScript(): string {
     if (!rom || s.romId !== rom.id) return;
     if (s.status === "downloading") {
       const pct = s.progress === undefined ? "" : " " + Math.round(s.progress * 100) + "%";
-      say("Downloading" + pct + "...");
+      // Speed and remaining time are the whole point of watching a big
+      // transfer, so show them rather than a bare percentage.
+      const parts = [];
+      if (s.received !== undefined) {
+        parts.push(size(s.received) + (s.total ? " of " + size(s.total) : ""));
+      }
+      if (s.bytesPerSecond) parts.push(size(s.bytesPerSecond) + "/s");
+      if (s.bytesPerSecond && s.total !== undefined && s.received !== undefined) {
+        const left = eta((s.total - s.received) / s.bytesPerSecond);
+        if (left) parts.push(left + " left");
+      }
+      say("Downloading" + pct + "..."
+        + (parts.length ? "<br><span style='opacity:.65'>" + parts.join(" &middot; ") + "</span>" : ""));
       button.disabled = true;
       cancel.disabled = false;
       showCancel(true);
