@@ -1,9 +1,10 @@
 import { type Session, net } from "electron";
 import { createWriteStream } from "node:fs";
-import { mkdir, readdir, rename, rm, stat, utimes } from "node:fs/promises";
+import { mkdir, rename, rm, stat, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { type DesktopConfig, LaunchError } from "../shared/types.ts";
-import { resolveDownloadUrl, safeCacheFileName } from "./safety.ts";
+import { evictToLimit } from "./cache/evict.ts";
+import { resolveDownloadUrl, safeFileName } from "./safety.ts";
 
 /** Electron's IncomingMessage is a Readable at runtime, but its published type
  *  only models the EventEmitter surface. */
@@ -14,55 +15,6 @@ export interface CachedRom {
   path: string;
   /** True when the file was already present and no download was needed. */
   fromCache: boolean;
-}
-
-interface CacheEntry {
-  path: string;
-  size: number;
-  atime: number;
-}
-
-interface CacheContents {
-  total: number;
-  entries: CacheEntry[];
-}
-
-async function directorySize(dir: string): Promise<CacheContents> {
-  const names = await readdir(dir).catch(() => [] as string[]);
-  const entries: CacheEntry[] = [];
-  let total = 0;
-  for (const name of names) {
-    const path = join(dir, name);
-    const info = await stat(path).catch(() => null);
-    if (!info?.isFile()) continue;
-    total += info.size;
-    entries.push({ path, size: info.size, atime: info.atimeMs });
-  }
-  return { total, entries };
-}
-
-/**
- * Drop least-recently-used ROMs until the cache fits under its limit. Runs
- * after a download so a fresh file is never the one evicted.
- */
-async function evictToLimit(
-  dir: string,
-  limitBytes: number,
-  keep: string,
-): Promise<void> {
-  const { total, entries } = await directorySize(dir);
-  if (total <= limitBytes) return;
-
-  entries.sort((a, b) => a.atime - b.atime);
-  let remaining = total;
-  for (const entry of entries) {
-    if (remaining <= limitBytes) break;
-    // The ROM this launch needs is never a candidate, even when it alone
-    // exceeds the limit.
-    if (entry.path === keep) continue;
-    await rm(entry.path, { force: true });
-    remaining -= entry.size;
-  }
 }
 
 /**
@@ -186,7 +138,11 @@ export async function ensureRom({
   }
 
   const url = resolveDownloadUrl(config.serverUrl, downloadPath);
-  const target = join(config.cachePath, safeCacheFileName(fileName, romId));
+  // A directory per ROM rather than a name-mangling prefix, so the file keeps
+  // the name the server gave it. An emulator asked to derive anything from the
+  // content name then agrees with a launch straight out of the library.
+  const romDir = join(config.cachePath, String(romId));
+  const target = join(romDir, safeFileName(fileName));
 
   const existing = await stat(target).catch(() => null);
   if (existing?.isFile() && existing.size > 0) {
@@ -196,7 +152,7 @@ export async function ensureRom({
     return { path: target, fromCache: true };
   }
 
-  await mkdir(config.cachePath, { recursive: true });
+  await mkdir(romDir, { recursive: true });
   // Download beside the target and rename on success, so an interrupted
   // transfer never leaves a truncated ROM that looks cached.
   const temp = `${target}.part`;
@@ -208,6 +164,6 @@ export async function ensureRom({
     throw error;
   }
 
-  await evictToLimit(config.cachePath, config.cacheLimitBytes, target);
+  await evictToLimit(config.cachePath, config.cacheLimitBytes, romDir);
   return { path: target, fromCache: false };
 }

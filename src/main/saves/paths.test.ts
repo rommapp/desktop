@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { basename, join, sep } from "node:path";
 import { test } from "node:test";
-import { safeCacheFileName } from "../safety.ts";
 import { resolveSavePaths, saveBaseName } from "./paths.ts";
 
 const ROOT = join("/var", "save-data");
@@ -20,14 +19,12 @@ test("resolveSavePaths separates saves from states under the ROM id", () => {
   });
 });
 
-test("the save name comes from the ROM, not from the cache's copy of it", () => {
-  const fileName = "Chrono Trigger.sfc";
-  const paths = resolveSavePaths(ROOT, 7, fileName);
+test("the save is named after the ROM the server reported", () => {
+  const paths = resolveSavePaths(ROOT, 7, "Chrono Trigger.sfc");
   assert.ok(paths);
+  // The cache stores this under 7/Chrono Trigger.sfc, so a launch from there
+  // and one straight out of the library agree on the save.
   assert.equal(basename(paths.saveFile), "Chrono Trigger.srm");
-  // The cached file is `7-Chrono Trigger.sfc`. A save named after that is the
-  // one an in-place library launch would fail to find.
-  assert.ok(!paths.saveFile.includes(safeCacheFileName(fileName, 7)));
 });
 
 test("saveBaseName drops the extension and keeps the rest of the name", () => {

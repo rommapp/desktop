@@ -267,13 +267,11 @@ launching in place does not leave saves in your library for RomM to scan. See
 
 ### Save data
 
-Left to itself an emulator writes save data next to the ROM, which here means
-two problems. A game played from the cache keeps its save in `rom-cache`, where
-the eviction in [ROM cache](#rom-cache) eventually deletes it along with the ROM
-it sits beside. And the cached copy is named `<romId>-<name>` while an in-place
-launch under `libraryPath` sees the server's own filename, so the same game
-writes `1-Chrono Trigger.srm` one way and `Chrono Trigger.srm` the other. Two
-saves, one game, no warning.
+Left to itself an emulator writes save data next to the ROM, and neither place
+that lands is somewhere it should stay. A game played from the cache keeps its
+save in `rom-cache`, where the eviction in [ROM cache](#rom-cache) eventually
+deletes it along with the ROM it sits beside. A game launched in place under
+`libraryPath` leaves its save in your library, where RomM may then scan it.
 
 So the shell hands each game a directory of its own, under `save-data` beside
 the config file:
@@ -350,8 +348,17 @@ Control Command F on macOS.
 ### ROM cache
 
 Downloaded ROMs are cached under `cachePath`, which defaults to `rom-cache`
-alongside the config file. Once the cache exceeds `cacheLimitBytes` (20 GB by
-default), least-recently-used ROMs are evicted.
+alongside the config file, one directory per ROM:
+
+```
+<cachePath>/<romId>/<name>
+```
+
+The directory carries the ROM id, so the file itself keeps the name the server
+gave it and an emulator deriving anything from the content name agrees with a
+launch straight out of the library. Once the cache exceeds `cacheLimitBytes`
+(20 GB by default), least-recently-used ROMs are evicted a whole directory at a
+time.
 
 ## Security model
 
@@ -418,7 +425,8 @@ src/
     index.ts        App lifecycle, single-instance lock, initial window
     ipc.ts          IPC handlers behind window.rommNative
     launcher.ts     Download, resolve, spawn, track
-    rom-cache.ts    Download with the window's session cookies, LRU cache
+    cache/          LRU eviction over the ROM cache
+    rom-cache.ts    Download with the window's session cookies
     saves/          Per-game save and state directories
     safety.ts       Validation of everything the renderer sends
     spike.ts        TEMPORARY: the --spike harness (see above)

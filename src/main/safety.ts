@@ -75,6 +75,11 @@ export function resolveDownloadUrl(
 /** Characters that are unsafe in a filename on at least one supported OS. */
 const UNSAFE_FILENAME_CHARS = new RegExp('[/\\\\:*?"<>|]', "g");
 
+/** Names Windows reserves for devices. Reserved whatever the extension, so
+ *  `CON.zip` is as unopenable as `CON`. Rewritten on every platform so a file
+ *  written on one stays usable on another. */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
 /** Reduce a server-supplied name to one safe filename component; the result is
  *  only ever joined onto a directory the shell owns. */
 export function safeFileNameComponent(fileName: string): string {
@@ -85,10 +90,13 @@ export function safeFileNameComponent(fileName: string): string {
     .slice(0, 120);
 }
 
-export function safeCacheFileName(fileName: string, romId: number): string {
-  // Prefixing with the ROM id keeps two games that share a filename apart and
-  // guarantees a non-empty name when cleaning removes everything.
-  return `${romId}-${safeFileNameComponent(fileName) || "rom"}`;
+/** One filename component that is safe to create: never empty, never a path,
+ *  never a Windows device name. */
+export function safeFileName(fileName: string): string {
+  const cleaned = safeFileNameComponent(fileName) || "rom";
+  const dot = cleaned.lastIndexOf(".");
+  const base = dot > 0 ? cleaned.slice(0, dot) : cleaned;
+  return WINDOWS_RESERVED.test(base) ? `_${cleaned}` : cleaned;
 }
 
 /** Check a launch request's shape before any of it reaches the filesystem or a

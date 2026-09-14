@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { safeFileNameComponent } from "../safety.ts";
+import { safeFileName } from "../safety.ts";
 
 /** Where a game's save data lives while the shell owns it. */
 export interface SavePaths {
@@ -11,11 +11,6 @@ export interface SavePaths {
   statePrefix: string;
 }
 
-/** Names Windows reserves for devices. Reserved whatever the extension, so
- *  `CON.srm` is as unopenable as `CON`. Applied on every platform so a tree
- *  written on one machine stays usable on another. */
-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
-
 /**
  * The name a game's save data carries inside its own directory.
  *
@@ -25,11 +20,9 @@ const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
  * game's progress in half.
  */
 export function saveBaseName(fileName: string): string {
-  const cleaned = safeFileNameComponent(fileName);
+  const cleaned = safeFileName(fileName);
   const dot = cleaned.lastIndexOf(".");
-  const base = dot > 0 ? cleaned.slice(0, dot) : cleaned;
-  if (!base) return "rom";
-  return WINDOWS_RESERVED.test(base) ? `_${base}` : base;
+  return dot > 0 ? cleaned.slice(0, dot) : cleaned;
 }
 
 /** Work out where this game's saves and states belong, or null when the user

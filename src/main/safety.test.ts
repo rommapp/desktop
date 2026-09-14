@@ -6,7 +6,7 @@ import { test } from "node:test";
 import {
   resolveDownloadUrl,
   resolveLibraryRom,
-  safeCacheFileName,
+  safeFileName,
   validateLaunchRequest,
 } from "./safety.ts";
 
@@ -61,21 +61,29 @@ test("resolveDownloadUrl rejects non-API routes", () => {
   });
 });
 
-test("safeCacheFileName collapses separators into one component", () => {
-  assert.equal(safeCacheFileName("a/b\\c.zip", 1), "1-a_b_c.zip");
+test("safeFileName collapses separators into one component", () => {
+  assert.equal(safeFileName("a/b\\c.zip"), "a_b_c.zip");
 });
 
-test("safeCacheFileName defuses traversal sequences", () => {
-  const name = safeCacheFileName("../../etc/passwd", 3);
-  assert.ok(name.startsWith("3-"));
+test("safeFileName defuses traversal sequences", () => {
+  const name = safeFileName("../../etc/passwd");
   assert.ok(!name.includes("/"), "no path separator survives");
   assert.ok(!name.includes("\\"), "no windows separator survives");
   assert.equal(join("/cache", name), `/cache/${name}`);
 });
 
-test("safeCacheFileName always yields a non-empty name", () => {
-  assert.equal(safeCacheFileName("", 9), "9-rom");
-  assert.equal(safeCacheFileName("...", 9), "9-rom");
+test("safeFileName always yields a non-empty name", () => {
+  assert.equal(safeFileName(""), "rom");
+  assert.equal(safeFileName("..."), "rom");
+});
+
+test("safeFileName keeps the name the server gave, extension and all", () => {
+  // The cache used to prefix the ROM id, which is what kept it clear of the
+  // device names below. The directory carries the id now, so this does.
+  assert.equal(safeFileName("Chrono Trigger.sfc"), "Chrono Trigger.sfc");
+  assert.equal(safeFileName("CON.zip"), "_CON.zip");
+  assert.equal(safeFileName("lpt1.n64"), "_lpt1.n64");
+  assert.equal(safeFileName("Contra.nes"), "Contra.nes");
 });
 
 /** A stand-in library tree with one real ROM in it. */
