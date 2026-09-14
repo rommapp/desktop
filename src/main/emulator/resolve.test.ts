@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { type DesktopConfig, LaunchError } from "../../shared/types.ts";
 import { testConfig } from "../../test/config.ts";
 import {
+  findPreferredCores,
   applyCorePreference,
   applyTokens,
   coreFileName,
@@ -703,6 +704,16 @@ test("a preference that cannot be a filename is dropped, not obeyed", () => {
     "snes9x",
     "bsnes",
   ]);
+});
+
+test("the preference list itself is de-duplicated for its other readers", () => {
+  // applyCorePreference is not the only caller any more: the install plan reads
+  // findPreferredCores directly, and a name repeated by hand there becomes the
+  // same download attempted twice.
+  const config = testConfig({
+    preferredCores: { psx: ["mednafen_psx_hw", "mednafen_psx_hw"] },
+  });
+  assert.deepEqual(findPreferredCores(config, "psx"), ["mednafen_psx_hw"]);
 });
 
 test("a core named twice is tried once", () => {

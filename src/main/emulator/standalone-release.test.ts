@@ -136,6 +136,30 @@ test("a bare executable in a release index is not offered", () => {
   assert.equal(pickDolphinArtifact(onlyExe, "win32", "x64"), null);
 });
 
+test("an uninstaller is not mistaken for an installer", () => {
+  // "uninstaller.exe".endsWith("installer.exe") is true, and the installer kind
+  // is the one thing that is meant to be run.
+  const index = {
+    version: "2.8.2",
+    assets: {
+      Windows: [
+        { url: "https://api.pcsx2.net/pcsx2-uninstaller.exe" },
+        { url: "https://api.pcsx2.net/pcsx2-v2.8.2-windows-x64-installer.exe" },
+      ],
+    },
+  };
+  const found = pickPcsx2Artifact(index, "win32", "x64");
+  assert.equal(found?.fileName, "pcsx2-v2.8.2-windows-x64-installer.exe");
+  assert.equal(found?.kind, "installer");
+
+  // On its own it is not an artifact at all, so nothing opens it.
+  const onlyUninstaller = {
+    version: "2.8.2",
+    assets: { Windows: [index.assets.Windows[0]] },
+  };
+  assert.equal(pickPcsx2Artifact(onlyUninstaller, "win32", "x64"), null);
+});
+
 test("an unknown platform is offered nothing rather than a guess", () => {
   assert.equal(pickDolphinArtifact(DOLPHIN, "freebsd", "x64"), null);
   assert.equal(pickPcsx2Artifact(PCSX2, "freebsd", "x64"), null);

@@ -294,6 +294,18 @@ export class Launcher {
     const label = standaloneLabel(emulatorId) ?? emulatorId;
     const signal = entry.controller.signal;
 
+    // Whatever happens below belongs to the window that asked for the game: on
+    // macOS closing it does not quit the app, and nothing else would stop a
+    // wait that runs for half an hour. Wired before the two paths divide,
+    // because a launch that joins someone else's install waits just as long as
+    // the one that started it.
+    const abort = () => entry.controller.abort();
+    parent?.once("closed", abort);
+    const release = () => {
+      entry.installing = null;
+      if (parent && !parent.isDestroyed()) parent.off("closed", abort);
+    };
+
     // Someone is already installing this one. Pressing Play on a second PS2
     // game should join that wait, not be told PCSX2 is missing while it is
     // being fetched -- and asking a second time would be asking about a
@@ -305,22 +317,18 @@ export class Launcher {
           this.settingUp.has(emulatorId),
         );
       } finally {
-        entry.installing = null;
+        release();
       }
       return;
     }
-    if (this.offered.has(emulatorId)) return;
+    if (this.offered.has(emulatorId)) {
+      release();
+      return;
+    }
 
     this.offered.add(emulatorId);
     this.settingUp.add(emulatorId);
     entry.installing = label;
-    // The download and the wait that follows it are one span, and both belong
-    // to the window that asked for the game: on macOS closing it does not quit
-    // the app, and nothing else would stop this polling for half an hour.
-    // Wired here rather than around the download alone, which was the same bug
-    // one step earlier.
-    const abort = () => entry.controller.abort();
-    parent?.once("closed", abort);
     try {
       const shouldReport = createProgressGate();
       const { handedOff, detectable } = await offerStandaloneInstall({
@@ -353,9 +361,8 @@ export class Launcher {
       }
       await this.awaitEmulator(request, emulatorId, label, signal);
     } finally {
-      entry.installing = null;
       this.settingUp.delete(emulatorId);
-      if (parent && !parent.isDestroyed()) parent.off("closed", abort);
+      release();
     }
   }
 

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { testConfig } from "../../test/config.ts";
+import { compareVersions } from "../version.ts";
 import {
   BUILDBOT_ORIGIN,
   PINNED_STABLE_VERSION,
-  compareVersions,
   hasNoEmulator,
   latestStableVersion,
   noEmulatorMessage,

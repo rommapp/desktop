@@ -190,6 +190,10 @@ async function runOffer(
       },
     });
     clearTaskbarProgress(parent);
+    // The last stretch of downloadToFile -- closing the file and renaming it --
+    // does not watch the signal, so a cancel landing in it would otherwise be
+    // answered by opening the installer anyway.
+    if (signal.aborted) throw cancelled();
 
     const failure = await shell.openPath(file);
     // An archive has no handler on Windows 10, and revealing it is a better

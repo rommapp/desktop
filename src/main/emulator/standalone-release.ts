@@ -88,8 +88,10 @@ const ARCHIVE_SUFFIXES = [
 function kindOf(fileName: string): ArtifactKind | null {
   if (fileName.endsWith(".dmg")) return "disk-image";
   if (fileName.endsWith(".flatpak")) return "flatpak";
-  // Only an actual installer counts; a bare .exe could be anything.
-  if (fileName.endsWith("installer.exe")) return "installer";
+  // Only an actual installer counts; a bare .exe could be anything. Matched on
+  // a word boundary, because "uninstaller.exe" ends with "installer.exe" and
+  // running one of those is the opposite of what was asked for.
+  if (/(^|[-_. ])installer\.exe$/i.test(fileName)) return "installer";
   if (ARCHIVE_SUFFIXES.some((suffix) => fileName.endsWith(suffix))) {
     return "archive";
   }

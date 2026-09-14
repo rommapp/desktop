@@ -423,3 +423,63 @@ test("an emulator can be named before it is installed", () => {
   assert.equal(standaloneLabel("dolphin"), "Dolphin");
   assert.equal(standaloneLabel("nothing"), null);
 });
+
+test("the newest of several versioned bundles is the one that launches", () => {
+  // Dragging an upgrade into /Applications does not replace a bundle whose name
+  // carries a different version, so both survive. Directory order decides
+  // nothing, and launching the old one is not harmless: RetroAchievements has
+  // minimum emulator versions.
+  const readDir = listing({
+    "/Applications": [
+      "PCSX2-v2.9.0.app",
+      "PCSX2-v2.10.0.app",
+      "PCSX2-v2.8.2.app",
+    ],
+  });
+  const found = STANDALONE_EMULATORS.find((entry) => entry.id === "pcsx2")!;
+  const paths = found.paths("darwin", "/Users/sam", {}, readDir);
+  // 2.10 over 2.9: compared as numbers, not as text.
+  assert.deepEqual(paths, [
+    "/Applications/PCSX2-v2.10.0.app/Contents/MacOS/PCSX2",
+    "/Applications/PCSX2-v2.9.0.app/Contents/MacOS/PCSX2",
+    "/Applications/PCSX2-v2.8.2.app/Contents/MacOS/PCSX2",
+  ]);
+});
+
+test("the plain bundle name wins over a versioned one left behind", () => {
+  // Dolphin's disk image installs Dolphin.app and updates it in place, so the
+  // bare name is the current one -- and someone who renamed a bundle to it has
+  // said which they mean.
+  const readDir = listing({
+    "/Applications": ["Dolphin-5.0.app", "Dolphin.app"],
+  });
+  const dolphin = STANDALONE_EMULATORS.find((entry) => entry.id === "dolphin")!;
+  assert.equal(
+    dolphin.paths("darwin", "/Users/sam", {}, readDir)[0],
+    "/Applications/Dolphin.app/Contents/MacOS/Dolphin",
+  );
+});
+
+test("a platform no standalone serves does not touch the filesystem", () => {
+  // findMapping asks for every platform in a library. A scan and a dozen stats
+  // per SNES game, on the main process, for an answer the table already knows.
+  resetStandaloneDetection();
+  let looked = 0;
+  const count = () => {
+    looked += 1;
+    return false;
+  };
+  const scan = () => {
+    looked += 1;
+    return [];
+  };
+  for (const slug of ["snes", "n64", "psx", "dreamcast"]) {
+    assert.equal(
+      detectedMappingFor(slug, "darwin", "/Users/sam", {}, count, scan),
+      null,
+      slug,
+    );
+  }
+  assert.equal(looked, 0);
+  resetStandaloneDetection();
+});

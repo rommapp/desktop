@@ -16,6 +16,7 @@
 // unit-testable; the fetching lives in bootstrap.ts.
 
 import { type DesktopConfig } from "../../shared/types.ts";
+import { compareVersions } from "../version.ts";
 import { BUILDBOT_ORIGIN } from "./buildbot.ts";
 
 // The emulator and its cores come from the same host, so the origin is defined
@@ -37,18 +38,6 @@ export const PINNED_STABLE_VERSION = "1.22.2";
 /** Nothing sane is this large; a wrong URL should not become a disk-filling
  *  write. The installers are a little over 200MB. */
 export const MAX_INSTALLER_BYTES = 1024 * 1024 * 1024;
-
-/** Compare dotted numeric versions, shorter ones padded with zeroes. */
-export function compareVersions(a: string, b: string): number {
-  const left = a.split(".").map(Number);
-  const right = b.split(".").map(Number);
-  const length = Math.max(left.length, right.length);
-  for (let index = 0; index < length; index += 1) {
-    const difference = (left[index] ?? 0) - (right[index] ?? 0);
-    if (difference !== 0) return difference;
-  }
-  return 0;
-}
 
 /**
  * Pick the newest release out of the buildbot's stable index.

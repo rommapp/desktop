@@ -202,10 +202,17 @@ export function findPreferredCores(
   for (const [slug, cores] of Object.entries(table)) {
     if (slug.toLowerCase() !== wanted) continue;
     if (!Array.isArray(cores)) return [];
-    return cores.filter(
-      (core): core is string =>
-        typeof core === "string" && isSafeCoreName(core),
-    );
+    // De-duplicated here rather than at one caller: the install plan reads this
+    // list directly, and a name repeated by hand would become the same download
+    // attempted twice.
+    return [
+      ...new Set(
+        cores.filter(
+          (core): core is string =>
+            typeof core === "string" && isSafeCoreName(core),
+        ),
+      ),
+    ];
   }
   return [];
 }
@@ -224,7 +231,7 @@ export function applyCorePreference(
   platformSlug: string,
   cores: string[],
 ): string[] {
-  const preferred = [...new Set(findPreferredCores(config, platformSlug))];
+  const preferred = findPreferredCores(config, platformSlug);
   if (preferred.length === 0) return cores;
   const seen = new Set(preferred);
   return [...preferred, ...cores.filter((core) => !seen.has(core))];

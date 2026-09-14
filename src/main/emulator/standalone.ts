@@ -18,6 +18,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import { type EmulatorMapping } from "../../shared/types.ts";
+import { compareVersions } from "../version.ts";
 
 export interface StandaloneEmulator {
   /** Stable identifier, used in config and messages. */
@@ -63,7 +64,7 @@ function macApp(
   readDir: ReadDir,
 ): string[] {
   const roots = ["/Applications", posix.join(home, "Applications")];
-  const found: string[] = [];
+  const found: { path: string; version: string | null }[] = [];
   for (const root of roots) {
     for (const entry of readDir(root)) {
       if (!entry.endsWith(".app")) continue;
@@ -73,10 +74,34 @@ function macApp(
       // does not, so a differently named application cannot be mistaken for it.
       const suffix = name.slice(bundle.length);
       if (suffix !== "" && !/^[-_ ]/.test(suffix)) continue;
-      found.push(posix.join(root, entry, "Contents/MacOS", binary));
+      found.push({
+        path: posix.join(root, entry, "Contents/MacOS", binary),
+        version: versionIn(suffix),
+      });
     }
   }
-  return found;
+  // A versioned name means an upgrade does not replace the old bundle, so a
+  // machine can hold PCSX2-v2.8.2.app and PCSX2-v2.9.0.app at once and the
+  // directory order decides nothing. Newest first, so a stale copy left behind
+  // does not keep being the one that launches -- and RetroAchievements has
+  // minimum versions, which is exactly what launching the old one would fail.
+  //
+  // The bare name wins outright: it is what Dolphin's disk image installs and
+  // updates in place, and someone who has renamed a bundle to it has said which
+  // one they mean.
+  found.sort((a, b) => {
+    if ((a.version === null) !== (b.version === null)) {
+      return a.version === null ? -1 : 1;
+    }
+    if (a.version === null || b.version === null) return 0;
+    return compareVersions(b.version, a.version);
+  });
+  return found.map((entry) => entry.path);
+}
+
+/** The dotted number in a bundle's name suffix, if it carries one. */
+function versionIn(suffix: string): string | null {
+  return /(\d+(?:\.\d+)*)/.exec(suffix)?.[1] ?? null;
 }
 
 /** A Flatpak's exported launcher, system-wide and per-user. */
@@ -276,6 +301,11 @@ export function detectedMappingFor(
   exists: (path: string) => boolean = existsSync,
   readDir: ReadDir = readDirSafe,
 ): EmulatorMapping | null {
+  // findMapping asks this for every platform, and detection is a directory scan
+  // plus a dozen stats. Nothing that is not PS2, GameCube or Wii can ever match,
+  // so answering from the table costs nothing and keeps the scan off the main
+  // process for every SNES game in a library.
+  if (!emulatorForPlatform(platformSlug)) return null;
   const wanted = platformSlug.toLowerCase();
   return (
     toEmulatorMappings(
