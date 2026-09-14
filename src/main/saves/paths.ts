@@ -11,6 +11,11 @@ export interface SavePaths {
   statePrefix: string;
 }
 
+/** Names Windows reserves for devices. Reserved whatever the extension, so
+ *  `CON.srm` is as unopenable as `CON`. Applied on every platform so a tree
+ *  written on one machine stays usable on another. */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
 /**
  * The name a game's save data carries inside its own directory.
  *
@@ -23,7 +28,8 @@ export function saveBaseName(fileName: string): string {
   const cleaned = safeFileNameComponent(fileName);
   const dot = cleaned.lastIndexOf(".");
   const base = dot > 0 ? cleaned.slice(0, dot) : cleaned;
-  return base || "rom";
+  if (!base) return "rom";
+  return WINDOWS_RESERVED.test(base) ? `_${base}` : base;
 }
 
 /** Work out where this game's saves and states belong, or null when the user

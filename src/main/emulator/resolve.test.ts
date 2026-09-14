@@ -387,6 +387,21 @@ test("applyTokens substitutes the save directories and the files in them", () =>
   ]);
 });
 
+test("applyTokens inserts paths literally, not as substitution patterns", () => {
+  // $& and $` are replacement patterns to String.replaceAll, so a path
+  // containing one would rewrite the argument around it.
+  const args = applyTokens(["{rom}", "-L", "{core}"], {
+    rom: "/games/Ke$&ha $`quoted`.nes",
+    core: "/cores/$'weird.so",
+    savePaths: null,
+  });
+  assert.deepEqual(args, [
+    "/games/Ke$&ha $`quoted`.nes",
+    "-L",
+    "/cores/$'weird.so",
+  ]);
+});
+
 test("resolveLaunch fills {saves} and {states} for a mapping", () => {
   const { root } = fakeInstall([]);
   const standalone = join(root, "pcsx2");

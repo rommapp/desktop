@@ -52,14 +52,16 @@ export function applyTokens(
   },
 ): string[] {
   const { savePaths } = tokens;
+  // Replacer functions, not strings: a path containing $& or $` is a
+  // substitution pattern to replaceAll, and would rewrite the argument.
   return args.map((arg) =>
     arg
-      .replaceAll("{rom}", tokens.rom)
-      .replaceAll("{core}", tokens.core ?? "")
-      .replaceAll("{saves}", savePaths?.saveDir ?? "")
-      .replaceAll("{states}", savePaths?.stateDir ?? "")
-      .replaceAll("{savefile}", savePaths?.saveFile ?? "")
-      .replaceAll("{statefile}", savePaths?.statePrefix ?? ""),
+      .replaceAll("{rom}", () => tokens.rom)
+      .replaceAll("{core}", () => tokens.core ?? "")
+      .replaceAll("{saves}", () => savePaths?.saveDir ?? "")
+      .replaceAll("{states}", () => savePaths?.stateDir ?? "")
+      .replaceAll("{savefile}", () => savePaths?.saveFile ?? "")
+      .replaceAll("{statefile}", () => savePaths?.statePrefix ?? ""),
   );
 }
 
@@ -214,7 +216,11 @@ export function resolveLaunch({
 
   // -s and -S override whatever savefile_directory the user's retroarch.cfg
   // sets, which is the point: the same game launched from the cache and from
-  // the library then writes to one place instead of two.
+  // the library then writes to one place instead of two. RetroArch's man page
+  // marks both deprecated, but they are the only mechanism that pins the file
+  // name; savefile_directory only picks the directory, and RetroArch would
+  // still name the save after the content, which is what differs between the
+  // two launch paths.
   const saveArgs = savePaths
     ? ["-s", savePaths.saveFile, "-S", savePaths.statePrefix]
     : [];

@@ -48,6 +48,16 @@ test("saveBaseName never yields an empty or traversing component", () => {
   }
 });
 
+test("saveBaseName steps around names Windows reserves for devices", () => {
+  // Reserved with an extension too, so `CON.srm` is as unopenable as `CON`.
+  assert.equal(saveBaseName("CON.zip"), "_CON");
+  assert.equal(saveBaseName("aux.nes"), "_aux");
+  assert.equal(saveBaseName("com1.bin"), "_com1");
+  // Only the exact device names: a game that merely starts with one is fine.
+  assert.equal(saveBaseName("Contra.nes"), "Contra");
+  assert.equal(saveBaseName("Auxiliary.gb"), "Auxiliary");
+});
+
 test("resolveSavePaths keeps a hostile filename inside the root", () => {
   const paths = resolveSavePaths(ROOT, 1, "../../../../etc/passwd");
   assert.ok(paths);
