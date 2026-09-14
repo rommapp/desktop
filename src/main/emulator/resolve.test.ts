@@ -402,6 +402,37 @@ test("applyTokens inserts paths literally, not as substitution patterns", () => 
   ]);
 });
 
+test("applyTokens leaves token-looking text inside a path alone", () => {
+  // A save root containing "{states}" was inserted by the {saves} pass and
+  // then rewritten by the {states} pass that followed it.
+  const savePaths = {
+    saveDir: "/data/{states}/7/saves",
+    stateDir: "/data/{states}/7/states",
+    saveFile: "/data/{states}/7/saves/game.srm",
+    statePrefix: "/data/{states}/7/states/game.state",
+  };
+  const args = applyTokens(["-savedir", "{saves}", "-statedir", "{states}"], {
+    rom: "/cache/7/game.sfc",
+    core: null,
+    savePaths,
+  });
+  assert.deepEqual(args, [
+    "-savedir",
+    savePaths.saveDir,
+    "-statedir",
+    savePaths.stateDir,
+  ]);
+});
+
+test("applyTokens leaves an unknown token untouched", () => {
+  const args = applyTokens(["{nonsense}", "{rom}"], {
+    rom: "/cache/7/game.sfc",
+    core: null,
+    savePaths: null,
+  });
+  assert.deepEqual(args, ["{nonsense}", "/cache/7/game.sfc"]);
+});
+
 test("resolveLaunch fills {saves} and {states} for a mapping", () => {
   const { root } = fakeInstall([]);
   const standalone = join(root, "pcsx2");

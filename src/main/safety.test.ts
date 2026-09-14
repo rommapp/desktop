@@ -6,6 +6,7 @@ import { test } from "node:test";
 import {
   resolveDownloadUrl,
   resolveLibraryRom,
+  assertSeparateRoots,
   safeFileName,
   validateLaunchRequest,
 } from "./safety.ts";
@@ -170,4 +171,52 @@ test("validateLaunchRequest rejects malformed library fields", () => {
   assert.throws(() => validateLaunchRequest({ ...base, fileSize: 1.5 }), {
     code: "invalid-request",
   });
+});
+
+test("safeFileName never returns a component that addresses a directory", () => {
+  // Leading whitespace used to survive the dot-stripping, so " .." came back
+  // as ".." and named the parent of the ROM directory it was joined onto.
+  for (const name of [" ..", " .", "  ...  ", ".."]) {
+    assert.equal(safeFileName(name), "rom", `${JSON.stringify(name)} is inert`);
+  }
+});
+
+test("safeFileName drops trailing dots and spaces Windows ignores", () => {
+  // Otherwise "game." and "game" name one file while looking like two.
+  assert.equal(safeFileName("game."), "game");
+  assert.equal(safeFileName("game. "), "game");
+  assert.equal(safeFileName("game.sfc"), "game.sfc");
+});
+
+test("safeFileName reads a device name up to the first dot", () => {
+  assert.equal(safeFileName("CON.foo.zip"), "_CON.foo.zip");
+  assert.equal(safeFileName("nul.tar.gz"), "_nul.tar.gz");
+});
+
+/** A config carrying only the two paths this guard looks at. */
+function roots(cachePath: string | null, saveDataPath: string | null) {
+  return { cachePath, saveDataPath } as Parameters<
+    typeof assertSeparateRoots
+  >[0];
+}
+
+test("assertSeparateRoots accepts directories that do not contain each other", () => {
+  assertSeparateRoots(roots("/data/rom-cache", "/data/save-data"));
+  assertSeparateRoots(roots(null, "/data/save-data"));
+});
+
+test("assertSeparateRoots rejects a save tree the cache would evict", () => {
+  // Eviction removes a ROM directory whole, so saves underneath it go too.
+  for (const [cache, saves] of [
+    ["/data/cache", "/data/cache"],
+    ["/data/cache", "/data/cache/saves"],
+    ["/data/cache/roms", "/data/cache"],
+    ["/data/cache", "/data/cache/../cache/inner"],
+  ]) {
+    assert.throws(
+      () => assertSeparateRoots(roots(cache, saves)),
+      { code: "invalid-request" },
+      `${cache} and ${saves} must be refused`,
+    );
+  }
 });

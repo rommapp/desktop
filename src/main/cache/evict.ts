@@ -4,6 +4,9 @@
 import { readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
+/** Cache entries are named for their ROM id and nothing else. */
+const ROM_ID = /^\d+$/;
+
 /** One cached ROM: the directory holding it, so eviction drops the game rather
  *  than picking files out from under it. */
 interface CacheEntry {
@@ -18,12 +21,23 @@ async function readCache(dir: string): Promise<{
   total: number;
   entries: CacheEntry[];
 }> {
-  const romDirs = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  const cached = await readdir(dir, { withFileTypes: true }).catch(() => []);
   const entries: CacheEntry[] = [];
   let total = 0;
-  for (const romDir of romDirs) {
-    if (!romDir.isDirectory()) continue;
+  for (const romDir of cached) {
     const path = join(dir, romDir.name);
+    // A flat file is a download from before the per-ROM layout. Counting it
+    // keeps it inside the limit, and its age sends it out first.
+    if (romDir.isFile()) {
+      const info = await stat(path).catch(() => null);
+      if (!info) continue;
+      total += info.size;
+      entries.push({ path, size: info.size, atime: info.atimeMs });
+      continue;
+    }
+    // Only a ROM id names a cache entry, so nothing else living under the
+    // cache directory is ever a candidate for removal.
+    if (!romDir.isDirectory() || !ROM_ID.test(romDir.name)) continue;
     const names = await readdir(path).catch(() => [] as string[]);
     let size = 0;
     let atime = 0;

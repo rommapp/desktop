@@ -281,6 +281,10 @@ the config file:
 <saveDataPath>/<romId>/states/<name>.state
 ```
 
+`saveDataPath` has to sit outside `cachePath`, and the shell refuses a launch
+when either contains the other: eviction removes a cached ROM's directory
+whole, and save data underneath it would go with it.
+
 The directory is keyed on the ROM id and the filename comes from the server, so
 a cached launch and an in-place launch land on one file. RetroArch is passed
 `-s` and `-S`, which override whatever `savefile_directory` your `retroarch.cfg`

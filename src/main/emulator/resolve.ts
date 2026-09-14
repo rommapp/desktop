@@ -52,18 +52,23 @@ export function applyTokens(
   },
 ): string[] {
   const { savePaths } = tokens;
-  // Replacer functions, not strings: a path containing $& or $` is a
-  // substitution pattern to replaceAll, and would rewrite the argument.
+  const values: Record<string, string> = {
+    rom: tokens.rom,
+    core: tokens.core ?? "",
+    saves: savePaths?.saveDir ?? "",
+    states: savePaths?.stateDir ?? "",
+    savefile: savePaths?.saveFile ?? "",
+    statefile: savePaths?.statePrefix ?? "",
+  };
+  // One pass with a replacer, never chained replaceAll calls with string
+  // replacements: a path is inserted verbatim, and token-looking text inside
+  // one is left alone rather than substituted by a later pass.
   return args.map((arg) =>
-    arg
-      .replaceAll("{rom}", () => tokens.rom)
-      .replaceAll("{core}", () => tokens.core ?? "")
-      .replaceAll("{saves}", () => savePaths?.saveDir ?? "")
-      .replaceAll("{states}", () => savePaths?.stateDir ?? "")
-      .replaceAll("{savefile}", () => savePaths?.saveFile ?? "")
-      .replaceAll("{statefile}", () => savePaths?.statePrefix ?? ""),
+    arg.replace(TOKEN_PATTERN, (match, name: string) => values[name] ?? match),
   );
 }
+
+const TOKEN_PATTERN = /\{(rom|core|saves|states|savefile|statefile)\}/g;
 
 /** The tokens that only mean something once the shell owns the save data. */
 const SAVE_TOKENS = ["{saves}", "{states}", "{savefile}", "{statefile}"];

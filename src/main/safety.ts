@@ -3,7 +3,11 @@
 
 import { statSync } from "node:fs";
 import { resolve, sep } from "node:path";
-import { LaunchError, type LaunchRequest } from "../shared/types.ts";
+import {
+  type DesktopConfig,
+  LaunchError,
+  type LaunchRequest,
+} from "../shared/types.ts";
 
 /**
  * Find a ROM inside the user's own copy of the library, so a server running on
@@ -26,7 +30,7 @@ export function resolveLibraryRom(
 
   const root = resolve(libraryPath);
   const candidate = resolve(root, serverPath);
-  if (candidate !== root && !candidate.startsWith(root + sep)) return null;
+  if (!isWithin(root, candidate)) return null;
 
   let info;
   try {
@@ -83,20 +87,51 @@ const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 /** Reduce a server-supplied name to one safe filename component; the result is
  *  only ever joined onto a directory the shell owns. */
 export function safeFileNameComponent(fileName: string): string {
-  return fileName
-    .replace(UNSAFE_FILENAME_CHARS, "_")
-    .replace(/^\.+/, "")
-    .trim()
-    .slice(0, 120);
+  return (
+    fileName
+      .replace(UNSAFE_FILENAME_CHARS, "_")
+      // Trim before dropping leading dots, or " .." survives as ".." and
+      // addresses the parent directory rather than a file in it.
+      .trim()
+      .replace(/^\.+/, "")
+      .slice(0, 120)
+      // Windows ignores trailing dots and spaces, so leaving them would let
+      // "game." and "game" name one file while looking like two.
+      .replace(/[. ]+$/, "")
+  );
 }
 
 /** One filename component that is safe to create: never empty, never a path,
  *  never a Windows device name. */
 export function safeFileName(fileName: string): string {
   const cleaned = safeFileNameComponent(fileName) || "rom";
-  const dot = cleaned.lastIndexOf(".");
-  const base = dot > 0 ? cleaned.slice(0, dot) : cleaned;
-  return WINDOWS_RESERVED.test(base) ? `_${cleaned}` : cleaned;
+  // Windows reads the device name up to the first dot, so CON.foo.zip is the
+  // console too.
+  const stem = cleaned.split(".")[0] ?? "";
+  return WINDOWS_RESERVED.test(stem) ? `_${cleaned}` : cleaned;
+}
+
+/** Whether `child` is `parent` or sits underneath it, once both are resolved. */
+export function isWithin(parent: string, child: string): boolean {
+  const root = resolve(parent);
+  const target = resolve(child);
+  return target === root || target.startsWith(root + sep);
+}
+
+/**
+ * Refuse a cache and a save-data tree that contain one another. Eviction
+ * removes a ROM directory whole, so an overlapping save tree would be deleted
+ * along with the game it belongs to.
+ */
+export function assertSeparateRoots(config: DesktopConfig): void {
+  const { cachePath, saveDataPath } = config;
+  if (!cachePath || !saveDataPath) return;
+  if (isWithin(cachePath, saveDataPath) || isWithin(saveDataPath, cachePath)) {
+    throw new LaunchError(
+      "invalid-request",
+      `saveDataPath (${saveDataPath}) and cachePath (${cachePath}) overlap. Cache eviction would delete save data, so set them to separate directories.`,
+    );
+  }
 }
 
 /** Check a launch request's shape before any of it reaches the filesystem or a

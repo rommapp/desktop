@@ -59,3 +59,32 @@ test("evictToLimit counts every file a ROM directory holds", async () => {
 
   assert.equal(existsSync(join(root, "1")), false, "both files go together");
 });
+
+test("evictToLimit counts and clears downloads from the flat layout", async () => {
+  // Before the per-ROM directories, a download sat at <cachePath>/<id>-<name>.
+  const root = await fakeCache([
+    { id: 2, files: { "fresh.sfc": 100 }, agedDays: 0 },
+  ]);
+  const legacy = join(root, "1-old.sfc");
+  writeFileSync(legacy, "x".repeat(100));
+  const old = new Date(Date.now() - 30 * 86_400_000);
+  await utimes(legacy, old, old);
+
+  await evictToLimit(root, 150, join(root, "2"));
+
+  assert.equal(existsSync(legacy), false, "the flat download is evicted");
+  assert.ok(existsSync(join(root, "2")), "the current ROM stays");
+});
+
+test("evictToLimit leaves directories that are not ROM ids alone", async () => {
+  const root = await fakeCache([
+    { id: 1, files: { "game.sfc": 500 }, agedDays: 0 },
+  ]);
+  const stray = join(root, "save-data");
+  mkdirSync(stray, { recursive: true });
+  writeFileSync(join(stray, "game.srm"), "x".repeat(500));
+
+  await evictToLimit(root, 100, join(root, "1"));
+
+  assert.ok(existsSync(join(stray, "game.srm")), "nothing else is a candidate");
+});

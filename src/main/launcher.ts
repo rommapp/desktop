@@ -14,7 +14,7 @@ import { resolveLaunch } from "./emulator/resolve.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
 import { resolveSavePaths } from "./saves/paths.ts";
-import { resolveLibraryRom } from "./safety.ts";
+import { assertSeparateRoots, resolveLibraryRom } from "./safety.ts";
 
 interface ActiveLaunch {
   controller: AbortController;
@@ -41,6 +41,7 @@ export class Launcher {
   ): Promise<PlatformSupport> {
     const config = await loadConfig();
     try {
+      assertSeparateRoots(config);
       const launch = resolveLaunch({
         config,
         platformSlug: query.platformSlug,
@@ -90,6 +91,7 @@ export class Launcher {
 
     try {
       const config = await loadConfig();
+      assertSeparateRoots(config);
       const savePaths = resolveSavePaths(
         config.saveDataPath,
         request.romId,
