@@ -309,7 +309,10 @@ RetroArch, and launches what it finds:
 
 Nothing is written to your config, and an emulator installed by any means is
 found the same way, a frontend's own tree included, so someone already running
-RetroBat gets its emulators without configuring them twice.
+RetroBat in `C:\RetroBat` gets its emulators without configuring them twice.
+Only that path, though: a portable RetroBat on another drive is not somewhere
+this can guess at, so point at it with `emulatorsBasePath` and an `emulators`
+row, as below.
 
 When there is nothing to find, the platform is still reported as launchable --
 naming the emulator it would set up rather than the one it has -- and pressing

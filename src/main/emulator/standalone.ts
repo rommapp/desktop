@@ -70,13 +70,16 @@ function macApp(
       if (!entry.endsWith(".app")) continue;
       const name = entry.slice(0, -".app".length);
       if (!name.startsWith(bundle)) continue;
-      // "PCSX2", "PCSX2-v2.8.2" and "PCSX2 2.8" all count; "PCSX2Something"
-      // does not, so a differently named application cannot be mistaken for it.
+      // The bare name, or the name and a version: "PCSX2", "PCSX2-v2.8.2" and
+      // "PCSX2 2.8" all count. "PCSX2Something" does not, and neither does
+      // "PCSX2-Manager" -- a separator alone would let any application whose
+      // name begins with this one be launched as the emulator.
       const suffix = name.slice(bundle.length);
-      if (suffix !== "" && !/^[-_ ]/.test(suffix)) continue;
+      const version = versionIn(suffix);
+      if (suffix !== "" && version === null) continue;
       found.push({
         path: posix.join(root, entry, "Contents/MacOS", binary),
-        version: versionIn(suffix),
+        version,
       });
     }
   }
@@ -99,9 +102,15 @@ function macApp(
   return found.map((entry) => entry.path);
 }
 
-/** The dotted number in a bundle's name suffix, if it carries one. */
+/**
+ * The version a bundle's name suffix carries, if it is one.
+ *
+ * Anchored, so the suffix has to *be* a version rather than merely contain a
+ * digit somewhere: this is what separates "PCSX2-v2.8.2" from "PCSX2-Manager".
+ * Anything after the number is left alone, since a build can add to it.
+ */
 function versionIn(suffix: string): string | null {
-  return /(\d+(?:\.\d+)*)/.exec(suffix)?.[1] ?? null;
+  return /^[-_ ]v?(\d+(?:\.\d+)*)/.exec(suffix)?.[1] ?? null;
 }
 
 /** A Flatpak's exported launcher, system-wide and per-user. */

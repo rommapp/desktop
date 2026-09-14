@@ -483,3 +483,24 @@ test("a platform no standalone serves does not touch the filesystem", () => {
   assert.equal(looked, 0);
   resetStandaloneDetection();
 });
+
+test("an application that merely starts with the name is not the emulator", () => {
+  // A separator alone is not enough: the suffix has to be a version, or
+  // PCSX2-Manager.app gets launched as PCSX2 if it happens to hold a binary of
+  // that name -- and it would sort as though it were the bare bundle.
+  const readDir = listing({
+    "/Applications": [
+      "PCSX2-Manager.app",
+      "PCSX2 Launcher.app",
+      "Dolphin-Beta.app",
+    ],
+  });
+  for (const id of ["pcsx2", "dolphin"]) {
+    const emulator = STANDALONE_EMULATORS.find((entry) => entry.id === id)!;
+    assert.deepEqual(
+      emulator.paths("darwin", "/Users/sam", {}, readDir),
+      [],
+      id,
+    );
+  }
+});

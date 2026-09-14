@@ -173,13 +173,27 @@ export function planCoreInstall(
   if (canInstallCore(config, platformSlug, cores, platform, arch)) {
     return { cores, required: true };
   }
+  if (!config.retroarchCoresPath) return null;
+  // Only the ones ranked above whatever is installed. A preference list is
+  // ordered, so ["mednafen_psx_hw", "swanstation"] with swanstation on disk
+  // still wants mednafen_psx_hw -- and the same list with mednafen_psx_hw on
+  // disk wants nothing, because the answer is already the one at the top.
+  const wanted = coresRankedAbove(config.retroarchCoresPath, preferred);
   if (
-    preferred.length > 0 &&
-    canInstallCore(config, platformSlug, preferred, platform, arch)
+    wanted.length > 0 &&
+    canInstallCore(config, platformSlug, wanted, platform, arch)
   ) {
-    return { cores: preferred, required: false };
+    return { cores: wanted, required: false };
   }
   return null;
+}
+
+/** The candidates ahead of the first one that is already installed. */
+function coresRankedAbove(coresPath: string, preferred: string[]): string[] {
+  const installed = preferred.findIndex(
+    (core) => resolveCore(coresPath, [core]) !== null,
+  );
+  return installed === -1 ? preferred : preferred.slice(0, installed);
 }
 
 /** The candidate that would be tried first, for naming it before it is
