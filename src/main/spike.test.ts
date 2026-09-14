@@ -55,3 +55,13 @@ test("the panel reports speed and remaining time, not just a percentage", () => 
   // The formatters have to tolerate a server that declares no length.
   assert.match(script, /if \(n === undefined \|\| n === null\) return ""/);
 });
+
+test("the panel explains an emulator install rather than showing a download", () => {
+  // The stage covers two waits: fetching the file, and the user installing it.
+  // Rendering the second as an indeterminate download would look like a stall
+  // at the exact moment the user is being asked to do something.
+  const script = spikeScript();
+  assert.match(script, /s\.stage === "emulator"/);
+  assert.match(script, /Waiting for " \+ named \+ " to be installed/);
+  assert.match(script, /"Downloading " \+ named/);
+});

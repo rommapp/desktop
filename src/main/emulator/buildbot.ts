@@ -138,6 +138,64 @@ export function canInstallCore(
   return resolveCore(config.retroarchCoresPath, cores) === null;
 }
 
+export interface CoreInstall {
+  /** What to hand to installCore, in the order to try it. */
+  cores: string[];
+  /** Whether a failure here fails the launch. False when the download is only
+   *  reaching for a preference over a core that already works. */
+  required: boolean;
+}
+
+/**
+ * What, if anything, to fetch before this launch.
+ *
+ * Two different questions wear the same clothes. One is "nothing here can play
+ * this", where the download is the launch and its failure is the launch's. The
+ * other is "the core you asked for is not installed, though something else that
+ * plays this is" -- and canInstallCore says no to that, because resolveCore
+ * takes the first *installed* candidate and one of them is installed.
+ *
+ * Saying no there quietly defeats the point of preferredCores: someone who sets
+ * psx to mednafen_psx_hw precisely because RetroAchievements does not recognise
+ * pcsx_rearmed would go on launching pcsx_rearmed, because they happen to have
+ * it. So a missing preference is fetched too -- but only the preference, and
+ * never at the cost of a launch that would have worked, which is why a failure
+ * there falls through to what is installed rather than surfacing.
+ */
+export function planCoreInstall(
+  config: DesktopConfig,
+  platformSlug: string,
+  cores: string[],
+  preferred: string[],
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): CoreInstall | null {
+  if (canInstallCore(config, platformSlug, cores, platform, arch)) {
+    return { cores, required: true };
+  }
+  if (!config.retroarchCoresPath) return null;
+  // Only the ones ranked above whatever is installed. A preference list is
+  // ordered, so ["mednafen_psx_hw", "swanstation"] with swanstation on disk
+  // still wants mednafen_psx_hw -- and the same list with mednafen_psx_hw on
+  // disk wants nothing, because the answer is already the one at the top.
+  const wanted = coresRankedAbove(config.retroarchCoresPath, preferred);
+  if (
+    wanted.length > 0 &&
+    canInstallCore(config, platformSlug, wanted, platform, arch)
+  ) {
+    return { cores: wanted, required: false };
+  }
+  return null;
+}
+
+/** The candidates ahead of the first one that is already installed. */
+function coresRankedAbove(coresPath: string, preferred: string[]): string[] {
+  const installed = preferred.findIndex(
+    (core) => resolveCore(coresPath, [core]) !== null,
+  );
+  return installed === -1 ? preferred : preferred.slice(0, installed);
+}
+
 /** The candidate that would be tried first, for naming it before it is
  *  fetched. */
 export function firstInstallableCore(cores: string[]): string | null {

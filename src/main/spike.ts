@@ -126,10 +126,18 @@ export function spikeScript(): string {
         const left = eta((s.total - s.received) / s.bytesPerSecond);
         if (left) parts.push(left + " left");
       }
-      // A core install is reported as a download too, and it is worth saying
-      // so: the wait is otherwise unexplained and much shorter than a ROM's.
+      // A core install and an emulator install are both reported as downloads,
+      // and both are worth naming: the wait is otherwise unexplained. The
+      // emulator stage covers two different waits -- fetching the file, then
+      // the user installing it -- and the missing byte count is what tells them
+      // apart, because nothing here can see inside their installer.
+      const named = s.emulator || "the emulator";
       const what = s.stage === "core"
         ? "Installing core" + (s.core ? " " + s.core : "")
+        : s.stage === "emulator"
+          ? (s.received === undefined
+            ? "Waiting for " + named + " to be installed. Your game starts by itself"
+            : "Downloading " + named)
         : "Downloading";
       say(what + pct + "..."
         + (parts.length ? "<br><span style='opacity:.65'>" + parts.join(" &middot; ") + "</span>" : ""));

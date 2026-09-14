@@ -14,6 +14,12 @@ export function testConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     retroarchCoresPath: null,
     autoInstallCores: true,
     offerRetroArchInstall: true,
+    preferredCores: {},
+    // Both off by default: detection reads the real filesystem, so leaving them
+    // on would make a host that happens to have Dolphin installed see different
+    // results from one that does not.
+    useDetectedEmulators: false,
+    offerStandaloneInstall: false,
     emulatorsBasePath: null,
     emulators: [],
     cachePath: null,

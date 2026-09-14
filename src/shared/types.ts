@@ -51,10 +51,15 @@ export interface LaunchState {
   status: LaunchStatus;
   /** What is being fetched while status is "downloading". Absent means the ROM,
    *  so a frontend that predates core installation reads a core download as an
-   *  ordinary one rather than as an unknown status it has to handle. */
-  stage?: "rom" | "core";
+   *  ordinary one rather than as an unknown status it has to handle.
+   *  "emulator" covers both fetching a standalone emulator and the wait while
+   *  the user installs what was fetched, which has no progress to report. */
+  stage?: "rom" | "core" | "emulator";
   /** The core being installed, while stage is "core". */
   core?: string;
+  /** The emulator being set up, while stage is "emulator". Present for both
+   *  halves of that stage, so a frontend can name what it is waiting for. */
+  emulator?: string;
   /** 0..1 while downloading, absent otherwise. */
   progress?: number;
   /** Bytes transferred so far, while downloading. */
@@ -125,13 +130,31 @@ export interface DesktopConfig {
   /** Directory holding RetroArch's libretro cores. */
   retroarchCoresPath: string | null;
   /** Download a missing libretro core from the libretro buildbot rather than
-   *  failing the launch. Only ever fetches a core the frontend named for the
-   *  platform being launched, and only into `retroarchCoresPath`. */
+   *  failing the launch. Only ever fetches a core named for the platform being
+   *  launched -- by the frontend, or by `preferredCores` below -- and only into
+   *  `retroarchCoresPath`. */
   autoInstallCores: boolean;
   /** Offer, on startup, to fetch RetroArch's own installer when this machine
    *  has no emulator at all. Nothing is ever installed without the user saying
    *  so, and the offer stops once they have an emulator or decline for good. */
   offerRetroArchInstall: boolean;
+  /** Use a standalone emulator found in its usual install location when no
+   *  `emulators` row covers the platform. Only PS2 and GameCube/Wii have one
+   *  today, because RetroAchievements recognises no libretro core for either.
+   *  Nothing is downloaded and no config is written; an explicit row always
+   *  wins, so this only ever fills a gap. */
+  useDetectedEmulators: boolean;
+  /** When a game needs a standalone emulator that is not installed, offer to
+   *  fetch it from the project rather than failing the launch. Asked at most
+   *  once per emulator per run, and declining simply lets the launch proceed as
+   *  it would have. */
+  offerStandaloneInstall: boolean;
+  /** Cores to try first for a platform, ahead of the ones the frontend named.
+   *  RomM's map picks a sensible core for playing; it does not know which cores
+   *  RetroAchievements recognises, or which one you happen to prefer. Keyed by
+   *  platform slug, matched case-insensitively. A name the frontend never
+   *  offered is still honoured, so this can reach a core RomM does not list. */
+  preferredCores: Record<string, string[]>;
   /** Directory the frontends install emulators under, so an emulators entry can
    *  name a relative path instead of repeating an absolute one. Null means every
    *  command must be absolute. */

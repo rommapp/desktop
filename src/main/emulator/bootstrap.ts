@@ -11,31 +11,41 @@
 // retroarch.ts for why that is the shape of this rather than an install.
 
 import { type BrowserWindow, app, dialog, net, shell } from "electron";
-import { createWriteStream } from "node:fs";
-import { mkdir, rename, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { type DesktopConfig, LaunchError } from "../../shared/types.ts";
+import { type DesktopConfig } from "../../shared/types.ts";
 import { updateConfig } from "../config.ts";
+import { downloadToFile } from "../download.ts";
+import { detectedStandaloneLabels } from "./standalone.ts";
 import { createProgressGate } from "../progress.ts";
-import { assertBuildbotResponse } from "./buildbot.ts";
+import {
+  clearTaskbarProgress,
+  showTaskbarProgress,
+} from "../window-progress.ts";
 import {
   BUILDBOT_ORIGIN,
   MAX_INSTALLER_BYTES,
   PINNED_STABLE_VERSION,
   RETROARCH_DOWNLOAD_PAGE,
-  type RetroArchInstaller,
   hasNoEmulator,
   latestStableVersion,
+  noEmulatorMessage,
   retroarchInstaller,
   shouldOfferRetroArch,
 } from "./retroarch.ts";
 
-/** Where a downloaded installer is kept, beside the config. */
+/**
+ * Where RetroArch's installer is kept, beside the config.
+ *
+ * Its own subdirectory, not the whole `installers` tree: the standalone offer
+ * keeps PCSX2 and Dolphin downloads under there too, and forgetInstaller below
+ * would otherwise delete an archive the user has been told to go and extract.
+ */
 export function installerDirectory(): string {
-  return join(app.getPath("userData"), "installers");
+  return join(app.getPath("userData"), "installers", "retroarch");
 }
 
-/** Drop a downloaded installer once it has evidently been used. */
+/** Drop RetroArch's installer once it has evidently been used. */
 async function forgetInstaller(): Promise<void> {
   await rm(installerDirectory(), { recursive: true, force: true }).catch(
     () => {},
@@ -55,136 +65,6 @@ async function resolveLatestStableVersion(
     // installer, and the download below reports it if it does not.
     return PINNED_STABLE_VERSION;
   }
-}
-
-/**
- * Stream the installer to disk.
- *
- * Streamed rather than buffered, unlike a core: these are north of 200MB and
- * holding one in memory to write it straight back out would be pure waste.
- */
-async function downloadInstaller({
-  installer,
-  directory,
-  signal,
-  onProgress,
-}: {
-  installer: RetroArchInstaller;
-  directory: string;
-  signal: AbortSignal;
-  onProgress: (received: number, total: number | null) => void;
-}): Promise<string> {
-  // The URL is built here, but assert the origin anyway: this ends in a file
-  // the operating system is asked to execute.
-  if (new URL(installer.url).origin !== BUILDBOT_ORIGIN) {
-    throw new LaunchError(
-      "download-failed",
-      `Refusing to download from ${new URL(installer.url).origin}`,
-    );
-  }
-
-  const response = await net.fetch(installer.url, { signal });
-  // net.fetch follows redirects, so the origin check above only covers what was
-  // asked for. This file is handed to the OS to execute, so the origin that
-  // actually answered is the one that matters.
-  assertBuildbotResponse(response, installer.url);
-  if (!response.ok) {
-    throw new LaunchError(
-      "download-failed",
-      `Buildbot returned ${response.status} for ${installer.fileName}`,
-    );
-  }
-  if (!response.body) {
-    throw new LaunchError("download-failed", "Buildbot sent an empty response");
-  }
-
-  const declared = Number.parseInt(
-    response.headers.get("content-length") ?? "",
-    10,
-  );
-  const total = Number.isFinite(declared) ? declared : null;
-  if (total !== null && total > MAX_INSTALLER_BYTES) {
-    throw new LaunchError(
-      "download-failed",
-      `${installer.fileName} is ${total} bytes, past the ${MAX_INSTALLER_BYTES} limit`,
-    );
-  }
-
-  // Only ever one installer is kept: this runs at most once per machine, and
-  // leaving a second 200MB file behind would be litter.
-  await rm(directory, { recursive: true, force: true });
-  await mkdir(directory, { recursive: true });
-
-  const target = join(directory, installer.fileName);
-  // Write beside the target and rename, so an interrupted transfer cannot leave
-  // a truncated installer that the user then runs.
-  const temp = `${target}.part`;
-  const file = createWriteStream(temp);
-  // Attached before the first write, not only around the backpressure wait: a
-  // stream reports a failed open asynchronously, and an "error" with no
-  // listener is an uncaught exception that takes the app down rather than
-  // reaching the catch below.
-  const failed = new Promise<never>((_resolve, reject) => {
-    file.once("error", reject);
-  });
-  // Nothing ever settles this rejection when the transfer succeeds, and an
-  // unobserved rejection would be reported at exit.
-  failed.catch(() => {});
-
-  const reader = response.body.getReader();
-  let received = 0;
-
-  try {
-    for (;;) {
-      const { done, value } = await Promise.race([reader.read(), failed]);
-      if (done) break;
-      received += value.length;
-      if (received > MAX_INSTALLER_BYTES) {
-        await reader.cancel();
-        throw new LaunchError(
-          "download-failed",
-          `${installer.fileName} exceeded the ${MAX_INSTALLER_BYTES} byte limit`,
-        );
-      }
-      // Respect the write stream's backpressure rather than holding a 200MB
-      // transfer in memory.
-      if (!file.write(value)) {
-        await Promise.race([
-          new Promise<void>((resolve) => file.once("drain", resolve)),
-          failed,
-        ]);
-      }
-      onProgress(received, total);
-    }
-    await Promise.race([
-      new Promise<void>((resolve, reject) => {
-        file.end((error?: Error | null) => (error ? reject(error) : resolve()));
-      }),
-      failed,
-    ]);
-  } catch (error) {
-    file.destroy();
-    await rm(temp, { force: true });
-    throw error instanceof LaunchError
-      ? error
-      : new LaunchError(
-          "download-failed",
-          error instanceof Error ? error.message : String(error),
-        );
-  }
-
-  // A transfer that stopped early still leaves a file, so check it against what
-  // the server said before handing it to the OS to run.
-  if (total !== null && received !== total) {
-    await rm(temp, { force: true });
-    throw new LaunchError(
-      "download-failed",
-      `${installer.fileName} arrived as ${received} of ${total} bytes`,
-    );
-  }
-
-  await rename(temp, target);
-  return target;
 }
 
 function openDownloadPage(): void {
@@ -219,6 +99,13 @@ export async function offerRetroArchInstall(
   // there is anything to offer on this system at all.
   const available = retroarchInstaller(PINNED_STABLE_VERSION) !== null;
 
+  // Detection can have turned up PCSX2 or Dolphin, which play one platform
+  // each. Still worth offering RetroArch for the rest of the library, but not
+  // worth claiming to have found nothing.
+  const alreadyHere = config.useDetectedEmulators
+    ? detectedStandaloneLabels()
+    : [];
+
   const { response, checkboxChecked } = await ask(parent, {
     type: "question",
     buttons: available
@@ -226,8 +113,11 @@ export async function offerRetroArchInstall(
       : ["Not now", "Open download page"],
     defaultId: 1,
     cancelId: 0,
-    title: "No emulator found",
-    message: "RomM Desktop could not find an emulator on this machine.",
+    title:
+      alreadyHere.length > 0
+        ? "Most platforms need RetroArch"
+        : "No emulator found",
+    message: noEmulatorMessage(alreadyHere),
     detail: available
       ? "It can download RetroArch's official installer (about 200 MB) and open it for you. The install is RetroArch's own, so it runs with the usual prompts and keeps updating itself afterwards.\n\nAlready have an emulator somewhere unusual? Point at it in the settings instead."
       : "On Linux, RetroArch is best installed through your distribution's package manager, which will also keep it updated. The download page lists the options.\n\nAlready have an emulator somewhere unusual? Point at it in the settings instead.",
@@ -266,25 +156,28 @@ async function runInstallerDownload(
     // The taskbar and dock already have somewhere to show this, which beats a
     // dialog that cannot update itself.
     const shouldReport = createProgressGate();
-    const file = await downloadInstaller({
-      installer,
+    const file = await downloadToFile({
+      url: installer.url,
+      fileName: installer.fileName,
       directory: installerDirectory(),
+      policy: { origins: [BUILDBOT_ORIGIN] },
+      maxBytes: MAX_INSTALLER_BYTES,
       signal: controller.signal,
       onProgress: (received, total) => {
         if (!total) return;
         const fraction = received / total;
         if (!shouldReport(fraction)) return;
-        parent?.setProgressBar(fraction);
+        showTaskbarProgress(parent, fraction);
       },
     });
-    parent?.setProgressBar(-1);
+    clearTaskbarProgress(parent);
 
     // openPath runs the installer on Windows and mounts the image on macOS,
     // which is the whole point: the user completes the install themselves.
     const failure = await shell.openPath(file);
     if (failure) shell.showItemInFolder(file);
   } catch (error) {
-    parent?.setProgressBar(-1);
+    clearTaskbarProgress(parent);
     if (controller.signal.aborted) return;
 
     const { response } = await ask(parent, {

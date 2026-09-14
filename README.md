@@ -212,6 +212,51 @@ prompt outright:
 }
 ```
 
+#### Choosing a core
+
+RomM's map names the cores that will play a game, in its own order, and the
+first one installed wins. It has no opinion about which of them
+[RetroAchievements recognises](https://docs.retroachievements.org/general/emulator-support-and-issues.html),
+and no way to know that you prefer one. `preferredCores` puts your choice at the
+front, for resolving and for downloading alike:
+
+```json
+{
+  "preferredCores": {
+    "psx": ["mednafen_psx_hw", "swanstation"],
+    "saturn": ["mednafen_saturn"],
+    "3ds": ["azahar"]
+  }
+}
+```
+
+A core named here is honoured even when the frontend never offered it, which is
+the point: it is how you reach a core RomM's map does not list. Nothing is
+narrowed away either -- whatever the frontend did offer still follows, in its
+original order, so a preference that turns out not to be published for your
+system quietly falls through to RomM's suggestion.
+
+A preference you do not have is downloaded even when something else that plays
+the game is already installed. That is the case the setting exists for: you name
+`mednafen_psx_hw` because RetroAchievements does not recognise `pcsx_rearmed`,
+and having `pcsx_rearmed` is exactly why you had to. The download is never
+allowed to cost you a launch that would have worked, though -- if the preferred
+core cannot be fetched for your system, the game starts on the core you already
+have.
+
+Two worked reasons to set it. `pcsx_rearmed` plays PlayStation games perfectly
+well but is not on RetroAchievements' supported list, while `mednafen_psx_hw`
+and `swanstation` are; and RetroAchievements wants Beetle Saturn
+(`mednafen_saturn`) rather than the Kronos core some frontends default to, which
+is also not published for Apple Silicon.
+
+Names are checked against the same `[a-z0-9_]+` alphabet as everything else
+before they become a path or a request, so nothing here can reach outside the
+cores directory. That check cannot see a plain typo, though: `mednafen_psx_h`
+is a perfectly legal name for a core that does not exist, so it finds nothing,
+fails to download, and the launch falls through to what RomM suggested. Achievements themselves are RetroArch's business: log in under its own
+Settings, and RomM will show the progression once it syncs.
+
 #### Missing cores
 
 A core that is not installed is fetched from the
@@ -246,6 +291,81 @@ directories, the per-user Programs directory, scoop, Steam, and RetroBat's
 bundled copy. An install anywhere else, notably on a drive other than C:, needs
 `retroarchPath` set by hand. Point it at the executable and the cores directory
 is derived from its parent, so `retroarchCoresPath` is usually unnecessary.
+
+### Detected standalone emulators
+
+RetroAchievements recognises the standalone PCSX2 and Dolphin but not their
+libretro cores, so for PS2 and GameCube/Wii there is no core that will ever
+unlock an achievement. Both have always been configurable under `emulators`;
+what nobody can reasonably guess is the executable name and argument template,
+which is the part people get stuck on -- RetroBat alone ships `pcsx2`,
+`pcsx2-16` and `pcsx2x6`, and the binary inside the first is `pcsx2-qt.exe`.
+
+So the shell looks for them where they land, the same way it already looks for
+RetroArch, and launches what it finds:
+
+| Emulator | Platforms    | Looked for in                                                                    |
+| -------- | ------------ | -------------------------------------------------------------------------------- |
+| PCSX2    | `ps2`        | `/Applications`, Program Files, the per-user Programs directory, scoop, RetroBat |
+| Dolphin  | `ngc`, `wii` | the same, plus `/usr/bin` and `/usr/games` and each one's Flatpak on Linux       |
+
+Nothing is written to your config, and an emulator installed by any means is
+found the same way, a frontend's own tree included, so someone already running
+RetroBat in `C:\RetroBat` gets its emulators without configuring them twice.
+Only that path, though: a portable RetroBat on another drive is not somewhere
+this can guess at, so point at it with `emulatorsBasePath` and an `emulators`
+row, as below.
+
+When there is nothing to find, the platform is still reported as launchable --
+naming the emulator it would set up rather than the one it has -- and pressing
+Play offers to fetch it from the project. Reporting the plain truth there would
+hide the button, and the button is the only thing that raises the offer. The
+file is handed to the operating system exactly as RetroArch's installer is -- an
+installer runs, a disk image mounts, a Flatpak goes to your software installer
+-- and the version comes from each project's own release index rather than a URL
+guessed here.
+
+The launch then waits rather than ending. You install the emulator the way its
+project intends -- run the installer, drag it to Applications, confirm the
+Flatpak -- and the game starts on its own once it appears, so there is no error
+to dismiss and nothing to press twice. Cancelling the download stops the wait,
+and so does closing the window.
+
+Coverage is uneven, and not in a way this shell can fix:
+
+| Emulator | macOS                            | Windows                        | Linux   |
+| -------- | -------------------------------- | ------------------------------ | ------- |
+| PCSX2    | `.tar.xz`, opens Archive Utility | installer                      | Flatpak |
+| Dolphin  | disk image                       | `.7z`, opens in Explorer on 11 | Flatpak |
+
+Dolphin publishes no Windows installer and PCSX2 no macOS disk image, so those
+two leave a portable build wherever you extract it. Detection cannot guess where
+that is, so the prompt says as much, the launch does not wait for something it
+will never see, and you point at the executable under `emulators` afterwards.
+A machine neither project builds for -- 32-bit Windows either way, ARM Linux for
+PCSX2 -- is sent to the download page rather than handed a binary it cannot run. Asked at most once per emulator per run; declining just
+lets the launch carry on as it would have. Set `offerStandaloneInstall` to
+`false` to never ask.
+
+A row you wrote yourself always wins, so configuring either of these overrides
+the detection entirely. A detected emulator does beat a `*` wildcard row,
+though: a catch-all should not claim a platform that has a real emulator
+installed for it. Set `useDetectedEmulators` to `false` to switch the whole
+thing off:
+
+```json
+{
+  "useDetectedEmulators": false
+}
+```
+
+That takes the download offer with it: with detection off, an emulator in its
+usual place is one this shell will not use, and fetching a second copy would not
+change that. Write an `emulators` row instead.
+
+Two things RetroAchievements asks of Dolphin that the shell cannot do for you:
+it wants version 2407-68 or newer for GameCube (2603a for Wii), and "Enable Dual
+Core (speedup)" switched off. Both live in Dolphin's own settings.
 
 ### Standalone emulators
 
@@ -525,6 +645,9 @@ src/
       install.ts    Fetching and unpacking one
       locations.ts  Where RetroArch and its cores live, per platform
       resolve.ts    Choosing the emulator and core for a platform
+      standalone.ts Finding an installed PCSX2 or Dolphin
+      standalone-install.ts  Offering to fetch one that is missing
+      standalone-release.ts  Reading each project's release index
       retroarch.ts  Which RetroArch installer suits this machine
     index.ts        App lifecycle, single-instance lock, initial window
     ipc.ts          IPC handlers behind window.rommNative
@@ -532,6 +655,7 @@ src/
     cache/          LRU eviction over the ROM cache
     rom-cache.ts    Download with the window's session cookies
     saves/          Per-game save and state directories
+    download.ts     Fetching a file the OS is then asked to open
     safety.ts       Validation of everything the renderer sends
     spike.ts        TEMPORARY: the --spike harness (see above)
     window.ts       Window creation and navigation policy

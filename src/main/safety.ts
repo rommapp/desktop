@@ -76,8 +76,11 @@ export function resolveDownloadUrl(
   return resolved;
 }
 
-/** Characters that are unsafe in a filename on at least one supported OS. */
-const UNSAFE_FILENAME_CHARS = new RegExp('[/\\\\:*?"<>|]', "g");
+/** Characters that are unsafe in a filename on at least one supported OS.
+ *  Control characters included: a NUL truncates the path for whatever
+ *  eventually opens the file, and the rest are unprintable in a file manager. */
+// eslint-disable-next-line no-control-regex
+const UNSAFE_FILENAME_CHARS = new RegExp('[/\\\\:*?"<>|\\u0000-\\u001f]', "g");
 
 /** Names Windows reserves for devices. Reserved whatever the extension, so
  *  `CON.zip` is as unopenable as `CON`. Rewritten on every platform so a file
@@ -239,4 +242,62 @@ export function validateLaunchRequest(value: unknown): LaunchRequest {
     ...(serverPath === undefined ? {} : { serverPath }),
     ...(fileSize === undefined ? {} : { fileSize }),
   };
+}
+
+/**
+ * Where a download is allowed to come from.
+ *
+ * Exact origins for a host that serves its own files, and host suffixes for one
+ * that hands off to a CDN: a GitHub release asset answers from
+ * release-assets.githubusercontent.com, and that name has changed before, so
+ * pinning today's spelling would break the next time it does.
+ */
+export interface OriginPolicy {
+  /** Full origins, compared exactly. */
+  origins?: string[];
+  /** Registrable suffixes, e.g. "githubusercontent.com". */
+  hostSuffixes?: string[];
+}
+
+/**
+ * Whether a URL is one of these downloads may come from.
+ *
+ * Applied to the response's final URL as well as the request, because redirects
+ * are followed and everything fetched this way is either loaded into an
+ * emulator or handed to the OS to run. A suffix has to match on a dot boundary,
+ * so evil-githubusercontent.com cannot pass as githubusercontent.com, and plain
+ * http never qualifies however the host reads.
+ */
+export function isAllowedDownloadOrigin(
+  url: string,
+  policy: OriginPolicy,
+): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:") return false;
+  if (policy.origins?.includes(parsed.origin)) return true;
+  return (
+    policy.hostSuffixes?.some(
+      (suffix) =>
+        parsed.hostname === suffix || parsed.hostname.endsWith(`.${suffix}`),
+    ) ?? false
+  );
+}
+
+/**
+ * Whether a name is already safe to create, so nothing has to be rewritten.
+ *
+ * Rejects where safeFileName above rewrites, because these files are handed to
+ * the operating system to open: a release index naming something with a path
+ * separator in it means something is wrong, and quietly renaming it and running
+ * it anyway is the wrong answer. Defined as "the sanitiser would leave this
+ * alone", so there is one rule about filenames here rather than two that can
+ * drift apart.
+ */
+export function isPlainFileName(name: string): boolean {
+  return safeFileName(name) === name;
 }

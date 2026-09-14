@@ -3,13 +3,16 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { LaunchError } from "../../shared/types.ts";
+import { type DesktopConfig, LaunchError } from "../../shared/types.ts";
 import { testConfig } from "../../test/config.ts";
 import {
+  findPreferredCores,
+  applyCorePreference,
   applyTokens,
   coreFileName,
   emulatorIsPresent,
   emulatorLabel,
+  hasPlatformSpecificEmulator,
   isSafeCoreName,
   requiresCore,
   resolveCore,
@@ -647,4 +650,147 @@ test("without the option a missing core still fails", () => {
       }),
     /None of the cores/,
   );
+});
+
+test("preferred cores go in front of the frontend's", () => {
+  const config = testConfig({
+    preferredCores: { psx: ["swanstation", "mednafen_psx_hw"] },
+  });
+  assert.deepEqual(
+    applyCorePreference(config, "psx", ["pcsx_rearmed", "mednafen_psx_hw"]),
+    // The preference leads; what the frontend offered and the preference did
+    // not name still follows, so nothing is narrowed away.
+    ["swanstation", "mednafen_psx_hw", "pcsx_rearmed"],
+  );
+});
+
+test("a preferred core the frontend never offered is still honoured", () => {
+  // The whole point: RomM's map cannot know which core RetroAchievements
+  // recognises, so naming one it does not list has to reach it.
+  const config = testConfig({ preferredCores: { "3ds": ["azahar"] } });
+  assert.deepEqual(applyCorePreference(config, "3ds", []), ["azahar"]);
+});
+
+test("platform slugs match without regard to case", () => {
+  const config = testConfig({ preferredCores: { PSX: ["swanstation"] } });
+  assert.deepEqual(applyCorePreference(config, "psx", ["pcsx_rearmed"]), [
+    "swanstation",
+    "pcsx_rearmed",
+  ]);
+});
+
+test("a platform with no preference is left exactly as it came", () => {
+  const config = testConfig({ preferredCores: { psx: ["swanstation"] } });
+  const cores = ["snes9x", "bsnes"];
+  assert.deepEqual(applyCorePreference(config, "snes", cores), cores);
+  assert.deepEqual(applyCorePreference(testConfig(), "snes", cores), cores);
+});
+
+test("a preferred core is not repeated when the frontend named it too", () => {
+  const config = testConfig({ preferredCores: { snes: ["snes9x"] } });
+  assert.deepEqual(applyCorePreference(config, "snes", ["snes9x", "bsnes"]), [
+    "snes9x",
+    "bsnes",
+  ]);
+});
+
+test("a preference that cannot be a filename is dropped, not obeyed", () => {
+  // These names reach a filesystem path and a buildbot URL, so the config is no
+  // more trusted here than the renderer is.
+  const config = testConfig({
+    preferredCores: { snes: ["../../evil", "Snes9x", "snes9x"] },
+  });
+  assert.deepEqual(applyCorePreference(config, "snes", ["bsnes"]), [
+    "snes9x",
+    "bsnes",
+  ]);
+});
+
+test("the preference list itself is de-duplicated for its other readers", () => {
+  // applyCorePreference is not the only caller any more: the install plan reads
+  // findPreferredCores directly, and a name repeated by hand there becomes the
+  // same download attempted twice.
+  const config = testConfig({
+    preferredCores: { psx: ["mednafen_psx_hw", "mednafen_psx_hw"] },
+  });
+  assert.deepEqual(findPreferredCores(config, "psx"), ["mednafen_psx_hw"]);
+});
+
+test("a core named twice is tried once", () => {
+  // A hand-edited list can repeat itself, and every entry becomes a download
+  // attempt when the core is missing.
+  const config = testConfig({
+    preferredCores: { snes: ["snes9x", "snes9x", "bsnes"] },
+  });
+  assert.deepEqual(applyCorePreference(config, "snes", ["snes9x"]), [
+    "snes9x",
+    "bsnes",
+  ]);
+});
+
+test("a malformed preferredCores table is ignored rather than fatal", () => {
+  // Hand-edited JSON, so every wrong shape has to fall through to the
+  // frontend's list instead of throwing mid-launch.
+  const cores = ["snes9x"];
+  for (const table of [
+    null,
+    undefined,
+    "snes9x",
+    42,
+    { snes: "snes9x" },
+    { snes: null },
+    { snes: [1, 2, 3] },
+  ]) {
+    const config = testConfig({
+      // Deliberately wrong shapes, so the cast goes via unknown: the point is
+      // what happens when the JSON on disk does not match the type.
+      preferredCores: table as unknown as DesktopConfig["preferredCores"],
+    });
+    assert.deepEqual(
+      applyCorePreference(config, "snes", cores),
+      cores,
+      `${table}`,
+    );
+  }
+});
+
+test("RetroArch being installed does not count as a PS2 emulator", () => {
+  // The bug this guards: emulatorIsPresent answers "would a launch find an
+  // executable", which is true for every platform once RetroArch exists. Asking
+  // that before offering PCSX2 would mean never offering it, since RetroArch is
+  // the normal case and a libretro core earns no achievements on PS2.
+  const { binary, root } = fakeInstall(["snes9x"]);
+  const config = testConfig({
+    retroarchPath: binary,
+    retroarchCoresPath: root,
+    useDetectedEmulators: false,
+  });
+  assert.ok(emulatorIsPresent(config, "ps2"));
+  assert.equal(hasPlatformSpecificEmulator(config, "ps2"), false);
+});
+
+test("an explicit row for the platform does count", () => {
+  const { root } = fakeInstall([]);
+  const standalone = join(root, "pcsx2");
+  writeFileSync(standalone, "");
+  const config = testConfig({
+    emulators: [{ platformSlug: "PS2", command: standalone, args: ["{rom}"] }],
+    useDetectedEmulators: false,
+  });
+  // Matched without regard to case, like every other slug lookup.
+  assert.ok(hasPlatformSpecificEmulator(config, "ps2"));
+  assert.equal(hasPlatformSpecificEmulator(config, "ngc"), false);
+});
+
+test("a wildcard row is not a considered choice for this platform", () => {
+  // It is a catch-all for platforms with nothing better, which is the same
+  // reason detection outranks it in findMapping.
+  const { root } = fakeInstall([]);
+  const generic = join(root, "generic");
+  writeFileSync(generic, "");
+  const config = testConfig({
+    emulators: [{ platformSlug: "*", command: generic, args: ["{rom}"] }],
+    useDetectedEmulators: false,
+  });
+  assert.equal(hasPlatformSpecificEmulator(config, "ps2"), false);
 });

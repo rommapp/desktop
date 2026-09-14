@@ -16,6 +16,7 @@
 // unit-testable; the fetching lives in bootstrap.ts.
 
 import { type DesktopConfig } from "../../shared/types.ts";
+import { compareVersions } from "../version.ts";
 import { BUILDBOT_ORIGIN } from "./buildbot.ts";
 
 // The emulator and its cores come from the same host, so the origin is defined
@@ -37,18 +38,6 @@ export const PINNED_STABLE_VERSION = "1.22.2";
 /** Nothing sane is this large; a wrong URL should not become a disk-filling
  *  write. The installers are a little over 200MB. */
 export const MAX_INSTALLER_BYTES = 1024 * 1024 * 1024;
-
-/** Compare dotted numeric versions, shorter ones padded with zeroes. */
-export function compareVersions(a: string, b: string): number {
-  const left = a.split(".").map(Number);
-  const right = b.split(".").map(Number);
-  const length = Math.max(left.length, right.length);
-  for (let index = 0; index < length; index += 1) {
-    const difference = (left[index] ?? 0) - (right[index] ?? 0);
-    if (difference !== 0) return difference;
-  }
-  return 0;
-}
 
 /**
  * Pick the newest release out of the buildbot's stable index.
@@ -130,6 +119,27 @@ export function retroarchInstaller(
  */
 export function hasNoEmulator(config: DesktopConfig): boolean {
   return !config.retroarchPath && config.emulators.length === 0;
+}
+
+/**
+ * How the offer opens, given the standalone emulators detection found.
+ *
+ * Detection can turn up PCSX2 or Dolphin, which play one platform each and
+ * leave the rest of a library unplayable -- so the offer is still worth making,
+ * and the reason for it is still true. What would not be true is the sentence
+ * it used to open with. Saying "could not find an emulator" to someone looking
+ * at PCSX2 in their Applications folder is the kind of wrongness that makes a
+ * user stop believing the next thing the app tells them.
+ */
+export function noEmulatorMessage(detected: string[]): string {
+  if (detected.length === 0) {
+    return "RomM Desktop could not find an emulator on this machine.";
+  }
+  const found =
+    detected.length === 1
+      ? detected[0]
+      : `${detected.slice(0, -1).join(", ")} and ${detected.at(-1)}`;
+  return `RomM Desktop found ${found}, but nothing that plays the rest of your library.`;
 }
 
 /** Whether to raise the offer at all. */
