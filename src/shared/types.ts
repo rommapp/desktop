@@ -57,6 +57,9 @@ export interface LaunchState {
   stage?: "rom" | "core" | "emulator";
   /** The core being installed, while stage is "core". */
   core?: string;
+  /** The emulator being set up, while stage is "emulator". Present for both
+   *  halves of that stage, so a frontend can name what it is waiting for. */
+  emulator?: string;
   /** 0..1 while downloading, absent otherwise. */
   progress?: number;
   /** Bytes transferred so far, while downloading. */

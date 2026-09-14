@@ -34,12 +34,18 @@ import {
   shouldOfferRetroArch,
 } from "./retroarch.ts";
 
-/** Where a downloaded installer is kept, beside the config. */
+/**
+ * Where RetroArch's installer is kept, beside the config.
+ *
+ * Its own subdirectory, not the whole `installers` tree: the standalone offer
+ * keeps PCSX2 and Dolphin downloads under there too, and forgetInstaller below
+ * would otherwise delete an archive the user has been told to go and extract.
+ */
 export function installerDirectory(): string {
-  return join(app.getPath("userData"), "installers");
+  return join(app.getPath("userData"), "installers", "retroarch");
 }
 
-/** Drop a downloaded installer once it has evidently been used. */
+/** Drop RetroArch's installer once it has evidently been used. */
 async function forgetInstaller(): Promise<void> {
   await rm(installerDirectory(), { recursive: true, force: true }).catch(
     () => {},

@@ -33,7 +33,13 @@ import {
 /** Dolphin's macOS image is the largest of these at a few hundred megabytes. */
 const MAX_EMULATOR_BYTES = 1024 * 1024 * 1024;
 
-/** Kept beside the config, one at a time, like the RetroArch installer. */
+/**
+ * Kept beside the config, one at a time, like the RetroArch installer.
+ *
+ * One directory per emulator, and never the shared `installers` root itself:
+ * each download empties its own directory, and the RetroArch offer cleans up
+ * its own, so neither can take the other's file with it.
+ */
 function downloadDirectory(id: string): string {
   return join(app.getPath("userData"), "installers", id);
 }
@@ -57,10 +63,16 @@ async function fetchIndex(
     if (!isAllowedDownloadOrigin(response.url || url, policy)) return null;
     if (!response.ok) return null;
     return await response.json();
-  } catch (error) {
-    if (signal.aborted) throw error;
+  } catch {
+    if (signal.aborted) throw cancelled();
     return null;
   }
+}
+
+/** The launch's own cancellation error, so a cancel reads as one rather than
+ *  as whatever Electron threw when the socket went away. */
+function cancelled(): LaunchError {
+  return new LaunchError("download-failed", "Launch cancelled");
 }
 
 function ask(
@@ -127,24 +139,7 @@ export async function offerStandaloneInstall({
 }): Promise<InstallOffer> {
   const source = RELEASE_SOURCES[emulatorId];
   if (!source) return DECLINED;
-
-  // A transfer this long should not outlive the window that asked for it. The
-  // launch's own signal already covers a cancel from the page and the app
-  // quitting; this adds the parent closing on its own, which on macOS leaves
-  // the app -- and otherwise the download -- running.
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-  if (signal.aborted) abort();
-  signal.addEventListener("abort", abort, { once: true });
-  parent?.once("closed", abort);
-  app.once("before-quit", abort);
-  try {
-    return await runOffer(source, parent, controller.signal, onProgress);
-  } finally {
-    signal.removeEventListener("abort", abort);
-    if (parent && !parent.isDestroyed()) parent.off("closed", abort);
-    app.off("before-quit", abort);
-  }
+  return runOffer(source, parent, signal, onProgress);
 }
 
 async function runOffer(
@@ -204,7 +199,11 @@ async function runOffer(
     return { handedOff: true, detectable: detectable && !failure };
   } catch (error) {
     clearTaskbarProgress(parent);
-    if (signal.aborted) return { handedOff: true, detectable: false };
+    // Neither of these handed anything over, and saying they did would have the
+    // caller tell the user to go and configure an emulator that was never
+    // downloaded. A cancel is the launch's own cancellation; a failure keeps
+    // the reason it failed for.
+    if (signal.aborted) throw cancelled();
     const { response: choice } = await ask(parent, {
       type: "error",
       buttons: ["Close", "Open download page"],
@@ -215,6 +214,11 @@ async function runOffer(
       detail: `${error instanceof LaunchError || error instanceof Error ? error.message : String(error)}\n\nYou can install it yourself and RomM Desktop will find it.`,
     });
     if (choice === 1) void shell.openExternal(source.downloadPage);
-    return { handedOff: true, detectable: false };
+    throw error instanceof LaunchError
+      ? error
+      : new LaunchError(
+          "download-failed",
+          error instanceof Error ? error.message : String(error),
+        );
   }
 }

@@ -168,17 +168,24 @@ export class Launcher {
       });
       return { supported: true, emulator: launch.label };
     } catch (error) {
+      const launchError = toLaunchError(error);
       // A core that is not installed but can be is reported as supported, so
       // the frontend offers the launch that will fetch it. The alternative is a
       // button that stays hidden and a core that therefore never arrives.
+      //
+      // Not when the config itself is what failed, though: overlapping cache
+      // and save roots stop every launch on this machine, and no download
+      // changes that, so reporting either answer would be a Play button that
+      // cannot work.
       const installable =
-        describeInstallableCore(config, query.platformSlug, cores) ??
-        // A platform whose emulator is not a core at all, so no amount of core
-        // resolution above could have found it.
-        describeInstallableEmulator(config, query.platformSlug);
+        launchError.code === "invalid-request"
+          ? null
+          : (describeInstallableCore(config, query.platformSlug, cores) ??
+            // A platform whose emulator is not a core at all, so no amount of
+            // core resolution above could have found it.
+            describeInstallableEmulator(config, query.platformSlug));
       if (installable) return { supported: true, emulator: installable };
 
-      const launchError = toLaunchError(error);
       switch (launchError.code) {
         case "unsupported-platform":
         case "no-emulator-configured":
@@ -276,6 +283,13 @@ export class Launcher {
     const label = standaloneLabel(emulatorId) ?? emulatorId;
     const signal = entry.controller.signal;
     entry.installing = label;
+    // The download and the wait that follows it are one span, and both belong
+    // to the window that asked for the game: on macOS closing it does not quit
+    // the app, and nothing else would stop this polling for half an hour.
+    // Wired here rather than around the download alone, which was the same bug
+    // one step earlier.
+    const abort = () => entry.controller.abort();
+    parent?.once("closed", abort);
     try {
       const shouldReport = createProgressGate();
       const { handedOff, detectable } = await offerStandaloneInstall({
@@ -289,6 +303,7 @@ export class Launcher {
             romId: request.romId,
             status: "downloading",
             stage: "emulator",
+            emulator: label,
             progress,
             received,
             total: total ?? undefined,
@@ -308,6 +323,7 @@ export class Launcher {
       await this.awaitEmulator(request, emulatorId, label, signal);
     } finally {
       entry.installing = null;
+      if (parent && !parent.isDestroyed()) parent.off("closed", abort);
     }
   }
 
@@ -337,13 +353,14 @@ export class Launcher {
           `${label} has not appeared yet. Finish installing it, then press Play again.`,
         );
       }
-      // No progress to report -- the install is the user's, and how far along
-      // it is only they can see -- but a frontend showing the wait beats one
-      // that looks like it forgot the click.
+      // No progress and no byte counts: the install is the user's, and how far
+      // along it is only they can see. The absence is the signal a frontend
+      // reads to tell the wait apart from the download before it.
       this.emit({
         romId: request.romId,
         status: "downloading",
         stage: "emulator",
+        emulator: label,
       });
       await delay(INSTALL_POLL_MS, signal);
     }

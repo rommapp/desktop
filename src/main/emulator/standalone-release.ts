@@ -65,12 +65,35 @@ export function installsWhereDetectionLooks(kind: ArtifactKind): boolean {
   return kind !== "archive";
 }
 
-function kindOf(fileName: string): ArtifactKind {
+/** Archive formats the shell is willing to hand to a file manager. */
+const ARCHIVE_SUFFIXES = [
+  ".7z",
+  ".zip",
+  ".tar.xz",
+  ".tar.gz",
+  ".tar.bz2",
+  ".tar.zst",
+  ".AppImage",
+];
+
+/**
+ * What an artifact is, or null when it is nothing this should open.
+ *
+ * An allowlist rather than an "everything else is an archive" default, because
+ * every kind here ends at shell.openPath and on Windows that runs an .exe. A
+ * bare executable in a release index -- an updater, an uninstaller, anything
+ * added later -- would otherwise be classified as an archive and then executed,
+ * which is the one thing calling it "not an installer" was meant to prevent.
+ */
+function kindOf(fileName: string): ArtifactKind | null {
   if (fileName.endsWith(".dmg")) return "disk-image";
   if (fileName.endsWith(".flatpak")) return "flatpak";
   // Only an actual installer counts; a bare .exe could be anything.
   if (fileName.endsWith("installer.exe")) return "installer";
-  return "archive";
+  if (ARCHIVE_SUFFIXES.some((suffix) => fileName.endsWith(suffix))) {
+    return "archive";
+  }
+  return null;
 }
 
 function fileNameOf(url: string): string {
@@ -132,10 +155,12 @@ export function pickDolphinArtifact(
     // cannot stray onto it.
     const fileName = fileNameOf(url);
     if (!fileName) continue;
+    const kind = kindOf(fileName);
+    if (!kind) continue;
     return {
       url,
       fileName,
-      kind: kindOf(fileName),
+      kind,
       version: typeof shortrev === "string" ? shortrev : "latest",
     };
   }
@@ -207,10 +232,12 @@ export function pickPcsx2Artifact(
     if (tags.includes("symbols")) continue;
     const fileName = fileNameOf(entry.url);
     if (!fileName) continue;
+    const kind = kindOf(fileName);
+    if (!kind) continue;
     candidates.push({
       url: entry.url,
       fileName,
-      kind: kindOf(fileName),
+      kind,
       version: typeof version === "string" ? version : "latest",
     });
   }

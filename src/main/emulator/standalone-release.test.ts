@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isAllowedDownloadOrigin } from "../safety.ts";
-import { DOLPHIN_BETA, PCSX2_STABLE } from "./release-fixtures.ts";
+import { DOLPHIN_BETA, PCSX2_STABLE } from "../../test/release-fixtures.ts";
 import {
   RELEASE_SOURCES,
   installsWhereDetectionLooks,
@@ -112,6 +112,28 @@ test("a Linux machine PCSX2 does not build for is offered nothing", () => {
   assert.equal(pickPcsx2Artifact(PCSX2, "linux", "arm64"), null);
   assert.equal(pickPcsx2Artifact(PCSX2, "linux", "arm"), null);
   assert.ok(pickPcsx2Artifact(PCSX2, "linux", "x64"));
+});
+
+test("a bare executable in a release index is not offered", () => {
+  // Every kind here ends at shell.openPath, which runs an .exe on Windows.
+  // Classifying an unknown executable as an archive and opening it anyway would
+  // have executed whatever a release index happened to list.
+  const index = {
+    shortrev: "2606a",
+    artifacts: [
+      {
+        system: "Windows x64",
+        url: "https://dl.dolphin-emu.org/uninstall.exe",
+      },
+      { system: "Windows x64", url: "https://dl.dolphin-emu.org/dolphin.7z" },
+    ],
+  };
+  const found = pickDolphinArtifact(index, "win32", "x64");
+  assert.equal(found?.fileName, "dolphin.7z");
+  assert.equal(found?.kind, "archive");
+
+  const onlyExe = { shortrev: "1", artifacts: [index.artifacts[0]] };
+  assert.equal(pickDolphinArtifact(onlyExe, "win32", "x64"), null);
 });
 
 test("an unknown platform is offered nothing rather than a guess", () => {
