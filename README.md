@@ -195,9 +195,12 @@ usual locations are re-probed on each launch attempt instead, so the next press
 of Play picks it up. An install placed somewhere unusual is still not guessed at,
 and needs `retroarchPath` set by hand.
 
-One wrinkle on a completely fresh RetroArch: its cores directory is created the
-first time it runs, so [missing cores](#missing-cores) cannot be downloaded until
-you have opened RetroArch once.
+A RetroArch that has never been run has no cores directory yet, so the shell
+falls back to where that directory belongs on your platform and creates it when
+it writes the first core. [Missing cores](#missing-cores) therefore work straight
+after the install, without opening RetroArch first. That fallback applies only to
+an install the shell detected; a hand-configured emulator, a Flatpak RetroArch
+included, still needs `retroarchCoresPath`.
 
 The installer is kept in `installers` beside the config, and deleted once an
 emulator has been found. Set `offerRetroArchInstall` to `false` to suppress the
@@ -520,6 +523,7 @@ src/
       bootstrap.ts  First-run offer to fetch RetroArch's own installer
       buildbot.ts   Where a missing libretro core comes from
       install.ts    Fetching and unpacking one
+      locations.ts  Where RetroArch and its cores live, per platform
       resolve.ts    Choosing the emulator and core for a platform
       retroarch.ts  Which RetroArch installer suits this machine
     index.ts        App lifecycle, single-instance lock, initial window
