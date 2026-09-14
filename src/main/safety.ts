@@ -76,16 +76,19 @@ export function resolveDownloadUrl(
 const UNSAFE_FILENAME_CHARS = new RegExp('[/\\\\:*?"<>|]', "g");
 
 /** Reduce a server-supplied name to one safe filename component; the result is
- *  only ever joined onto the cache directory. */
-export function safeCacheFileName(fileName: string, romId: number): string {
-  const cleaned = fileName
+ *  only ever joined onto a directory the shell owns. */
+export function safeFileNameComponent(fileName: string): string {
+  return fileName
     .replace(UNSAFE_FILENAME_CHARS, "_")
     .replace(/^\.+/, "")
     .trim()
     .slice(0, 120);
+}
+
+export function safeCacheFileName(fileName: string, romId: number): string {
   // Prefixing with the ROM id keeps two games that share a filename apart and
   // guarantees a non-empty name when cleaning removes everything.
-  return `${romId}-${cleaned || "rom"}`;
+  return `${romId}-${safeFileNameComponent(fileName) || "rom"}`;
 }
 
 /** Check a launch request's shape before any of it reaches the filesystem or a

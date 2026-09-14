@@ -139,8 +139,9 @@ started with a controller does not need a mouse to continue.
 
 ## Scope
 
-Saves and states are left wherever the local emulator writes them. Syncing them
-back to RomM is out of scope for now.
+Set `saveDataPath` and the shell gives each game its own directory for saves and
+states, instead of leaving them wherever the emulator happened to write them
+(see [Save data](#save-data)). Syncing them back to RomM is still out of scope.
 
 ## Emulator configuration
 
@@ -174,7 +175,8 @@ is derived from its parent, so `retroarchCoresPath` is usually unnecessary.
 ### Standalone emulators
 
 `emulators` maps a platform to any executable. `{rom}` is replaced with the
-cached ROM path and `{core}` with the resolved libretro core path.
+cached ROM path and `{core}` with the resolved libretro core path;
+[Save data](#save-data) adds four more tokens for saves and states.
 Substitution happens per argv entry, so no shell is involved and paths
 containing spaces need no quoting. An entry that uses `{core}` when no core can
 be resolved fails with an explanation rather than passing an empty argument to
@@ -259,9 +261,76 @@ The server supplies only the path below the root, and anything resolving
 outside the configured root is rejected rather than normalised, so this cannot
 be used to name an arbitrary file.
 
-Note that emulators write save files and states next to the ROM. Launching in
-place puts those in your library rather than in the cache, where RomM may then
-scan them. That is the main reason this is opt-in rather than automatic.
+Note that emulators write save files and states next to the ROM by default.
+Launching in place puts those in your library rather than in the cache, where
+RomM may then scan them. Setting `saveDataPath` keeps them out of both.
+
+### Save data
+
+By default each emulator decides where a game's saves and states go, and the
+usual default is next to the ROM. That has two consequences here. A ROM played
+from the cache keeps its save in `rom-cache`, where the eviction in
+[ROM cache](#rom-cache) eventually deletes it along with the ROM. And the cached
+copy is named `<romId>-<name>`, while an in-place launch under `libraryPath`
+sees the server's own filename, so the same game writes `1-Chrono Trigger.srm`
+one way and `Chrono Trigger.srm` the other. Two saves, one game, no warning.
+
+Set `saveDataPath` and the shell hands each game a directory of its own instead:
+
+```json
+{
+  "saveDataPath": "/home/you/romm-saves"
+}
+```
+
+```
+<saveDataPath>/<romId>/saves/<name>.srm
+<saveDataPath>/<romId>/states/<name>.state
+```
+
+The directory is keyed on the ROM id and the filename comes from the server, so
+a cached launch and an in-place launch land on one file. RetroArch is passed
+`-s` and `-S`, which override whatever `savefile_directory` your `retroarch.cfg`
+sets. If you already keep RetroArch's saves somewhere deliberate, a synced folder
+say, leave `saveDataPath` unset and nothing changes.
+
+A configured emulator has to be told, since the shell only passes the arguments
+a mapping asks for. `{saves}` and `{states}` expand to the two directories, and
+`{savefile}` and `{statefile}` to the files inside them, for an emulator that
+wants a path rather than a directory:
+
+```json
+{
+  "saveDataPath": "/home/you/romm-saves",
+  "emulators": [
+    {
+      "platformSlug": "*",
+      "label": "RetroArch (Flatpak)",
+      "command": "/usr/bin/flatpak",
+      "args": [
+        "run",
+        "org.libretro.RetroArch",
+        "-L",
+        "{core}",
+        "-s",
+        "{savefile}",
+        "-S",
+        "{statefile}",
+        "{rom}"
+      ]
+    }
+  ]
+}
+```
+
+Which of the four an emulator wants, and whether it takes them on the command
+line at all, varies: several only read a save directory from their own config
+file. There the shell cannot place the save for you, and the entry is better
+left without the tokens.
+
+A mapping naming any of them while `saveDataPath` is unset fails with an
+explanation rather than handing the emulator a blank argument, the same way
+`{core}` does.
 
 ### Fullscreen
 
@@ -350,6 +419,7 @@ src/
     ipc.ts          IPC handlers behind window.rommNative
     launcher.ts     Download, resolve, spawn, track
     rom-cache.ts    Download with the window's session cookies, LRU cache
+    saves/          Per-game save and state directories
     safety.ts       Validation of everything the renderer sends
     spike.ts        TEMPORARY: the --spike harness (see above)
     window.ts       Window creation and navigation policy

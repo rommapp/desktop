@@ -61,6 +61,7 @@ test("applyTokens substitutes without splitting argv entries", () => {
   const args = applyTokens(["-L", "{core}", "{rom}"], {
     rom: "/cache/My Game (USA).zip",
     core: "/cores/snes9x_libretro.so",
+    savePaths: null,
   });
   assert.deepEqual(args, [
     "-L",
@@ -87,6 +88,7 @@ test("resolveLaunch builds a RetroArch command from the first installed core", (
     platformSlug: "snes",
     cores: ["snes9x"],
     romPath: "/cache/1-game.sfc",
+    savePaths: null,
   });
   assert.equal(launch.command, binary);
   assert.deepEqual(launch.args, [
@@ -117,6 +119,7 @@ test("resolveLaunch prefers a per-platform mapping over RetroArch", () => {
     platformSlug: "ngc",
     cores: [],
     romPath: "/cache/2-game.iso",
+    savePaths: null,
   });
   assert.equal(launch.command, standalone);
   assert.deepEqual(launch.args, ["-e", "/cache/2-game.iso"]);
@@ -134,6 +137,7 @@ test("resolveLaunch falls back to a wildcard mapping", () => {
     platformSlug: "anything",
     cores: [],
     romPath: "/cache/3-game.bin",
+    savePaths: null,
   });
   assert.equal(launch.command, generic);
 });
@@ -147,6 +151,7 @@ test("resolveLaunch reports a platform with no known cores", () => {
         platformSlug: "switch",
         cores: [],
         romPath: "/cache/4-game.xci",
+        savePaths: null,
       }),
     { code: "unsupported-platform" },
   );
@@ -161,6 +166,7 @@ test("resolveLaunch reports cores that are known but not installed", () => {
         platformSlug: "n64",
         cores: ["mupen64plus_next"],
         romPath: "/cache/5-game.z64",
+        savePaths: null,
       }),
     { code: "no-emulator-configured" },
   );
@@ -178,6 +184,7 @@ test("resolveLaunch reports a configured emulator that has been removed", () => 
         platformSlug: "psx",
         cores: [],
         romPath: "/cache/6-game.chd",
+        savePaths: null,
       }),
     { code: "emulator-not-found" },
   );
@@ -203,6 +210,7 @@ test("resolveLaunch refuses a mapping whose {core} cannot be resolved", () => {
         platformSlug: "snes",
         cores: ["snes9x"],
         romPath: "/cache/7-game.sfc",
+        savePaths: null,
       }),
     // An empty -L argument would fail inside the emulator instead.
     { code: "no-emulator-configured" },
@@ -227,6 +235,7 @@ test("resolveLaunch still fills {core} for a mapping when one is installed", () 
     platformSlug: "snes",
     cores: ["snes9x"],
     romPath: "/cache/8-game.sfc",
+    savePaths: null,
   });
   assert.deepEqual(launch.args, [
     "-L",
@@ -252,6 +261,7 @@ test("resolveLaunch leaves a mapping without {core} alone when no core exists", 
     platformSlug: "ps2",
     cores: [],
     romPath: "/cache/9-game.iso",
+    savePaths: null,
   });
   assert.deepEqual(launch.args, ["-batch", "/cache/9-game.iso"]);
 });
@@ -299,6 +309,7 @@ test("resolveLaunch runs a mapping named relative to the base path", () => {
     platformSlug: "ps2",
     cores: [],
     romPath: "/cache/10-game.chd",
+    savePaths: null,
   });
 
   assert.equal(launch.command, exe);
@@ -319,11 +330,117 @@ test("resolveLaunch reports the resolved path when a relative command is missing
         platformSlug: "ps2",
         cores: [],
         romPath: "/cache/11-game.chd",
+        savePaths: null,
       }),
     // The message has to name where it actually looked, not what was typed.
     (error: unknown) =>
       error instanceof LaunchError &&
       error.code === "emulator-not-found" &&
       error.message.includes(join(root, "pcsx2", "pcsx2-qt.exe")),
+  );
+});
+
+/** The sandbox as resolveSavePaths would hand it over, without touching disk. */
+function fakeSavePaths(root: string) {
+  return {
+    saveDir: join(root, "1", "saves"),
+    stateDir: join(root, "1", "states"),
+    saveFile: join(root, "1", "saves", "game.srm"),
+    statePrefix: join(root, "1", "states", "game.state"),
+  };
+}
+
+test("resolveLaunch points RetroArch at the sandbox when one is configured", () => {
+  const { root, binary } = fakeInstall(["snes9x"]);
+  const savePaths = fakeSavePaths(join(root, "save-data"));
+  const launch = resolveLaunch({
+    config: baseConfig({ retroarchPath: binary, retroarchCoresPath: root }),
+    platformSlug: "snes",
+    cores: ["snes9x"],
+    romPath: "/cache/1-game.sfc",
+    savePaths,
+  });
+  assert.deepEqual(launch.args, [
+    "-L",
+    join(root, coreFileName("snes9x")),
+    "-s",
+    savePaths.saveFile,
+    "-S",
+    savePaths.statePrefix,
+    "/cache/1-game.sfc",
+  ]);
+});
+
+test("applyTokens substitutes the save directories and the files in them", () => {
+  const savePaths = fakeSavePaths("/save-data");
+  const args = applyTokens(
+    ["-savedir", "{saves}", "-sram", "{savefile}", "-state", "{statefile}"],
+    { rom: "/cache/1-game.sfc", core: null, savePaths },
+  );
+  assert.deepEqual(args, [
+    "-savedir",
+    savePaths.saveDir,
+    "-sram",
+    savePaths.saveFile,
+    "-state",
+    savePaths.statePrefix,
+  ]);
+});
+
+test("resolveLaunch fills {saves} and {states} for a mapping", () => {
+  const { root } = fakeInstall([]);
+  const standalone = join(root, "pcsx2");
+  writeFileSync(standalone, "");
+  const savePaths = fakeSavePaths(join(root, "save-data"));
+  const launch = resolveLaunch({
+    config: baseConfig({
+      emulators: [
+        {
+          platformSlug: "ps2",
+          command: standalone,
+          args: ["-memcard", "{saves}", "-statedir", "{states}", "{rom}"],
+        },
+      ],
+    }),
+    platformSlug: "ps2",
+    cores: [],
+    romPath: "/cache/12-game.chd",
+    savePaths,
+  });
+  assert.deepEqual(launch.args, [
+    "-memcard",
+    savePaths.saveDir,
+    "-statedir",
+    savePaths.stateDir,
+    "/cache/12-game.chd",
+  ]);
+});
+
+test("resolveLaunch refuses a mapping naming {saves} with no saveDataPath", () => {
+  const { root } = fakeInstall([]);
+  const standalone = join(root, "pcsx2");
+  writeFileSync(standalone, "");
+  assert.throws(
+    () =>
+      resolveLaunch({
+        config: baseConfig({
+          emulators: [
+            {
+              platformSlug: "ps2",
+              command: standalone,
+              args: ["-memcard", "{saves}", "{rom}"],
+            },
+          ],
+        }),
+        platformSlug: "ps2",
+        cores: [],
+        romPath: "/cache/13-game.chd",
+        savePaths: null,
+      }),
+    // An empty -memcard argument would fail inside the emulator instead.
+    (error: unknown) =>
+      error instanceof LaunchError &&
+      error.code === "no-emulator-configured" &&
+      error.message.includes("saveDataPath"),
   );
 });

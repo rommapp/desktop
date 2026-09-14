@@ -5,6 +5,7 @@ import {
   type EmulatorMapping,
   LaunchError,
 } from "../../shared/types.ts";
+import { type SavePaths } from "../saves/paths.ts";
 
 /** Fallback row applied to any platform without its own mapping. */
 const WILDCARD_SLUG = "*";
@@ -44,12 +45,26 @@ export interface ResolvedLaunch {
  */
 export function applyTokens(
   args: string[],
-  tokens: { rom: string; core: string | null },
+  tokens: {
+    rom: string;
+    core: string | null;
+    savePaths: SavePaths | null;
+  },
 ): string[] {
+  const { savePaths } = tokens;
   return args.map((arg) =>
-    arg.replaceAll("{rom}", tokens.rom).replaceAll("{core}", tokens.core ?? ""),
+    arg
+      .replaceAll("{rom}", tokens.rom)
+      .replaceAll("{core}", tokens.core ?? "")
+      .replaceAll("{saves}", savePaths?.saveDir ?? "")
+      .replaceAll("{states}", savePaths?.stateDir ?? "")
+      .replaceAll("{savefile}", savePaths?.saveFile ?? "")
+      .replaceAll("{statefile}", savePaths?.statePrefix ?? ""),
   );
 }
+
+/** The tokens that only mean something once the shell owns the save data. */
+const SAVE_TOKENS = ["{saves}", "{states}", "{savefile}", "{statefile}"];
 
 function findMapping(
   config: DesktopConfig,
@@ -115,11 +130,13 @@ export function resolveLaunch({
   platformSlug,
   cores,
   romPath,
+  savePaths,
 }: {
   config: DesktopConfig;
   platformSlug: string;
   cores: string[];
   romPath: string;
+  savePaths: SavePaths | null;
 }): ResolvedLaunch {
   const mapping = findMapping(config, platformSlug);
   if (mapping) {
@@ -146,11 +163,23 @@ export function resolveLaunch({
         `${mapping.label ?? mapping.command} needs a libretro core, but ${describeMissingCore(config, platformSlug, cores)}.`,
       );
     }
+    // Same reasoning as {core}: an empty save directory would be handed to the
+    // emulator as a blank argument and fail somewhere far less legible.
+    const saveToken = mapping.args.find((arg) =>
+      SAVE_TOKENS.some((token) => arg.includes(token)),
+    );
+    if (!savePaths && saveToken) {
+      throw new LaunchError(
+        "no-emulator-configured",
+        `${mapping.label ?? mapping.command} names ${saveToken}, but no saveDataPath is set.`,
+      );
+    }
     return {
       command,
       args: applyTokens(mapping.args, {
         rom: romPath,
         core: core?.path ?? null,
+        savePaths,
       }),
       label: mapping.label ?? mapping.command,
     };
@@ -183,9 +212,16 @@ export function resolveLaunch({
     );
   }
 
+  // -s and -S override whatever savefile_directory the user's retroarch.cfg
+  // sets, which is the point: the same game launched from the cache and from
+  // the library then writes to one place instead of two.
+  const saveArgs = savePaths
+    ? ["-s", savePaths.saveFile, "-S", savePaths.statePrefix]
+    : [];
+
   return {
     command: config.retroarchPath,
-    args: ["-L", core.path, romPath],
+    args: ["-L", core.path, ...saveArgs, romPath],
     label: `RetroArch (${core.name})`,
   };
 }

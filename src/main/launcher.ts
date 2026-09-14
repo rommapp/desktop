@@ -1,5 +1,6 @@
 import { type Session } from "electron";
 import { type ChildProcess, spawn } from "node:child_process";
+import { mkdir } from "node:fs/promises";
 import {
   type LaunchRequest,
   type LaunchResult,
@@ -12,6 +13,7 @@ import { loadConfig } from "./config.ts";
 import { resolveLaunch } from "./emulator/resolve.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
+import { resolveSavePaths } from "./saves/paths.ts";
 import { resolveLibraryRom } from "./safety.ts";
 
 interface ActiveLaunch {
@@ -43,8 +45,11 @@ export class Launcher {
         config,
         platformSlug: query.platformSlug,
         cores: query.cores,
-        // A probe never runs, so the ROM path only has to be non-empty.
+        // A probe never runs, so the ROM path only has to be non-empty. The
+        // save paths do have to be shaped like a real launch's, since a mapping
+        // naming {saves} without a saveDataPath is part of what is being probed.
         romPath: "",
+        savePaths: resolveSavePaths(config.saveDataPath, 0, "probe"),
       });
       return { supported: true, emulator: launch.label };
     } catch (error) {
@@ -85,6 +90,11 @@ export class Launcher {
 
     try {
       const config = await loadConfig();
+      const savePaths = resolveSavePaths(
+        config.saveDataPath,
+        request.romId,
+        request.fileName,
+      );
 
       // Resolve the emulator before downloading: a missing core should fail
       // immediately rather than after a multi-gigabyte transfer.
@@ -93,6 +103,7 @@ export class Launcher {
         platformSlug: request.platformSlug,
         cores: request.cores,
         romPath: "",
+        savePaths,
       });
 
       // When the server runs on this machine the file is already on local disk,
@@ -137,11 +148,17 @@ export class Launcher {
         romPath = rom.path;
       }
 
+      if (savePaths) {
+        await mkdir(savePaths.saveDir, { recursive: true });
+        await mkdir(savePaths.stateDir, { recursive: true });
+      }
+
       const launch = resolveLaunch({
         config,
         platformSlug: request.platformSlug,
         cores: request.cores,
         romPath,
+        savePaths,
       });
 
       // argv form, never a shell string, so a path containing shell

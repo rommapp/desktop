@@ -18,6 +18,7 @@ function emptyConfig(): DesktopConfig {
     emulatorsBasePath: null,
     emulators: [],
     cachePath: null,
+    saveDataPath: null,
     libraryPath: null,
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
     fullscreen: false,
