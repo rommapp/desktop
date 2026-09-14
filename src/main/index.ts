@@ -41,7 +41,15 @@ function offerEmulatorOnce(
 ): void {
   if (emulatorOfferMade) return;
   emulatorOfferMade = true;
-  void offerRetroArchInstall(config, window);
+  // Wait for the page before asking anything. On macOS a dialog parented to a
+  // window is a sheet, and only one sheet shows at a time: put up beside
+  // loadURL, this one queues in front of the certificate-trust prompt that a
+  // self-signed LAN server has to have answered before it can load at all. The
+  // offer can then sit there for as long as an emulator install takes, with the
+  // page never loading behind it.
+  window.webContents.once("did-finish-load", () => {
+    void offerRetroArchInstall(config, window);
+  });
 }
 
 // One instance owns the ROM cache and the launch registry; a second would race
@@ -58,9 +66,7 @@ async function openInitialWindow(): Promise<void> {
   const config = await loadConfig();
   if (config.serverUrl && !forceSetup) {
     const window = createMainWindow(config.serverUrl, config.fullscreen);
-    // After the window, not before: the offer is a dialog, and one that appears
-    // over nothing reads as an error rather than a suggestion. Not awaited, so
-    // the page carries on loading behind it.
+    // After the page, not beside it: see offerEmulatorOnce.
     offerEmulatorOnce(config, window);
     return;
   }
