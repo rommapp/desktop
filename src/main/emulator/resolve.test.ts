@@ -705,6 +705,18 @@ test("a preference that cannot be a filename is dropped, not obeyed", () => {
   ]);
 });
 
+test("a core named twice is tried once", () => {
+  // A hand-edited list can repeat itself, and every entry becomes a download
+  // attempt when the core is missing.
+  const config = testConfig({
+    preferredCores: { snes: ["snes9x", "snes9x", "bsnes"] },
+  });
+  assert.deepEqual(applyCorePreference(config, "snes", ["snes9x"]), [
+    "snes9x",
+    "bsnes",
+  ]);
+});
+
 test("a malformed preferredCores table is ignored rather than fatal", () => {
   // Hand-edited JSON, so every wrong shape has to fall through to the
   // frontend's list instead of throwing mid-launch.

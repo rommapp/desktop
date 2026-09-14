@@ -76,8 +76,11 @@ export function resolveDownloadUrl(
   return resolved;
 }
 
-/** Characters that are unsafe in a filename on at least one supported OS. */
-const UNSAFE_FILENAME_CHARS = new RegExp('[/\\\\:*?"<>|]', "g");
+/** Characters that are unsafe in a filename on at least one supported OS.
+ *  Control characters included: a NUL truncates the path for whatever
+ *  eventually opens the file, and the rest are unprintable in a file manager. */
+// eslint-disable-next-line no-control-regex
+const UNSAFE_FILENAME_CHARS = new RegExp('[/\\\\:*?"<>|\\u0000-\\u001f]', "g");
 
 /** Names Windows reserves for devices. Reserved whatever the extension, so
  *  `CON.zip` is as unopenable as `CON`. Rewritten on every platform so a file
@@ -283,4 +286,18 @@ export function isAllowedDownloadOrigin(
         parsed.hostname === suffix || parsed.hostname.endsWith(`.${suffix}`),
     ) ?? false
   );
+}
+
+/**
+ * Whether a name is already safe to create, so nothing has to be rewritten.
+ *
+ * Rejects where safeFileName above rewrites, because these files are handed to
+ * the operating system to open: a release index naming something with a path
+ * separator in it means something is wrong, and quietly renaming it and running
+ * it anyway is the wrong answer. Defined as "the sanitiser would leave this
+ * alone", so there is one rule about filenames here rather than two that can
+ * drift apart.
+ */
+export function isPlainFileName(name: string): boolean {
+  return safeFileName(name) === name;
 }

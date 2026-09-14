@@ -16,7 +16,12 @@ import { join } from "node:path";
 import { type DesktopConfig } from "../../shared/types.ts";
 import { updateConfig } from "../config.ts";
 import { downloadToFile } from "../download.ts";
+import { detectedStandaloneLabels } from "./standalone.ts";
 import { createProgressGate } from "../progress.ts";
+import {
+  clearTaskbarProgress,
+  showTaskbarProgress,
+} from "../window-progress.ts";
 import {
   BUILDBOT_ORIGIN,
   MAX_INSTALLER_BYTES,
@@ -24,6 +29,7 @@ import {
   RETROARCH_DOWNLOAD_PAGE,
   hasNoEmulator,
   latestStableVersion,
+  noEmulatorMessage,
   retroarchInstaller,
   shouldOfferRetroArch,
 } from "./retroarch.ts";
@@ -87,6 +93,13 @@ export async function offerRetroArchInstall(
   // there is anything to offer on this system at all.
   const available = retroarchInstaller(PINNED_STABLE_VERSION) !== null;
 
+  // Detection can have turned up PCSX2 or Dolphin, which play one platform
+  // each. Still worth offering RetroArch for the rest of the library, but not
+  // worth claiming to have found nothing.
+  const alreadyHere = config.useDetectedEmulators
+    ? detectedStandaloneLabels()
+    : [];
+
   const { response, checkboxChecked } = await ask(parent, {
     type: "question",
     buttons: available
@@ -94,8 +107,11 @@ export async function offerRetroArchInstall(
       : ["Not now", "Open download page"],
     defaultId: 1,
     cancelId: 0,
-    title: "No emulator found",
-    message: "RomM Desktop could not find an emulator on this machine.",
+    title:
+      alreadyHere.length > 0
+        ? "Most platforms need RetroArch"
+        : "No emulator found",
+    message: noEmulatorMessage(alreadyHere),
     detail: available
       ? "It can download RetroArch's official installer (about 200 MB) and open it for you. The install is RetroArch's own, so it runs with the usual prompts and keeps updating itself afterwards.\n\nAlready have an emulator somewhere unusual? Point at it in the settings instead."
       : "On Linux, RetroArch is best installed through your distribution's package manager, which will also keep it updated. The download page lists the options.\n\nAlready have an emulator somewhere unusual? Point at it in the settings instead.",
@@ -145,17 +161,17 @@ async function runInstallerDownload(
         if (!total) return;
         const fraction = received / total;
         if (!shouldReport(fraction)) return;
-        parent?.setProgressBar(fraction);
+        showTaskbarProgress(parent, fraction);
       },
     });
-    parent?.setProgressBar(-1);
+    clearTaskbarProgress(parent);
 
     // openPath runs the installer on Windows and mounts the image on macOS,
     // which is the whole point: the user completes the install themselves.
     const failure = await shell.openPath(file);
     if (failure) shell.showItemInFolder(file);
   } catch (error) {
-    parent?.setProgressBar(-1);
+    clearTaskbarProgress(parent);
     if (controller.signal.aborted) return;
 
     const { response } = await ask(parent, {

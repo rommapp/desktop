@@ -4,8 +4,11 @@ import {
   STANDALONE_EMULATORS,
   detectStandalone,
   detectedMappingFor,
+  detectedStandaloneLabels,
   emulatorForPlatform,
   resetStandaloneDetection,
+  standaloneIsInstalled,
+  standaloneLabel,
   toEmulatorMappings,
 } from "./standalone.ts";
 
@@ -316,4 +319,66 @@ test("a platform a core can handle maps to no standalone", () => {
   for (const slug of ["snes", "psx", "n64", "dreamcast", "3ds", ""]) {
     assert.equal(emulatorForPlatform(slug), null, slug);
   }
+});
+
+test("an emulator installed mid-run is seen without a restart", () => {
+  // What the launch waits on after handing an installer to the OS: the memo has
+  // to be dropped on every look, or the answer is the one from before the
+  // install and the game never starts.
+  const bundles = ["Safari.app"];
+  const readDir = (directory: string) =>
+    directory === "/Applications" ? bundles : [];
+  const exists = (path: string) =>
+    path === "/Applications/PCSX2-v2.8.2.app/Contents/MacOS/PCSX2";
+
+  assert.equal(
+    standaloneIsInstalled("pcsx2", "darwin", "/Users/sam", {}, exists, readDir),
+    false,
+  );
+  bundles.push("PCSX2-v2.8.2.app");
+  assert.ok(
+    standaloneIsInstalled("pcsx2", "darwin", "/Users/sam", {}, exists, readDir),
+  );
+  // Dolphin is not PCSX2, however much of the scan they share.
+  assert.equal(
+    standaloneIsInstalled(
+      "dolphin",
+      "darwin",
+      "/Users/sam",
+      {},
+      exists,
+      readDir,
+    ),
+    false,
+  );
+  resetStandaloneDetection();
+});
+
+test("names the emulators a machine turns out to have", () => {
+  const fs = fakeFs(
+    "/Applications/Dolphin.app/Contents/MacOS/Dolphin",
+    "/Applications/PCSX2-v2.8.2.app/Contents/MacOS/PCSX2",
+  );
+  // Table order, not disk order, so a message reads the same on every machine.
+  assert.deepEqual(
+    detectedStandaloneLabels("darwin", "/Users/sam", {}, fs.exists, fs.readDir),
+    ["PCSX2", "Dolphin"],
+  );
+  assert.deepEqual(
+    detectedStandaloneLabels(
+      "darwin",
+      "/Users/sam",
+      {},
+      () => false,
+      () => [],
+    ),
+    [],
+  );
+});
+
+test("an emulator can be named before it is installed", () => {
+  // The offer and the wait both talk about it while there is nothing on disk.
+  assert.equal(standaloneLabel("pcsx2"), "PCSX2");
+  assert.equal(standaloneLabel("dolphin"), "Dolphin");
+  assert.equal(standaloneLabel("nothing"), null);
 });

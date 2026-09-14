@@ -15,7 +15,11 @@ import { canInstallCore, firstInstallableCore } from "./emulator/buildbot.ts";
 import { installCore } from "./emulator/install.ts";
 import { offerStandaloneInstall } from "./emulator/standalone-install.ts";
 import { RELEASE_SOURCES } from "./emulator/standalone-release.ts";
-import { emulatorForPlatform } from "./emulator/standalone.ts";
+import {
+  emulatorForPlatform,
+  standaloneIsInstalled,
+  standaloneLabel,
+} from "./emulator/standalone.ts";
 import {
   applyCorePreference,
   emulatorLabel,
@@ -30,6 +34,33 @@ import { assertSeparateRoots, resolveLibraryRom } from "./safety.ts";
 interface ActiveLaunch {
   controller: AbortController;
   child: ChildProcess | null;
+  /** The emulator being set up, from the moment the offer is raised until it
+   *  has been downloaded, installed and found. Null at every other moment. */
+  installing: string | null;
+}
+
+/** How long to keep waiting for an emulator the user is installing. Generous:
+ *  a Windows installer with a UAC prompt behind another window is slow, and the
+ *  wait costs nothing but a directory scan and can be cancelled. */
+const INSTALL_WAIT_MS = 30 * 60 * 1000;
+
+/** Between two scans of the places an emulator installs to. */
+const INSTALL_POLL_MS = 1500;
+
+/** Sleep, or wake early when the launch is cancelled. */
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const done = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    // Both callers of done are registered at or after this line, so neither can
+    // reach timer before it exists.
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
 }
 
 function toLaunchError(error: unknown): LaunchError {
@@ -95,6 +126,9 @@ function describeInstallableEmulator(
   platformSlug: string,
 ): string | null {
   if (!config.offerStandaloneInstall) return null;
+  // Must agree with offerMissingEmulator, or the frontend shows a Play button
+  // that leads nowhere.
+  if (!config.useDetectedEmulators) return null;
   const emulatorId = emulatorForPlatform(platformSlug);
   if (!emulatorId) return null;
   if (hasPlatformSpecificEmulator(config, platformSlug)) return null;
@@ -210,34 +244,109 @@ export class Launcher {
   private readonly offered = new Set<string>();
 
   /**
-   * Offer a standalone emulator this platform needs and the machine lacks.
+   * Offer a standalone emulator this platform needs and the machine lacks, and
+   * see the install through.
    *
-   * Returns true when something was handed to the OS, which means the launch
-   * cannot continue: installing is interactive and finishes long after this
-   * does. Declining returns false and the launch proceeds exactly as it would
-   * have, so this never breaks one that would have worked.
+   * Declining is free: the launch carries on exactly as it would have, so this
+   * never breaks one that would have worked. Accepting means a download, then
+   * an install the user performs themselves -- and then this waits for the
+   * emulator to appear rather than ending the launch. Telling someone who just
+   * installed PCSX2 to go and press Play again is a worse ending than simply
+   * starting their game.
    */
   private async offerMissingEmulator(
     config: DesktopConfig,
     request: LaunchRequest,
     parent: BrowserWindow | null,
-    signal: AbortSignal,
-  ): Promise<boolean> {
-    if (!config.offerStandaloneInstall) return false;
+    entry: ActiveLaunch,
+  ): Promise<void> {
+    if (!config.offerStandaloneInstall) return;
     const emulatorId = emulatorForPlatform(request.platformSlug);
-    if (!emulatorId || this.offered.has(emulatorId)) return false;
+    if (!emulatorId || this.offered.has(emulatorId)) return;
+    // Nothing to offer when the shell would not use the result: with detection
+    // switched off, an emulator in its usual place is one this launch still
+    // cannot reach, and downloading a second copy would not change that.
+    if (!config.useDetectedEmulators) return;
     // Only when nothing specific to this platform covers it. Not
     // emulatorIsPresent: that says yes for every platform once RetroArch is
     // installed, which is the normal case and not an answer for PS2.
-    if (hasPlatformSpecificEmulator(config, request.platformSlug)) return false;
+    if (hasPlatformSpecificEmulator(config, request.platformSlug)) return;
 
     this.offered.add(emulatorId);
-    const { handedOff } = await offerStandaloneInstall({
-      emulatorId,
-      parent,
-      signal,
-    });
-    return handedOff;
+    const label = standaloneLabel(emulatorId) ?? emulatorId;
+    const signal = entry.controller.signal;
+    entry.installing = label;
+    try {
+      const shouldReport = createProgressGate();
+      const { handedOff, detectable } = await offerStandaloneInstall({
+        emulatorId,
+        parent,
+        signal,
+        onProgress: (received, total) => {
+          const progress = total ? received / total : undefined;
+          if (!shouldReport(progress)) return;
+          this.emit({
+            romId: request.romId,
+            status: "downloading",
+            stage: "emulator",
+            progress,
+            received,
+            total: total ?? undefined,
+          });
+        },
+      });
+      if (!handedOff) return;
+      if (!detectable) {
+        // A portable archive, or a download page: what happens next is the
+        // user's to do, and where it lands is not something detection can
+        // guess, so this is the one ending that has to ask them to come back.
+        throw new LaunchError(
+          "emulator-not-found",
+          `Point at ${label} under "emulators" in the settings, then press Play again.`,
+        );
+      }
+      await this.awaitEmulator(request, emulatorId, label, signal);
+    } finally {
+      entry.installing = null;
+    }
+  }
+
+  /**
+   * Wait for an emulator the user is installing to turn up.
+   *
+   * Polled rather than watched: the three hand-offs land in three different
+   * places -- an installer's own target directory, /Applications, a Flatpak
+   * root -- and detection already knows all of them, so asking it again is
+   * both simpler and exactly as correct as watching would be.
+   */
+  private async awaitEmulator(
+    request: LaunchRequest,
+    emulatorId: string,
+    label: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const deadline = Date.now() + INSTALL_WAIT_MS;
+    for (;;) {
+      throwIfCancelled(signal);
+      // Drops the detection memo as it goes, so the launch that follows this
+      // sees what was just installed rather than the answer from before it.
+      if (standaloneIsInstalled(emulatorId)) return;
+      if (Date.now() >= deadline) {
+        throw new LaunchError(
+          "emulator-not-found",
+          `${label} has not appeared yet. Finish installing it, then press Play again.`,
+        );
+      }
+      // No progress to report -- the install is the user's, and how far along
+      // it is only they can see -- but a frontend showing the wait beats one
+      // that looks like it forgot the click.
+      this.emit({
+        romId: request.romId,
+        status: "downloading",
+        stage: "emulator",
+      });
+      await delay(INSTALL_POLL_MS, signal);
+    }
   }
 
   async launch(
@@ -245,15 +354,21 @@ export class Launcher {
     session: Session,
     parent: BrowserWindow | null = null,
   ): Promise<LaunchResult> {
-    if (this.active.has(request.romId)) {
+    const running = this.active.get(request.romId);
+    if (running) {
+      // Pressing Play again is the natural thing to do the moment an installer
+      // finishes, so say what is actually happening rather than claiming the
+      // game is running.
       throw new LaunchError(
         "already-running",
-        `${request.name ?? "This game"} is already running.`,
+        running.installing
+          ? `${running.installing} is still being set up. Your game starts on its own as soon as it is ready.`
+          : `${request.name ?? "This game"} is already running.`,
       );
     }
 
     const controller = new AbortController();
-    const entry: ActiveLaunch = { controller, child: null };
+    const entry: ActiveLaunch = { controller, child: null, installing: null };
     this.active.set(request.romId, entry);
 
     try {
@@ -268,19 +383,9 @@ export class Launcher {
       // Before anything else touches the network: a platform that needs a
       // standalone emulator nobody has is a launch that cannot work, and the
       // moment someone pressed Play is the moment they have shown they want it.
-      if (
-        await this.offerMissingEmulator(
-          config,
-          request,
-          parent,
-          controller.signal,
-        )
-      ) {
-        throw new LaunchError(
-          "emulator-not-found",
-          "Finish installing the emulator, then press Play again.",
-        );
-      }
+      // This returns once the emulator is there, so the launch below simply
+      // finds it.
+      await this.offerMissingEmulator(config, request, parent, entry);
 
       // Applied before anything consults the list, so validation, installation
       // and the spawn all agree on which core this launch is about.

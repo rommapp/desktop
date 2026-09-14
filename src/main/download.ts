@@ -11,12 +11,17 @@ import { createWriteStream } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { LaunchError } from "../shared/types.ts";
-import { type OriginPolicy, isAllowedDownloadOrigin } from "./safety.ts";
+import {
+  type OriginPolicy,
+  isAllowedDownloadOrigin,
+  isPlainFileName,
+} from "./safety.ts";
 
 export interface DownloadRequest {
   url: string;
   /** What to call it on disk. Taken from the release index, never from the
-   *  response, so a redirect cannot choose the filename. */
+   *  response, so a redirect cannot choose the filename. Must be a plain name:
+   *  see isPlainFileName. */
   fileName: string;
   directory: string;
   /** Where the bytes may come from, request and final response alike. */
@@ -45,6 +50,12 @@ export async function downloadToFile({
     throw new LaunchError(
       "download-failed",
       `Refusing to download from ${url}`,
+    );
+  }
+  if (!isPlainFileName(fileName)) {
+    throw new LaunchError(
+      "download-failed",
+      `Refusing to write a file called ${JSON.stringify(fileName)}`,
     );
   }
 

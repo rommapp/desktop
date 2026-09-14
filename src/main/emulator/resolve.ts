@@ -188,7 +188,9 @@ export function requiresCore(
  *
  * The config is hand-edited JSON, so every shape it could be in is tolerated
  * rather than trusted, and names still have to survive isSafeCoreName before
- * they can become a path or a request.
+ * they can become a path or a request. A name repeated by hand is honoured
+ * once, so a redundant list cannot make an install attempt the same download
+ * twice.
  */
 function findPreferredCores(
   config: DesktopConfig,
@@ -222,7 +224,7 @@ export function applyCorePreference(
   platformSlug: string,
   cores: string[],
 ): string[] {
-  const preferred = findPreferredCores(config, platformSlug);
+  const preferred = [...new Set(findPreferredCores(config, platformSlug))];
   if (preferred.length === 0) return cores;
   const seen = new Set(preferred);
   return [...preferred, ...cores.filter((core) => !seen.has(core))];

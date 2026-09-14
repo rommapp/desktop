@@ -7,6 +7,7 @@ import {
   compareVersions,
   hasNoEmulator,
   latestStableVersion,
+  noEmulatorMessage,
   retroarchInstaller,
   shouldOfferRetroArch,
 } from "./retroarch.ts";
@@ -149,4 +150,19 @@ test("stays quiet until the server address is known", () => {
   // The setup window is already asking for something; stacking a second dialog
   // on top of it would be the first thing a new user sees.
   assert.equal(shouldOfferRetroArch(testConfig({ serverUrl: null })), false);
+});
+
+test("the offer does not claim to have found nothing when it found something", () => {
+  // Detection can turn up PCSX2, which plays one platform. The offer is still
+  // worth making for the rest of a library, but opening it by contradicting
+  // what the user can see in their Applications folder is not.
+  assert.match(noEmulatorMessage([]), /could not find an emulator/);
+  assert.equal(
+    noEmulatorMessage(["PCSX2"]),
+    "RomM Desktop found PCSX2, but nothing that plays the rest of your library.",
+  );
+  assert.equal(
+    noEmulatorMessage(["PCSX2", "Dolphin"]),
+    "RomM Desktop found PCSX2 and Dolphin, but nothing that plays the rest of your library.",
+  );
 });

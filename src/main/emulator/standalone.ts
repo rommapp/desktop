@@ -15,6 +15,7 @@
 // process, so all three platforms' paths can be exercised from any machine.
 
 import { existsSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import { type EmulatorMapping } from "../../shared/types.ts";
 
@@ -271,6 +272,48 @@ export function detectedMappingFor(
     toEmulatorMappings(
       detectStandaloneCached(platform, home, env, exists, readDir),
     ).find((mapping) => mapping.platformSlug === wanted) ?? null
+  );
+}
+
+/**
+ * Whether a named standalone emulator is on this machine now.
+ *
+ * Asked while the user installs one, so the memo is deliberately dropped
+ * first: the whole point of the question is that the answer is expected to
+ * change.
+ */
+export function standaloneIsInstalled(
+  emulatorId: string,
+  platform: NodeJS.Platform = process.platform,
+  home: string = homedir(),
+  env: NodeJS.ProcessEnv = process.env,
+  exists: (path: string) => boolean = existsSync,
+  readDir: ReadDir = readDirSafe,
+): boolean {
+  resetStandaloneDetection();
+  return detectStandalone(platform, home, env, exists, readDir).some(
+    ({ emulator }) => emulator.id === emulatorId,
+  );
+}
+
+/** What to call a standalone emulator in a message, whether or not it is
+ *  installed. */
+export function standaloneLabel(emulatorId: string): string | null {
+  return (
+    STANDALONE_EMULATORS.find((entry) => entry.id === emulatorId)?.label ?? null
+  );
+}
+
+/** Every standalone emulator this machine turns out to have, by label. */
+export function detectedStandaloneLabels(
+  platform: NodeJS.Platform = process.platform,
+  home: string = homedir(),
+  env: NodeJS.ProcessEnv = process.env,
+  exists: (path: string) => boolean = existsSync,
+  readDir: ReadDir = readDirSafe,
+): string[] {
+  return detectStandalone(platform, home, env, exists, readDir).map(
+    ({ emulator }) => emulator.label,
   );
 }
 

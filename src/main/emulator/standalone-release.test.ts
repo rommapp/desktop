@@ -99,6 +99,21 @@ test("32-bit Windows is offered no PCSX2 at all", () => {
   assert.equal(pickPcsx2Artifact(PCSX2, "win32", "ia32"), null);
 });
 
+test("32-bit Windows is offered no Dolphin either", () => {
+  // The "Windows x64" group is the only one a fall-through could reach, and
+  // that binary will not start on a 32-bit OS.
+  assert.equal(pickDolphinArtifact(DOLPHIN, "win32", "ia32"), null);
+});
+
+test("a Linux machine PCSX2 does not build for is offered nothing", () => {
+  // The Linux group holds x86_64 Flatpaks and AppImages, and PCSX2 is an x86-64
+  // recompiler: there is no ARM build to fall back to, so the group must not be
+  // read on an ARM machine just because the platform matches.
+  assert.equal(pickPcsx2Artifact(PCSX2, "linux", "arm64"), null);
+  assert.equal(pickPcsx2Artifact(PCSX2, "linux", "arm"), null);
+  assert.ok(pickPcsx2Artifact(PCSX2, "linux", "x64"));
+});
+
 test("an unknown platform is offered nothing rather than a guess", () => {
   assert.equal(pickDolphinArtifact(DOLPHIN, "freebsd", "x64"), null);
   assert.equal(pickPcsx2Artifact(PCSX2, "freebsd", "x64"), null);

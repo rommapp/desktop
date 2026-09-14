@@ -306,10 +306,17 @@ RetroBat gets its emulators without configuring them twice.
 When there is nothing to find, the platform is still reported as launchable --
 naming the emulator it would set up rather than the one it has -- and pressing
 Play offers to fetch it from the project. Reporting the plain truth there would
-hide the button, and the button is the only thing that raises the offer. The file is handed to the operating system exactly
-as RetroArch's installer is -- an installer runs, a disk image mounts, a Flatpak
-goes to your software installer -- and the version comes from each project's own
-release index rather than a URL guessed here.
+hide the button, and the button is the only thing that raises the offer. The
+file is handed to the operating system exactly as RetroArch's installer is -- an
+installer runs, a disk image mounts, a Flatpak goes to your software installer
+-- and the version comes from each project's own release index rather than a URL
+guessed here.
+
+The launch then waits rather than ending. You install the emulator the way its
+project intends -- run the installer, drag it to Applications, confirm the
+Flatpak -- and the game starts on its own once it appears, so there is no error
+to dismiss and nothing to press twice. Cancelling the download stops the wait,
+and so does closing the window.
 
 Coverage is uneven, and not in a way this shell can fix:
 
@@ -320,8 +327,10 @@ Coverage is uneven, and not in a way this shell can fix:
 
 Dolphin publishes no Windows installer and PCSX2 no macOS disk image, so those
 two leave a portable build wherever you extract it. Detection cannot guess where
-that is, so the prompt says as much and you point at the executable under
-`emulators` afterwards. Asked at most once per emulator per run; declining just
+that is, so the prompt says as much, the launch does not wait for something it
+will never see, and you point at the executable under `emulators` afterwards.
+A machine neither project builds for -- 32-bit Windows either way, ARM Linux for
+PCSX2 -- is sent to the download page rather than handed a binary it cannot run. Asked at most once per emulator per run; declining just
 lets the launch carry on as it would have. Set `offerStandaloneInstall` to
 `false` to never ask.
 
@@ -336,6 +345,10 @@ thing off:
   "useDetectedEmulators": false
 }
 ```
+
+That takes the download offer with it: with detection off, an emulator in its
+usual place is one this shell will not use, and fetching a second copy would not
+change that. Write an `emulators` row instead.
 
 Two things RetroAchievements asks of Dolphin that the shell cannot do for you:
 it wants version 2407-68 or newer for GameCube (2603a for Wii), and "Enable Dual

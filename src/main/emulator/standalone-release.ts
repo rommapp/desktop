@@ -86,6 +86,10 @@ function dolphinSystem(platform: NodeJS.Platform, arch: string): string | null {
       // One universal build covers both arches.
       return "macOS";
     case "win32":
+      // Dolphin dropped 32-bit Windows long ago, and the x64 build will not
+      // start on a 32-bit OS, so there is nothing to offer rather than
+      // something that cannot run.
+      if (arch === "ia32") return null;
       return arch === "arm64" ? "Windows arm64" : "Windows x64";
     case "linux":
       if (arch === "x64") return "Linux x86_64";
@@ -138,15 +142,23 @@ export function pickDolphinArtifact(
   return null;
 }
 
-/** The PCSX2 `assets` key this machine matches. */
-function pcsx2Key(platform: NodeJS.Platform): string | null {
+/**
+ * The PCSX2 `assets` key this machine matches.
+ *
+ * PCSX2 is an x86-64 recompiler and publishes nothing else: the Windows and
+ * Linux groups hold x64 builds only, and the macOS one is a universal binary.
+ * A machine outside that gets no key, so it is sent to the download page
+ * rather than handed a build it cannot run.
+ */
+function pcsx2Key(platform: NodeJS.Platform, arch: string): string | null {
   switch (platform) {
     case "darwin":
       return "MacOS";
     case "win32":
-      return "Windows";
+      // arm64 Windows emulates x64, as it does for RetroArch. 32-bit cannot.
+      return arch === "ia32" ? null : "Windows";
     case "linux":
-      return "Linux";
+      return arch === "x64" ? "Linux" : null;
     default:
       return null;
   }
@@ -177,7 +189,7 @@ export function pickPcsx2Artifact(
     assets?: unknown;
   };
   if (typeof assets !== "object" || assets === null) return null;
-  const key = pcsx2Key(platform);
+  const key = pcsx2Key(platform, arch);
   if (!key) return null;
   const group: unknown = (assets as Record<string, unknown>)[key];
   if (!Array.isArray(group)) return null;
@@ -195,9 +207,6 @@ export function pickPcsx2Artifact(
     if (tags.includes("symbols")) continue;
     const fileName = fileNameOf(entry.url);
     if (!fileName) continue;
-    // Only x64 is published, so an arm64 Windows machine takes the x64 build it
-    // can emulate, exactly as it does for RetroArch.
-    if (platform === "win32" && arch === "ia32") continue;
     candidates.push({
       url: entry.url,
       fileName,

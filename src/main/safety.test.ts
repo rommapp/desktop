@@ -8,6 +8,7 @@ import { testConfig } from "../test/config.ts";
 import {
   assertSeparateRoots,
   isAllowedDownloadOrigin,
+  isPlainFileName,
   resolveDownloadUrl,
   resolveLibraryRom,
   safeFileName,
@@ -319,4 +320,36 @@ test("an unparseable or empty policy allows nothing", () => {
     false,
   );
   assert.equal(isAllowedDownloadOrigin("https://x/", {}), false);
+});
+
+test("an installer filename that is not one plain name is refused", () => {
+  // These names come out of a release index and are joined to a directory the
+  // shell owns, then handed to the OS to open. Sanitising and running it anyway
+  // would be the wrong answer, so the download refuses instead.
+  for (const name of [
+    "",
+    ".",
+    "..",
+    "../evil.exe",
+    "sub/dir.exe",
+    "sub\\dir.exe",
+    "evil\u0000.exe",
+    " leading-space.exe",
+    "trailing-dot.exe.",
+    "CON.exe",
+  ]) {
+    assert.equal(isPlainFileName(name), false, JSON.stringify(name));
+  }
+});
+
+test("the names these projects actually publish are accepted", () => {
+  for (const name of [
+    "RetroArch-Win64-setup.exe",
+    "RetroArch_Metal.dmg",
+    "pcsx2-v2.8.2-macos-Qt.tar.xz",
+    "dolphin-2506a-x64.7z",
+    "net.pcsx2.PCSX2.flatpak",
+  ]) {
+    assert.ok(isPlainFileName(name), name);
+  }
 });

@@ -132,6 +132,27 @@ export function hasNoEmulator(config: DesktopConfig): boolean {
   return !config.retroarchPath && config.emulators.length === 0;
 }
 
+/**
+ * How the offer opens, given the standalone emulators detection found.
+ *
+ * Detection can turn up PCSX2 or Dolphin, which play one platform each and
+ * leave the rest of a library unplayable -- so the offer is still worth making,
+ * and the reason for it is still true. What would not be true is the sentence
+ * it used to open with. Saying "could not find an emulator" to someone looking
+ * at PCSX2 in their Applications folder is the kind of wrongness that makes a
+ * user stop believing the next thing the app tells them.
+ */
+export function noEmulatorMessage(detected: string[]): string {
+  if (detected.length === 0) {
+    return "RomM Desktop could not find an emulator on this machine.";
+  }
+  const found =
+    detected.length === 1
+      ? detected[0]
+      : `${detected.slice(0, -1).join(", ")} and ${detected.at(-1)}`;
+  return `RomM Desktop found ${found}, but nothing that plays the rest of your library.`;
+}
+
 /** Whether to raise the offer at all. */
 export function shouldOfferRetroArch(config: DesktopConfig): boolean {
   // Nothing to say before the server address is even known: that window is

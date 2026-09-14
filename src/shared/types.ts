@@ -51,8 +51,10 @@ export interface LaunchState {
   status: LaunchStatus;
   /** What is being fetched while status is "downloading". Absent means the ROM,
    *  so a frontend that predates core installation reads a core download as an
-   *  ordinary one rather than as an unknown status it has to handle. */
-  stage?: "rom" | "core";
+   *  ordinary one rather than as an unknown status it has to handle.
+   *  "emulator" covers both fetching a standalone emulator and the wait while
+   *  the user installs what was fetched, which has no progress to report. */
+  stage?: "rom" | "core" | "emulator";
   /** The core being installed, while stage is "core". */
   core?: string;
   /** 0..1 while downloading, absent otherwise. */
@@ -125,8 +127,9 @@ export interface DesktopConfig {
   /** Directory holding RetroArch's libretro cores. */
   retroarchCoresPath: string | null;
   /** Download a missing libretro core from the libretro buildbot rather than
-   *  failing the launch. Only ever fetches a core the frontend named for the
-   *  platform being launched, and only into `retroarchCoresPath`. */
+   *  failing the launch. Only ever fetches a core named for the platform being
+   *  launched -- by the frontend, or by `preferredCores` below -- and only into
+   *  `retroarchCoresPath`. */
   autoInstallCores: boolean;
   /** Offer, on startup, to fetch RetroArch's own installer when this machine
    *  has no emulator at all. Nothing is ever installed without the user saying
