@@ -13,6 +13,7 @@ import {
   canInstallCore,
   coreDownloadUrl,
   firstInstallableCore,
+  planCoreInstall,
 } from "./buildbot.ts";
 import { coreFileName } from "./resolve.ts";
 
@@ -269,5 +270,85 @@ test("refuses a response redirected off the buildbot", () => {
   assert.throws(
     () => assertBuildbotResponse({ url: "not a url" }, BUILDBOT_ORIGIN),
     LaunchError,
+  );
+});
+
+test("a missing preference is fetched even when a fallback is installed", () => {
+  // The case preferredCores exists for. Someone sets psx to mednafen_psx_hw
+  // because RetroAchievements does not recognise pcsx_rearmed -- and they have
+  // pcsx_rearmed, which is why they need the preference at all. canInstallCore
+  // says no here, because a candidate is installed; the plan has to say yes.
+  const config = testConfig({
+    retroarchPath: fakeEmulator(),
+    retroarchCoresPath: fakeCores(["pcsx_rearmed"]),
+    preferredCores: { psx: ["mednafen_psx_hw"] },
+  });
+  const cores = ["mednafen_psx_hw", "pcsx_rearmed"];
+  assert.equal(canInstallCore(config, "psx", cores, "linux", "x64"), false);
+
+  const plan = planCoreInstall(
+    config,
+    "psx",
+    cores,
+    ["mednafen_psx_hw"],
+    "linux",
+    "x64",
+  );
+  assert.deepEqual(plan?.cores, ["mednafen_psx_hw"]);
+  // Not required: pcsx_rearmed still plays the game, so a preference that turns
+  // out not to be published must not take the launch down with it.
+  assert.equal(plan?.required, false);
+});
+
+test("nothing installed at all makes the download the launch", () => {
+  const config = testConfig({
+    retroarchPath: fakeEmulator(),
+    retroarchCoresPath: fakeCores([]),
+    preferredCores: { psx: ["mednafen_psx_hw"] },
+  });
+  const cores = ["mednafen_psx_hw", "pcsx_rearmed"];
+  const plan = planCoreInstall(
+    config,
+    "psx",
+    cores,
+    ["mednafen_psx_hw"],
+    "linux",
+    "x64",
+  );
+  // The whole list, so an unpublished preference still falls through to the
+  // core RomM named rather than failing.
+  assert.deepEqual(plan?.cores, cores);
+  assert.equal(plan?.required, true);
+});
+
+test("a satisfied preference is not fetched again", () => {
+  const config = testConfig({
+    retroarchPath: fakeEmulator(),
+    retroarchCoresPath: fakeCores(["mednafen_psx_hw", "pcsx_rearmed"]),
+    preferredCores: { psx: ["mednafen_psx_hw"] },
+  });
+  assert.equal(
+    planCoreInstall(
+      config,
+      "psx",
+      ["mednafen_psx_hw", "pcsx_rearmed"],
+      ["mednafen_psx_hw"],
+      "linux",
+      "x64",
+    ),
+    null,
+  );
+});
+
+test("no preference means no second question", () => {
+  // With nothing preferred, the plan is exactly what canInstallCore says, so
+  // an installed core is still not a reason to download another one.
+  const config = testConfig({
+    retroarchPath: fakeEmulator(),
+    retroarchCoresPath: fakeCores(["bsnes"]),
+  });
+  assert.equal(
+    planCoreInstall(config, "snes", ["snes9x", "bsnes"], [], "linux", "x64"),
+    null,
   );
 });

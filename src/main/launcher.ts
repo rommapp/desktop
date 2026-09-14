@@ -11,7 +11,11 @@ import {
   type PlatformSupportQuery,
 } from "../shared/types.ts";
 import { loadConfig } from "./config.ts";
-import { canInstallCore, firstInstallableCore } from "./emulator/buildbot.ts";
+import {
+  canInstallCore,
+  firstInstallableCore,
+  planCoreInstall,
+} from "./emulator/buildbot.ts";
 import { installCore } from "./emulator/install.ts";
 import { offerStandaloneInstall } from "./emulator/standalone-install.ts";
 import { RELEASE_SOURCES } from "./emulator/standalone-release.ts";
@@ -23,6 +27,7 @@ import {
 import {
   applyCorePreference,
   emulatorLabel,
+  findPreferredCores,
   hasPlatformSpecificEmulator,
   resolveLaunch,
 } from "./emulator/resolve.ts";
@@ -250,6 +255,13 @@ export class Launcher {
    *  next game of the same platform. */
   private readonly offered = new Set<string>();
 
+  /** Emulators being set up right now, so a second game of the same platform
+   *  joins that wait instead of being told the emulator is missing. Held as a
+   *  flag rather than a promise: the join is the same poll for the same file,
+   *  and sharing the poll rather than the promise keeps each launch's own
+   *  cancel and timeout its own. */
+  private readonly settingUp = new Set<string>();
+
   /**
    * Offer a standalone emulator this platform needs and the machine lacks, and
    * see the install through.
@@ -269,7 +281,7 @@ export class Launcher {
   ): Promise<void> {
     if (!config.offerStandaloneInstall) return;
     const emulatorId = emulatorForPlatform(request.platformSlug);
-    if (!emulatorId || this.offered.has(emulatorId)) return;
+    if (!emulatorId) return;
     // Nothing to offer when the shell would not use the result: with detection
     // switched off, an emulator in its usual place is one this launch still
     // cannot reach, and downloading a second copy would not change that.
@@ -279,9 +291,28 @@ export class Launcher {
     // installed, which is the normal case and not an answer for PS2.
     if (hasPlatformSpecificEmulator(config, request.platformSlug)) return;
 
-    this.offered.add(emulatorId);
     const label = standaloneLabel(emulatorId) ?? emulatorId;
     const signal = entry.controller.signal;
+
+    // Someone is already installing this one. Pressing Play on a second PS2
+    // game should join that wait, not be told PCSX2 is missing while it is
+    // being fetched -- and asking a second time would be asking about a
+    // download already in progress.
+    if (this.settingUp.has(emulatorId)) {
+      entry.installing = label;
+      try {
+        await this.awaitEmulator(request, emulatorId, label, signal, () =>
+          this.settingUp.has(emulatorId),
+        );
+      } finally {
+        entry.installing = null;
+      }
+      return;
+    }
+    if (this.offered.has(emulatorId)) return;
+
+    this.offered.add(emulatorId);
+    this.settingUp.add(emulatorId);
     entry.installing = label;
     // The download and the wait that follows it are one span, and both belong
     // to the window that asked for the game: on macOS closing it does not quit
@@ -323,6 +354,7 @@ export class Launcher {
       await this.awaitEmulator(request, emulatorId, label, signal);
     } finally {
       entry.installing = null;
+      this.settingUp.delete(emulatorId);
       if (parent && !parent.isDestroyed()) parent.off("closed", abort);
     }
   }
@@ -340,6 +372,10 @@ export class Launcher {
     emulatorId: string,
     label: string,
     signal: AbortSignal,
+    /** Whether the install this is waiting on is still happening. A launch that
+     *  joined someone else's wait stops when they stop, rather than polling for
+     *  half an hour for an install that was declined or failed. */
+    stillHappening?: () => boolean,
   ): Promise<void> {
     const deadline = Date.now() + INSTALL_WAIT_MS;
     for (;;) {
@@ -347,6 +383,10 @@ export class Launcher {
       // Drops the detection memo as it goes, so the launch that follows this
       // sees what was just installed rather than the answer from before it.
       if (standaloneIsInstalled(emulatorId)) return;
+      // Returning rather than throwing: this launch then fails the way it would
+      // have without the wait, which is the honest answer once nobody is
+      // installing anything.
+      if (stillHappening && !stillHappening()) return;
       if (Date.now() >= deadline) {
         throw new LaunchError(
           "emulator-not-found",
@@ -413,10 +453,11 @@ export class Launcher {
       );
 
       // Decided before validating, so the validation can account for it.
-      const installingCore = canInstallCore(
+      const plan = planCoreInstall(
         config,
         request.platformSlug,
         cores,
+        findPreferredCores(config, request.platformSlug),
       );
 
       // Resolve the emulator before downloading anything: a launch that cannot
@@ -431,11 +472,21 @@ export class Launcher {
         cores,
         romPath: "",
         savePaths,
-        assumeMissingCoreInstalled: installingCore,
+        // Only when nothing else could play this. A preference being fetched
+        // over a working fallback has a real core to validate against already.
+        assumeMissingCoreInstalled: plan?.required ?? false,
       });
 
-      if (installingCore) {
-        await this.ensureCore(config, request, cores, controller.signal);
+      if (plan) {
+        try {
+          await this.ensureCore(config, request, plan.cores, controller.signal);
+        } catch (error) {
+          // A preference that turns out not to be published for this machine
+          // falls through to the core that is already installed, which is what
+          // the config's documentation promises. A required core does not.
+          if (plan.required) throw error;
+          throwIfCancelled(controller.signal);
+        }
       }
       // Extracting and writing a core is not itself interruptible, so a cancel
       // landing during it is only observed here.

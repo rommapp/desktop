@@ -280,27 +280,68 @@ test("finding one emulator does not stop the other being looked for", () => {
   resetStandaloneDetection();
 });
 
-test("a hit is not re-probed on every call", () => {
+test("a hit costs one stat per call, not another scan", () => {
+  // Both found, so nothing is left to look for and every later call should be
+  // the liveness check and nothing else: no directory scan, and one stat each
+  // to confirm the remembered paths are still there.
   resetStandaloneDetection();
   let probes = 0;
-  const path = "/Applications/PCSX2.app/Contents/MacOS/PCSX2";
+  let scans = 0;
+  const paths = new Set([
+    "/Applications/PCSX2.app/Contents/MacOS/PCSX2",
+    "/Applications/Dolphin.app/Contents/MacOS/Dolphin",
+  ]);
   const exists = (candidate: string) => {
     probes += 1;
-    return candidate === path;
+    return paths.has(candidate);
   };
-  const readDir = (dir: string) =>
-    dir === "/Applications" ? ["PCSX2.app"] : [];
+  const readDir = (dir: string) => {
+    scans += 1;
+    return dir === "/Applications" ? ["PCSX2.app", "Dolphin.app"] : [];
+  };
 
   detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists, readDir);
-  const afterFirst = probes;
-  assert.ok(afterFirst > 0);
+  assert.ok(scans > 0, "the first call has to look");
+  probes = 0;
+  scans = 0;
   for (let i = 0; i < 5; i += 1) {
     detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists, readDir);
   }
-  // Dolphin is still missing so it is re-probed; PCSX2 is not.
-  assert.ok(
-    probes - afterFirst < 5,
-    `expected the PCSX2 hit to be memoised, probes went ${afterFirst} -> ${probes}`,
+  assert.equal(scans, 0, "a remembered emulator is not scanned for again");
+  assert.equal(probes, 10, "one stat per remembered emulator per call");
+  resetStandaloneDetection();
+});
+
+test("an emulator that disappears is not remembered as installed", () => {
+  // A version in the bundle name means an upgrade renames it:
+  // PCSX2-v2.8.2.app becomes PCSX2-v2.9.0.app and the remembered path is gone.
+  // Holding on to it would keep resolving to a deleted binary until a restart,
+  // while hasPlatformSpecificEmulator kept saying an emulator was present.
+  resetStandaloneDetection();
+  let version = "2.8.2";
+  const bundle = () => `PCSX2-v${version}.app`;
+  const exists = (candidate: string) =>
+    candidate === `/Applications/${bundle()}/Contents/MacOS/PCSX2`;
+  const readDir = (dir: string) => (dir === "/Applications" ? [bundle()] : []);
+
+  assert.equal(
+    detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists, readDir)
+      ?.command,
+    "/Applications/PCSX2-v2.8.2.app/Contents/MacOS/PCSX2",
+  );
+  version = "2.9.0";
+  assert.equal(
+    detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists, readDir)
+      ?.command,
+    "/Applications/PCSX2-v2.9.0.app/Contents/MacOS/PCSX2",
+  );
+
+  // And uninstalled is uninstalled, not "found earlier".
+  version = "gone";
+  const empty = () => [];
+  assert.equal(
+    detectedMappingFor("ps2", "darwin", "/Users/sam", {}, () => false, empty),
+    null,
   );
   resetStandaloneDetection();
 });

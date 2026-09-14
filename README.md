@@ -236,6 +236,14 @@ narrowed away either -- whatever the frontend did offer still follows, in its
 original order, so a preference that turns out not to be published for your
 system quietly falls through to RomM's suggestion.
 
+A preference you do not have is downloaded even when something else that plays
+the game is already installed. That is the case the setting exists for: you name
+`mednafen_psx_hw` because RetroAchievements does not recognise `pcsx_rearmed`,
+and having `pcsx_rearmed` is exactly why you had to. The download is never
+allowed to cost you a launch that would have worked, though -- if the preferred
+core cannot be fetched for your system, the game starts on the core you already
+have.
+
 Two worked reasons to set it. `pcsx_rearmed` plays PlayStation games perfectly
 well but is not on RetroAchievements' supported list, while `mednafen_psx_hw`
 and `swanstation` are; and RetroAchievements wants Beetle Saturn

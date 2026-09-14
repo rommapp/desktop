@@ -229,6 +229,15 @@ function detectStandaloneCached(
   const key = `${platform}\u0000${home}`;
   if (!memo || memo.key !== key) memo = { key, found: new Map() };
 
+  // A remembered path can stop being one: PCSX2-v2.8.2.app becomes
+  // PCSX2-v2.9.0.app on the next release, and the bundle the memo names is
+  // gone. One stat per emulator found -- the memo exists to avoid the scan and
+  // the dozen probes, not this -- and forgetting is enough, because the rescan
+  // below then looks for it under whatever it is called now.
+  for (const [id, found] of memo.found) {
+    if (!exists(found.command)) memo.found.delete(id);
+  }
+
   // Only the ones not already found are looked for again.
   const missing = new Set(
     STANDALONE_EMULATORS.map((entry) => entry.id).filter(

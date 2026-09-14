@@ -192,7 +192,7 @@ export function requiresCore(
  * once, so a redundant list cannot make an install attempt the same download
  * twice.
  */
-function findPreferredCores(
+export function findPreferredCores(
   config: DesktopConfig,
   platformSlug: string,
 ): string[] {
