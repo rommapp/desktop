@@ -251,8 +251,10 @@ and `swanstation` are; and RetroAchievements wants Beetle Saturn
 is also not published for Apple Silicon.
 
 Names are checked against the same `[a-z0-9_]+` alphabet as everything else
-before they become a path or a request, so a typo is ignored rather than
-obeyed. Achievements themselves are RetroArch's business: log in under its own
+before they become a path or a request, so nothing here can reach outside the
+cores directory. That check cannot see a plain typo, though: `mednafen_psx_h`
+is a perfectly legal name for a core that does not exist, so it finds nothing,
+fails to download, and the launch falls through to what RomM suggested. Achievements themselves are RetroArch's business: log in under its own
 Settings, and RomM will show the progression once it syncs.
 
 #### Missing cores

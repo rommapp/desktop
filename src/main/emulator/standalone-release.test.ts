@@ -143,8 +143,12 @@ test("an uninstaller is not mistaken for an installer", () => {
     version: "2.8.2",
     assets: {
       Windows: [
-        { url: "https://api.pcsx2.net/pcsx2-uninstaller.exe" },
-        { url: "https://api.pcsx2.net/pcsx2-v2.8.2-windows-x64-installer.exe" },
+        {
+          url: "https://github.com/PCSX2/pcsx2/releases/download/v2.8.2/pcsx2-uninstaller.exe",
+        },
+        {
+          url: "https://github.com/PCSX2/pcsx2/releases/download/v2.8.2/pcsx2-v2.8.2-windows-x64-installer.exe",
+        },
       ],
     },
   };
@@ -158,6 +162,29 @@ test("an uninstaller is not mistaken for an installer", () => {
     assets: { Windows: [index.assets.Windows[0]] },
   };
   assert.equal(pickPcsx2Artifact(onlyUninstaller, "win32", "x64"), null);
+});
+
+test("an asset that is not PCSX2's own release is not offered", () => {
+  // The origin policy has to allow all of github.com, because a release
+  // download redirects to an asset host whose name has changed before. An index
+  // entry naming someone else's repository would otherwise be downloaded, and
+  // for an installer, run.
+  const elsewhere = (url: string) => ({
+    version: "2.8.2",
+    assets: { Windows: [{ url }] },
+  });
+  for (const url of [
+    "https://github.com/someone/else/releases/download/v1/pcsx2-installer.exe",
+    "https://raw.githubusercontent.com/PCSX2/pcsx2/main/pcsx2-installer.exe",
+    "https://github.com/PCSX2/pcsx2/releases/download/../../../evil/x-installer.exe",
+    "https://pcsx2.net.evil.example.com/PCSX2/pcsx2/releases/download/v1/x.7z",
+    "not a url",
+  ]) {
+    assert.equal(pickPcsx2Artifact(elsewhere(url), "win32", "x64"), null, url);
+  }
+
+  // And the real one still is.
+  assert.ok(pickPcsx2Artifact(PCSX2, "win32", "x64"));
 });
 
 test("an unknown platform is offered nothing rather than a guess", () => {

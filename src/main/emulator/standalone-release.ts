@@ -191,6 +191,30 @@ function pcsx2Key(platform: NodeJS.Platform, arch: string): string | null {
   }
 }
 
+/**
+ * Where PCSX2 publishes its assets.
+ *
+ * The origin policy has to allow all of github.com and its asset CDN, because
+ * a release download redirects to a host whose name has changed before. That
+ * is wide enough to cover any repository on GitHub, so the entry the index
+ * hands over is pinned to PCSX2's own release path as well -- otherwise an
+ * index that named someone else's release would have it downloaded and, for an
+ * installer, run. Compared after parsing, so a path with .. segments in it is
+ * normalised before it is judged rather than after.
+ */
+function onPcsx2Releases(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.origin === "https://github.com" &&
+    parsed.pathname.startsWith("/PCSX2/pcsx2/releases/download/")
+  );
+}
+
 interface Pcsx2Asset {
   url?: unknown;
   additionalTags?: unknown;
@@ -224,6 +248,7 @@ export function pickPcsx2Artifact(
   const candidates: ReleaseArtifact[] = [];
   for (const entry of group as Pcsx2Asset[]) {
     if (typeof entry?.url !== "string") continue;
+    if (!onPcsx2Releases(entry.url)) continue;
     const tags = Array.isArray(entry.additionalTags)
       ? entry.additionalTags.filter(
           (tag): tag is string => typeof tag === "string",
