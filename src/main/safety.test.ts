@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { testConfig } from "../test/config.ts";
 import {
   assertSeparateRoots,
   isAllowedDownloadOrigin,
@@ -195,11 +196,9 @@ test("safeFileName reads a device name up to the first dot", () => {
   assert.equal(safeFileName("nul.tar.gz"), "_nul.tar.gz");
 });
 
-/** A config carrying only the two paths this guard looks at. */
+/** A config differing only in the two paths this guard looks at. */
 function roots(cachePath: string | null, saveDataPath: string | null) {
-  return { cachePath, saveDataPath } as Parameters<
-    typeof assertSeparateRoots
-  >[0];
+  return testConfig({ cachePath, saveDataPath });
 }
 
 test("assertSeparateRoots accepts directories that do not contain each other", () => {
@@ -209,12 +208,13 @@ test("assertSeparateRoots accepts directories that do not contain each other", (
 
 test("assertSeparateRoots rejects a save tree the cache would evict", () => {
   // Eviction removes a ROM directory whole, so saves underneath it go too.
-  for (const [cache, saves] of [
+  const collisions: [string, string][] = [
     ["/data/cache", "/data/cache"],
     ["/data/cache", "/data/cache/saves"],
     ["/data/cache/roms", "/data/cache"],
     ["/data/cache", "/data/cache/../cache/inner"],
-  ]) {
+  ];
+  for (const [cache, saves] of collisions) {
     assert.throws(
       () => assertSeparateRoots(roots(cache, saves)),
       { code: "invalid-request" },

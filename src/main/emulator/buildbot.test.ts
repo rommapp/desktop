@@ -3,11 +3,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import {
-  DEFAULT_CACHE_LIMIT_BYTES,
-  type DesktopConfig,
-  LaunchError,
-} from "../../shared/types.ts";
+import { LaunchError } from "../../shared/types.ts";
+import { testConfig } from "../../test/config.ts";
 import {
   BUILDBOT_ORIGIN,
   assertBuildbotResponse,
@@ -18,29 +15,6 @@ import {
   firstInstallableCore,
 } from "./buildbot.ts";
 import { coreFileName } from "./resolve.ts";
-
-function baseConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
-  return {
-    serverUrl: "https://romm.example.com",
-    retroarchPath: null,
-    retroarchCoresPath: null,
-    autoInstallCores: true,
-    preferredCores: {},
-    // Off, so a host that happens to have Dolphin installed cannot change
-    // what these tests see.
-    useDetectedEmulators: false,
-    offerStandaloneInstall: false,
-    emulatorsBasePath: null,
-    emulators: [],
-    cachePath: null,
-    saveDataPath: null,
-    libraryPath: null,
-    cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
-    fullscreen: false,
-    trustedCertificates: [],
-    ...patch,
-  };
-}
 
 /** A cores directory holding the named cores and nothing else. */
 function fakeCores(cores: string[]): string {
@@ -116,7 +90,7 @@ test("the first installable candidate skips names that cannot be fetched", () =>
 });
 
 test("offers to install when the core is the only thing missing", () => {
-  const config = baseConfig({
+  const config = testConfig({
     retroarchPath: fakeEmulator(),
     retroarchCoresPath: fakeCores([]),
   });
@@ -124,7 +98,7 @@ test("offers to install when the core is the only thing missing", () => {
 });
 
 test("does not install a core that is already there", () => {
-  const config = baseConfig({
+  const config = testConfig({
     retroarchPath: fakeEmulator(),
     retroarchCoresPath: fakeCores(["snes9x"]),
   });
@@ -137,7 +111,7 @@ test("does not install a core that is already there", () => {
 test("does not install when a later candidate is already there", () => {
   // resolveCore takes the first installed candidate rather than the first
   // named one, so a preferred core being absent is not a reason to download.
-  const config = baseConfig({
+  const config = testConfig({
     retroarchPath: fakeEmulator(),
     retroarchCoresPath: fakeCores(["bsnes"]),
   });
@@ -148,7 +122,7 @@ test("does not install when a later candidate is already there", () => {
 });
 
 test("respects the setting being turned off", () => {
-  const config = baseConfig({
+  const config = testConfig({
     autoInstallCores: false,
     retroarchPath: fakeEmulator(),
     retroarchCoresPath: fakeCores([]),
@@ -160,7 +134,7 @@ test("respects the setting being turned off", () => {
 });
 
 test("does not install without somewhere to put it", () => {
-  const config = baseConfig({ retroarchPath: fakeEmulator() });
+  const config = testConfig({ retroarchPath: fakeEmulator() });
   assert.equal(
     canInstallCore(config, "snes", ["snes9x"], "linux", "x64"),
     false,
@@ -170,7 +144,7 @@ test("does not install without somewhere to put it", () => {
 test("does not install a core for a standalone emulator", () => {
   // PCSX2 never loads a libretro core, so the platform having candidate cores
   // is not a reason to fetch one.
-  const config = baseConfig({
+  const config = testConfig({
     retroarchCoresPath: fakeCores([]),
     emulators: [
       {
@@ -185,7 +159,7 @@ test("does not install a core for a standalone emulator", () => {
 });
 
 test("installs a core for a mapping that names one", () => {
-  const config = baseConfig({
+  const config = testConfig({
     retroarchCoresPath: fakeCores([]),
     emulators: [
       {
@@ -200,7 +174,7 @@ test("installs a core for a mapping that names one", () => {
 });
 
 test("does not install for a machine the buildbot skips", () => {
-  const config = baseConfig({
+  const config = testConfig({
     retroarchPath: fakeEmulator(),
     retroarchCoresPath: fakeCores([]),
   });
@@ -211,7 +185,7 @@ test("does not install for a machine the buildbot skips", () => {
 });
 
 test("does not install when the platform names no fetchable core", () => {
-  const config = baseConfig({
+  const config = testConfig({
     retroarchPath: fakeEmulator(),
     retroarchCoresPath: fakeCores([]),
   });
@@ -226,7 +200,7 @@ test("does not authorize a download with no emulator to load the core", () => {
   // The predicate has to check this itself rather than leave it to callers: a
   // download cannot conjure an emulator, and a caller trusting the name would
   // fetch a core nothing can load.
-  const missing = baseConfig({
+  const missing = testConfig({
     retroarchPath: "/nowhere/retroarch",
     retroarchCoresPath: fakeCores([]),
   });
@@ -235,10 +209,10 @@ test("does not authorize a download with no emulator to load the core", () => {
     false,
   );
 
-  const none = baseConfig({ retroarchCoresPath: fakeCores([]) });
+  const none = testConfig({ retroarchCoresPath: fakeCores([]) });
   assert.equal(canInstallCore(none, "snes", ["snes9x"], "linux", "x64"), false);
 
-  const mappingMissing = baseConfig({
+  const mappingMissing = testConfig({
     retroarchCoresPath: fakeCores([]),
     emulators: [
       {

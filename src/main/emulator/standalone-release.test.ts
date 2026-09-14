@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { test } from "node:test";
 import { isAllowedDownloadOrigin } from "../safety.ts";
+import { DOLPHIN_BETA, PCSX2_STABLE } from "./release-fixtures.ts";
 import {
   RELEASE_SOURCES,
   installsWhereDetectionLooks,
@@ -11,16 +10,8 @@ import {
   unwrapRelease,
 } from "./standalone-release.ts";
 
-/** The real payloads, captured from each project's own release index, so the
- *  selectors are checked against the shapes they will actually meet. */
-function fixture(name: string): unknown {
-  return JSON.parse(
-    readFileSync(join(import.meta.dirname, "fixtures", name), "utf8"),
-  );
-}
-
-const DOLPHIN = fixture("dolphin-beta.json");
-const PCSX2 = fixture("pcsx2-stable.json");
+const DOLPHIN = DOLPHIN_BETA;
+const PCSX2 = PCSX2_STABLE;
 
 test("Dolphin gives macOS a universal disk image", () => {
   for (const arch of ["arm64", "x64"]) {

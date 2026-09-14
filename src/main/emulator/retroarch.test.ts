@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  DEFAULT_CACHE_LIMIT_BYTES,
-  type DesktopConfig,
-} from "../../shared/types.ts";
+import { testConfig } from "../../test/config.ts";
 import {
   BUILDBOT_ORIGIN,
   PINNED_STABLE_VERSION,
@@ -119,36 +116,12 @@ test("the pinned fallback resolves to a real installer on every platform", () =>
   }
 });
 
-function baseConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
-  return {
-    serverUrl: "https://romm.example.com",
-    retroarchPath: null,
-    retroarchCoresPath: null,
-    autoInstallCores: true,
-    preferredCores: {},
-    // Off, so a host that happens to have Dolphin installed cannot change
-    // what these tests see.
-    useDetectedEmulators: false,
-    offerStandaloneInstall: false,
-    offerRetroArchInstall: true,
-    emulatorsBasePath: null,
-    emulators: [],
-    cachePath: null,
-    saveDataPath: null,
-    libraryPath: null,
-    cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
-    fullscreen: false,
-    trustedCertificates: [],
-    ...patch,
-  };
-}
-
 test("offers when the machine has nothing to launch with", () => {
-  assert.ok(shouldOfferRetroArch(baseConfig()));
+  assert.ok(shouldOfferRetroArch(testConfig()));
 });
 
 test("says nothing once RetroArch has been found", () => {
-  const config = baseConfig({ retroarchPath: "/usr/bin/retroarch" });
+  const config = testConfig({ retroarchPath: "/usr/bin/retroarch" });
   assert.equal(hasNoEmulator(config), false);
   assert.equal(shouldOfferRetroArch(config), false);
 });
@@ -156,7 +129,7 @@ test("says nothing once RetroArch has been found", () => {
 test("says nothing to someone who configured their own emulator", () => {
   // Configuring PCSX2 and nothing else is a choice, and an unprompted dialog
   // pushing a different emulator would be presumptuous.
-  const config = baseConfig({
+  const config = testConfig({
     emulators: [
       { platformSlug: "ps2", command: "/usr/bin/pcsx2", args: ["{rom}"] },
     ],
@@ -167,7 +140,7 @@ test("says nothing to someone who configured their own emulator", () => {
 
 test("respects having been told not to ask again", () => {
   assert.equal(
-    shouldOfferRetroArch(baseConfig({ offerRetroArchInstall: false })),
+    shouldOfferRetroArch(testConfig({ offerRetroArchInstall: false })),
     false,
   );
 });
@@ -175,5 +148,5 @@ test("respects having been told not to ask again", () => {
 test("stays quiet until the server address is known", () => {
   // The setup window is already asking for something; stacking a second dialog
   // on top of it would be the first thing a new user sees.
-  assert.equal(shouldOfferRetroArch(baseConfig({ serverUrl: null })), false);
+  assert.equal(shouldOfferRetroArch(testConfig({ serverUrl: null })), false);
 });
