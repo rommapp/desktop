@@ -3,11 +3,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import {
-  DEFAULT_CACHE_LIMIT_BYTES,
-  type DesktopConfig,
-  LaunchError,
-} from "../../shared/types.ts";
+import { LaunchError } from "../../shared/types.ts";
+import { testConfig } from "../../test/config.ts";
 import {
   applyTokens,
   coreFileName,
@@ -19,20 +16,6 @@ import {
   resolveEmulatorCommand,
   resolveLaunch,
 } from "./resolve.ts";
-
-function baseConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
-  return {
-    serverUrl: "https://romm.example.com",
-    retroarchPath: null,
-    retroarchCoresPath: null,
-    autoInstallCores: true,
-    emulators: [],
-    cachePath: null,
-    cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
-    trustedCertificates: [],
-    ...patch,
-  };
-}
 
 /** A throwaway tree standing in for a RetroArch install. */
 function fakeInstall(cores: string[]) {
@@ -88,7 +71,7 @@ test("resolveCore returns null when nothing is installed", () => {
 test("resolveLaunch builds a RetroArch command from the first installed core", () => {
   const { root, binary } = fakeInstall(["snes9x"]);
   const launch = resolveLaunch({
-    config: baseConfig({ retroarchPath: binary, retroarchCoresPath: root }),
+    config: testConfig({ retroarchPath: binary, retroarchCoresPath: root }),
     platformSlug: "snes",
     cores: ["snes9x"],
     romPath: "/cache/1-game.sfc",
@@ -108,7 +91,7 @@ test("resolveLaunch prefers a per-platform mapping over RetroArch", () => {
   const standalone = join(root, "dolphin");
   writeFileSync(standalone, "");
   const launch = resolveLaunch({
-    config: baseConfig({
+    config: testConfig({
       retroarchPath: binary,
       retroarchCoresPath: root,
       emulators: [
@@ -135,7 +118,7 @@ test("resolveLaunch falls back to a wildcard mapping", () => {
   const generic = join(root, "generic");
   writeFileSync(generic, "");
   const launch = resolveLaunch({
-    config: baseConfig({
+    config: testConfig({
       emulators: [{ platformSlug: "*", command: generic, args: ["{rom}"] }],
     }),
     platformSlug: "anything",
@@ -151,7 +134,7 @@ test("resolveLaunch reports a platform with no known cores", () => {
   assert.throws(
     () =>
       resolveLaunch({
-        config: baseConfig({ retroarchPath: binary, retroarchCoresPath: root }),
+        config: testConfig({ retroarchPath: binary, retroarchCoresPath: root }),
         platformSlug: "switch",
         cores: [],
         romPath: "/cache/4-game.xci",
@@ -166,7 +149,7 @@ test("resolveLaunch reports cores that are known but not installed", () => {
   assert.throws(
     () =>
       resolveLaunch({
-        config: baseConfig({ retroarchPath: binary, retroarchCoresPath: root }),
+        config: testConfig({ retroarchPath: binary, retroarchCoresPath: root }),
         platformSlug: "n64",
         cores: ["mupen64plus_next"],
         romPath: "/cache/5-game.z64",
@@ -180,7 +163,7 @@ test("resolveLaunch reports a configured emulator that has been removed", () => 
   assert.throws(
     () =>
       resolveLaunch({
-        config: baseConfig({
+        config: testConfig({
           emulators: [
             { platformSlug: "psx", command: "/nope/duckstation", args: [] },
           ],
@@ -201,7 +184,7 @@ test("resolveLaunch refuses a mapping whose {core} cannot be resolved", () => {
   assert.throws(
     () =>
       resolveLaunch({
-        config: baseConfig({
+        config: testConfig({
           retroarchCoresPath: root,
           emulators: [
             {
@@ -226,7 +209,7 @@ test("resolveLaunch still fills {core} for a mapping when one is installed", () 
   const generic = join(root, "generic");
   writeFileSync(generic, "");
   const launch = resolveLaunch({
-    config: baseConfig({
+    config: testConfig({
       retroarchCoresPath: root,
       emulators: [
         {
@@ -253,7 +236,7 @@ test("resolveLaunch leaves a mapping without {core} alone when no core exists", 
   const standalone = join(root, "pcsx2");
   writeFileSync(standalone, "");
   const launch = resolveLaunch({
-    config: baseConfig({
+    config: testConfig({
       emulators: [
         {
           platformSlug: "ps2",
@@ -299,7 +282,7 @@ test("resolveLaunch runs a mapping named relative to the base path", () => {
   writeFileSync(exe, "");
 
   const launch = resolveLaunch({
-    config: baseConfig({
+    config: testConfig({
       emulatorsBasePath: root,
       emulators: [
         {
@@ -325,7 +308,7 @@ test("resolveLaunch reports the resolved path when a relative command is missing
   assert.throws(
     () =>
       resolveLaunch({
-        config: baseConfig({
+        config: testConfig({
           emulatorsBasePath: root,
           emulators: [
             { platformSlug: "ps2", command: "pcsx2/pcsx2-qt.exe", args: [] },
@@ -358,7 +341,7 @@ test("resolveLaunch points RetroArch at the sandbox when one is configured", () 
   const { root, binary } = fakeInstall(["snes9x"]);
   const savePaths = fakeSavePaths(join(root, "save-data"));
   const launch = resolveLaunch({
-    config: baseConfig({ retroarchPath: binary, retroarchCoresPath: root }),
+    config: testConfig({ retroarchPath: binary, retroarchCoresPath: root }),
     platformSlug: "snes",
     cores: ["snes9x"],
     romPath: "/cache/1-game.sfc",
@@ -443,7 +426,7 @@ test("resolveLaunch fills {saves} and {states} for a mapping", () => {
   writeFileSync(standalone, "");
   const savePaths = fakeSavePaths(join(root, "save-data"));
   const launch = resolveLaunch({
-    config: baseConfig({
+    config: testConfig({
       emulators: [
         {
           platformSlug: "ps2",
@@ -473,7 +456,7 @@ test("resolveLaunch refuses a mapping naming {saves} with no saveDataPath", () =
   assert.throws(
     () =>
       resolveLaunch({
-        config: baseConfig({
+        config: testConfig({
           emulators: [
             {
               platformSlug: "ps2",
@@ -496,12 +479,12 @@ test("resolveLaunch refuses a mapping naming {saves} with no saveDataPath", () =
 });
 
 test("requiresCore is true for the RetroArch default path", () => {
-  assert.ok(requiresCore(baseConfig(), "snes"));
+  assert.ok(requiresCore(testConfig(), "snes"));
 });
 
 test("requiresCore is false for a standalone emulator", () => {
   // The platform may still have candidate cores; this mapping never loads one.
-  const config = baseConfig({
+  const config = testConfig({
     emulators: [
       { platformSlug: "ps2", command: "/usr/bin/pcsx2", args: ["{rom}"] },
     ],
@@ -510,7 +493,7 @@ test("requiresCore is false for a standalone emulator", () => {
 });
 
 test("requiresCore follows the wildcard row for an unmapped platform", () => {
-  const config = baseConfig({
+  const config = testConfig({
     emulators: [
       { platformSlug: "*", command: "/usr/bin/flatpak", args: ["{rom}"] },
     ],
@@ -519,7 +502,7 @@ test("requiresCore follows the wildcard row for an unmapped platform", () => {
 });
 
 test("requiresCore is true for a mapping that names {core}", () => {
-  const config = baseConfig({
+  const config = testConfig({
     emulators: [
       {
         platformSlug: "*",
@@ -533,10 +516,10 @@ test("requiresCore is true for a mapping that names {core}", () => {
 
 test("emulatorIsPresent sees a RetroArch that exists", () => {
   const { binary } = fakeInstall([]);
-  assert.ok(emulatorIsPresent(baseConfig({ retroarchPath: binary }), "snes"));
-  assert.equal(emulatorIsPresent(baseConfig(), "snes"), false);
+  assert.ok(emulatorIsPresent(testConfig({ retroarchPath: binary }), "snes"));
+  assert.equal(emulatorIsPresent(testConfig(), "snes"), false);
   assert.equal(
-    emulatorIsPresent(baseConfig({ retroarchPath: "/nope/retroarch" }), "snes"),
+    emulatorIsPresent(testConfig({ retroarchPath: "/nope/retroarch" }), "snes"),
     false,
   );
 });
@@ -544,7 +527,7 @@ test("emulatorIsPresent sees a RetroArch that exists", () => {
 test("emulatorIsPresent resolves a mapping against the base path", () => {
   const { root } = fakeInstall([]);
   writeFileSync(join(root, "pcsx2"), "");
-  const config = baseConfig({
+  const config = testConfig({
     emulatorsBasePath: root,
     emulators: [
       { platformSlug: "ps2", command: "pcsx2", args: ["{rom}"] },
@@ -556,8 +539,8 @@ test("emulatorIsPresent resolves a mapping against the base path", () => {
 });
 
 test("emulatorLabel names the mapping, or RetroArch when there is none", () => {
-  assert.equal(emulatorLabel(baseConfig(), "snes"), "RetroArch");
-  const config = baseConfig({
+  assert.equal(emulatorLabel(testConfig(), "snes"), "RetroArch");
+  const config = testConfig({
     emulators: [
       {
         platformSlug: "ps2",
@@ -576,7 +559,7 @@ test("emulatorLabel names the mapping, or RetroArch when there is none", () => {
 test("assumeMissingCoreInstalled resolves a core that is not there yet", () => {
   const { root, binary } = fakeInstall([]);
   const launch = resolveLaunch({
-    config: baseConfig({ retroarchPath: binary, retroarchCoresPath: root }),
+    config: testConfig({ retroarchPath: binary, retroarchCoresPath: root }),
     platformSlug: "snes",
     cores: ["snes9x"],
     romPath: "/cache/1-game.sfc",
@@ -599,7 +582,7 @@ test("assuming a core does not paper over any other failure", () => {
   assert.throws(
     () =>
       resolveLaunch({
-        config: baseConfig({
+        config: testConfig({
           retroarchCoresPath: root,
           emulators: [
             {
@@ -624,7 +607,7 @@ test("assuming a core does not paper over any other failure", () => {
   assert.throws(
     () =>
       resolveLaunch({
-        config: baseConfig({ retroarchCoresPath: root }),
+        config: testConfig({ retroarchCoresPath: root }),
         platformSlug: "snes",
         cores: ["snes9x"],
         romPath: "/cache/1-game.sfc",
@@ -640,7 +623,7 @@ test("assumeMissingCoreInstalled still needs a name that could be fetched", () =
   assert.throws(
     () =>
       resolveLaunch({
-        config: baseConfig({ retroarchPath: binary, retroarchCoresPath: root }),
+        config: testConfig({ retroarchPath: binary, retroarchCoresPath: root }),
         platformSlug: "snes",
         cores: ["../evil"],
         romPath: "/cache/1-game.sfc",
@@ -656,7 +639,7 @@ test("without the option a missing core still fails", () => {
   assert.throws(
     () =>
       resolveLaunch({
-        config: baseConfig({ retroarchPath: binary, retroarchCoresPath: root }),
+        config: testConfig({ retroarchPath: binary, retroarchCoresPath: root }),
         platformSlug: "snes",
         cores: ["snes9x"],
         romPath: "/cache/1-game.sfc",

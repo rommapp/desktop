@@ -123,8 +123,9 @@ test("rejects an archive whose contents do not match their checksum", () => {
   // Stored, so the payload sits verbatim after the local header and a single
   // flipped byte survives to the checksum rather than failing to inflate.
   const at = corrupt.indexOf(Buffer.from("core payload"));
-  assert.ok(at > 0);
-  corrupt[at] = corrupt[at] ^ 0xff;
+  const byte = corrupt[at];
+  assert.ok(at > 0 && byte !== undefined);
+  corrupt[at] = byte ^ 0xff;
   assert.throws(() => extractZipEntry(corrupt, CORE_NAME), /checksum/);
 });
 
