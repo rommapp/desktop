@@ -139,8 +139,9 @@ started with a controller does not need a mouse to continue.
 
 ## Scope
 
-Saves and states are left wherever the local emulator writes them. Syncing them
-back to RomM is out of scope for now.
+Each game gets its own directory for saves and states, rather than leaving them
+wherever the emulator happened to write them (see [Save data](#save-data)).
+Syncing them back to RomM is still out of scope.
 
 ## Emulator configuration
 
@@ -174,7 +175,8 @@ is derived from its parent, so `retroarchCoresPath` is usually unnecessary.
 ### Standalone emulators
 
 `emulators` maps a platform to any executable. `{rom}` is replaced with the
-cached ROM path and `{core}` with the resolved libretro core path.
+cached ROM path and `{core}` with the resolved libretro core path;
+[Save data](#save-data) adds four more tokens for saves and states.
 Substitution happens per argv entry, so no shell is involved and paths
 containing spaces need no quoting. An entry that uses `{core}` when no core can
 be resolved fails with an explanation rather than passing an empty argument to
@@ -259,9 +261,86 @@ The server supplies only the path below the root, and anything resolving
 outside the configured root is rejected rather than normalised, so this cannot
 be used to name an arbitrary file.
 
-Note that emulators write save files and states next to the ROM. Launching in
-place puts those in your library rather than in the cache, where RomM may then
-scan them. That is the main reason this is opt-in rather than automatic.
+Save data is unaffected by this: it goes to its own directory either way, so
+launching in place does not leave saves in your library for RomM to scan. See
+[Save data](#save-data).
+
+### Save data
+
+Left to itself an emulator writes save data next to the ROM, and neither place
+that lands is somewhere it should stay. A game played from the cache keeps its
+save in `rom-cache`, where the eviction in [ROM cache](#rom-cache) eventually
+deletes it along with the ROM it sits beside. A game launched in place under
+`libraryPath` leaves its save in your library, where RomM may then scan it.
+
+So the shell hands each game a directory of its own, under `save-data` beside
+the config file:
+
+```
+<saveDataPath>/<romId>/saves/<name>.srm
+<saveDataPath>/<romId>/states/<name>.state
+```
+
+`saveDataPath` has to sit outside `cachePath`, and the shell refuses a launch
+when either contains the other: eviction removes a cached ROM's directory
+whole, and save data underneath it would go with it.
+
+The directory is keyed on the ROM id and the filename comes from the server, so
+a cached launch and an in-place launch land on one file. RetroArch is passed
+`-s` and `-S`, which override whatever `savefile_directory` your `retroarch.cfg`
+sets. Point `saveDataPath` somewhere else to move the whole tree, a synced
+folder say:
+
+```json
+{
+  "saveDataPath": "/home/you/romm-saves"
+}
+```
+
+A configured emulator has to be told, since the shell only passes the arguments
+a mapping asks for. `{saves}` and `{states}` expand to the two directories, and
+`{savefile}` and `{statefile}` to the files inside them, for an emulator that
+wants a path rather than a directory:
+
+```json
+{
+  "emulators": [
+    {
+      "platformSlug": "*",
+      "label": "RetroArch (Flatpak)",
+      "command": "/usr/bin/flatpak",
+      "args": [
+        "run",
+        "org.libretro.RetroArch",
+        "-L",
+        "{core}",
+        "-s",
+        "{savefile}",
+        "-S",
+        "{statefile}",
+        "{rom}"
+      ]
+    }
+  ]
+}
+```
+
+Which of the four an emulator wants, and whether it takes them on the command
+line at all, varies: several only read a save directory from their own config
+file. There the shell cannot place the save for you, and the entry is better
+left without the tokens.
+
+Prefer the file tokens where an emulator accepts one. Given only a directory,
+an emulator names the save after the ROM, and the cached copy carries a name
+the shell has made portable: Windows device names, trailing dots, and
+characters that are legal on Linux but not Windows are all rewritten. A ROM
+whose name needed rewriting therefore still derives two save names, one per
+launch path. `{savefile}`, `{statefile}` and RetroArch's own `-s` and `-S` name
+the file outright and are unaffected.
+
+Should `saveDataPath` ever be empty, a mapping naming one of these tokens fails
+with an explanation rather than handing the emulator a blank argument, the same
+way `{core}` does.
 
 ### Fullscreen
 
@@ -281,8 +360,17 @@ Control Command F on macOS.
 ### ROM cache
 
 Downloaded ROMs are cached under `cachePath`, which defaults to `rom-cache`
-alongside the config file. Once the cache exceeds `cacheLimitBytes` (20 GB by
-default), least-recently-used ROMs are evicted.
+alongside the config file, one directory per ROM:
+
+```
+<cachePath>/<romId>/<name>
+```
+
+The directory carries the ROM id, so the file itself keeps the name the server
+gave it and an emulator deriving anything from the content name agrees with a
+launch straight out of the library. Once the cache exceeds `cacheLimitBytes`
+(20 GB by default), least-recently-used ROMs are evicted a whole directory at a
+time.
 
 ## Security model
 
@@ -349,7 +437,9 @@ src/
     index.ts        App lifecycle, single-instance lock, initial window
     ipc.ts          IPC handlers behind window.rommNative
     launcher.ts     Download, resolve, spawn, track
-    rom-cache.ts    Download with the window's session cookies, LRU cache
+    cache/          LRU eviction over the ROM cache
+    rom-cache.ts    Download with the window's session cookies
+    saves/          Per-game save and state directories
     safety.ts       Validation of everything the renderer sends
     spike.ts        TEMPORARY: the --spike harness (see above)
     window.ts       Window creation and navigation policy

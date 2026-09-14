@@ -1,9 +1,13 @@
 // Validation for the two pieces of launch input that come from the renderer.
 // Deliberately free of Electron imports so it can be unit tested directly.
 
-import { statSync } from "node:fs";
-import { resolve, sep } from "node:path";
-import { LaunchError, type LaunchRequest } from "../shared/types.ts";
+import { realpathSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import {
+  type DesktopConfig,
+  LaunchError,
+  type LaunchRequest,
+} from "../shared/types.ts";
 
 /**
  * Find a ROM inside the user's own copy of the library, so a server running on
@@ -26,7 +30,7 @@ export function resolveLibraryRom(
 
   const root = resolve(libraryPath);
   const candidate = resolve(root, serverPath);
-  if (candidate !== root && !candidate.startsWith(root + sep)) return null;
+  if (!isWithin(root, candidate)) return null;
 
   let info;
   try {
@@ -75,17 +79,89 @@ export function resolveDownloadUrl(
 /** Characters that are unsafe in a filename on at least one supported OS. */
 const UNSAFE_FILENAME_CHARS = new RegExp('[/\\\\:*?"<>|]', "g");
 
+/** Names Windows reserves for devices. Reserved whatever the extension, so
+ *  `CON.zip` is as unopenable as `CON`. Rewritten on every platform so a file
+ *  written on one stays usable on another. */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
 /** Reduce a server-supplied name to one safe filename component; the result is
- *  only ever joined onto the cache directory. */
-export function safeCacheFileName(fileName: string, romId: number): string {
-  const cleaned = fileName
-    .replace(UNSAFE_FILENAME_CHARS, "_")
-    .replace(/^\.+/, "")
-    .trim()
-    .slice(0, 120);
-  // Prefixing with the ROM id keeps two games that share a filename apart and
-  // guarantees a non-empty name when cleaning removes everything.
-  return `${romId}-${cleaned || "rom"}`;
+ *  only ever joined onto a directory the shell owns. */
+export function safeFileNameComponent(fileName: string): string {
+  return (
+    fileName
+      .replace(UNSAFE_FILENAME_CHARS, "_")
+      // Trim before dropping leading dots, or " .." survives as ".." and
+      // addresses the parent directory rather than a file in it.
+      .trim()
+      .replace(/^\.+/, "")
+      .slice(0, 120)
+      // Windows ignores trailing dots and spaces, so leaving them would let
+      // "game." and "game" name one file while looking like two.
+      .replace(/[. ]+$/, "")
+  );
+}
+
+/** One filename component that is safe to create: never empty, never a path,
+ *  never a Windows device name. */
+export function safeFileName(fileName: string): string {
+  const cleaned = safeFileNameComponent(fileName) || "rom";
+  // Windows reads the device name up to the first dot, so CON.foo.zip is the
+  // console too.
+  const stem = cleaned.split(".")[0] ?? "";
+  return WINDOWS_RESERVED.test(stem) ? `_${cleaned}` : cleaned;
+}
+
+/**
+ * Whether `child` is `parent` or sits underneath it, once both are resolved.
+ *
+ * Asking `relative` rather than comparing prefixes: a filesystem root resolves
+ * to a trailing separator of its own, so the prefix form misses `/` entirely,
+ * and on Windows this picks up the case insensitivity that `C:\Cache` and
+ * `c:\cache` need.
+ */
+export function isWithin(parent: string, child: string): boolean {
+  const step = relative(resolve(parent), resolve(child));
+  return step === "" || (!step.startsWith("..") && !isAbsolute(step));
+}
+
+/**
+ * The path with every symlink above it followed, so two names for one
+ * directory compare equal. A path that does not exist yet still resolves as
+ * far as its nearest existing ancestor, which is where a link would sit.
+ */
+function canonical(path: string): string {
+  const full = resolve(path);
+  let existing = full;
+  for (;;) {
+    try {
+      return join(realpathSync(existing), relative(existing, full));
+    } catch {
+      const parent = dirname(existing);
+      // Nothing above resolves, so the lexical path is the best answer there is.
+      if (parent === existing) return full;
+      existing = parent;
+    }
+  }
+}
+
+/**
+ * Refuse a cache and a save-data tree that contain one another. Eviction
+ * removes a ROM directory whole, so an overlapping save tree would be deleted
+ * along with the game it belongs to.
+ */
+export function assertSeparateRoots(config: DesktopConfig): void {
+  const { cachePath, saveDataPath } = config;
+  if (!cachePath || !saveDataPath) return;
+  // Compared canonically: a saveDataPath symlinked at the cache is the same
+  // directory under a different name, and eviction would not care which.
+  const cache = canonical(cachePath);
+  const saves = canonical(saveDataPath);
+  if (isWithin(cache, saves) || isWithin(saves, cache)) {
+    throw new LaunchError(
+      "invalid-request",
+      `saveDataPath (${saveDataPath}) and cachePath (${cachePath}) overlap. Cache eviction would delete save data, so set them to separate directories.`,
+    );
+  }
 }
 
 /** Check a launch request's shape before any of it reaches the filesystem or a

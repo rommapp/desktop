@@ -102,7 +102,10 @@ export interface EmulatorMapping {
    *  only needs naming once. */
   command: string;
   /** Argument template: "{rom}" becomes the cached ROM path, "{core}" the
-   *  resolved core path. Substituted per argv entry, so no shell is involved. */
+   *  resolved core path, "{saves}" / "{states}" this game's save data
+   *  directories, and "{savefile}" / "{statefile}" the files inside them, for
+   *  an emulator that wants one. Substituted per argv entry, so no shell is
+   *  involved. */
   args: string[];
   /** Display name for the emulator, shown in the renderer. */
   label?: string;
@@ -123,6 +126,10 @@ export interface DesktopConfig {
   emulators: EmulatorMapping[];
   /** Where downloaded ROMs are cached. Defaults to userData/rom-cache. */
   cachePath: string | null;
+  /** Root for the per-game directories an emulator is pointed at for save data.
+   *  Keeping saves out of the cache protects them from its eviction, and out of
+   *  the library from being scanned. Defaults to userData/save-data. */
+  saveDataPath: string | null;
   /** Root of the RomM library as this machine sees it. When the server runs
    *  here, a ROM found under this path is launched in place rather than
    *  downloaded back to the same disk. Null disables the lookup. */

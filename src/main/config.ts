@@ -18,6 +18,7 @@ function emptyConfig(): DesktopConfig {
     emulatorsBasePath: null,
     emulators: [],
     cachePath: null,
+    saveDataPath: null,
     libraryPath: null,
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
     fullscreen: false,
@@ -121,6 +122,8 @@ export function withDetectedDefaults(config: DesktopConfig): DesktopConfig {
       config.retroarchCoresPath ??
       firstExisting(coresCandidates(retroarchPath)),
     cachePath: config.cachePath ?? join(app.getPath("userData"), "rom-cache"),
+    saveDataPath:
+      config.saveDataPath ?? join(app.getPath("userData"), "save-data"),
   };
 }
 
