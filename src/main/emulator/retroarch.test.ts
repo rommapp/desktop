@@ -125,6 +125,10 @@ function baseConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     retroarchPath: null,
     retroarchCoresPath: null,
     autoInstallCores: true,
+    preferredCores: {},
+    // Off, so a host that happens to have Dolphin installed cannot change
+    // what these tests see.
+    useDetectedEmulators: false,
     offerRetroArchInstall: true,
     emulatorsBasePath: null,
     emulators: [],

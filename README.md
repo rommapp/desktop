@@ -282,6 +282,44 @@ bundled copy. An install anywhere else, notably on a drive other than C:, needs
 `retroarchPath` set by hand. Point it at the executable and the cores directory
 is derived from its parent, so `retroarchCoresPath` is usually unnecessary.
 
+### Detected standalone emulators
+
+RetroAchievements recognises the standalone PCSX2 and Dolphin but not their
+libretro cores, so for PS2 and GameCube/Wii there is no core that will ever
+unlock an achievement. Both have always been configurable under `emulators`;
+what nobody can reasonably guess is the executable name and argument template,
+which is the part people get stuck on -- RetroBat alone ships `pcsx2`,
+`pcsx2-16` and `pcsx2x6`, and the binary inside the first is `pcsx2-qt.exe`.
+
+So the shell looks for them where they land, the same way it already looks for
+RetroArch, and launches what it finds:
+
+| Emulator | Platforms    | Looked for in                                                                    |
+| -------- | ------------ | -------------------------------------------------------------------------------- |
+| PCSX2    | `ps2`        | `/Applications`, Program Files, the per-user Programs directory, scoop, RetroBat |
+| Dolphin  | `ngc`, `wii` | the same, plus `/usr/bin` and `/usr/games` and each one's Flatpak on Linux       |
+
+Nothing is downloaded and nothing is written to your config. An emulator
+installed by any means is found the same way, a frontend's own tree included, so
+someone already running RetroBat gets its emulators without configuring them
+twice.
+
+A row you wrote yourself always wins, so configuring either of these overrides
+the detection entirely. A detected emulator does beat a `*` wildcard row,
+though: a catch-all should not claim a platform that has a real emulator
+installed for it. Set `useDetectedEmulators` to `false` to switch the whole
+thing off:
+
+```json
+{
+  "useDetectedEmulators": false
+}
+```
+
+Two things RetroAchievements asks of Dolphin that the shell cannot do for you:
+it wants version 2407-68 or newer for GameCube (2603a for Wii), and "Enable Dual
+Core (speedup)" switched off. Both live in Dolphin's own settings.
+
 ### Standalone emulators
 
 `emulators` maps a platform to any executable. `{rom}` is replaced with the
@@ -560,6 +598,7 @@ src/
       install.ts    Fetching and unpacking one
       locations.ts  Where RetroArch and its cores live, per platform
       resolve.ts    Choosing the emulator and core for a platform
+      standalone.ts Finding an installed PCSX2 or Dolphin
       retroarch.ts  Which RetroArch installer suits this machine
     index.ts        App lifecycle, single-instance lock, initial window
     ipc.ts          IPC handlers behind window.rommNative

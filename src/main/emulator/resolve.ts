@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import {
   type DesktopConfig,
@@ -6,6 +7,7 @@ import {
   LaunchError,
 } from "../../shared/types.ts";
 import { type SavePaths } from "../saves/paths.ts";
+import { detectedMappingFor } from "./standalone.ts";
 
 /** Fallback row applied to any platform without its own mapping. */
 const WILDCARD_SLUG = "*";
@@ -88,6 +90,18 @@ function findMapping(
     (entry) => entry.platformSlug.toLowerCase() === platformSlug.toLowerCase(),
   );
   if (exact) return exact;
+
+  // A standalone emulator sitting in its usual place, between the user's own
+  // rows and the wildcard. It loses to anything written by hand, so configuring
+  // one still overrides it, and it beats the wildcard because a row meant as a
+  // catch-all should not claim a platform that has a real emulator installed
+  // for it. Detection is what makes PS2 and GameCube launchable at all under
+  // RetroAchievements, which recognises no libretro core for either.
+  if (config.useDetectedEmulators) {
+    const detected = detectedMappingFor(platformSlug, undefined, homedir());
+    if (detected) return detected;
+  }
+
   return (
     config.emulators.find((entry) => entry.platformSlug === WILDCARD_SLUG) ??
     null

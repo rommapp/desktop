@@ -132,6 +132,12 @@ export interface DesktopConfig {
    *  has no emulator at all. Nothing is ever installed without the user saying
    *  so, and the offer stops once they have an emulator or decline for good. */
   offerRetroArchInstall: boolean;
+  /** Use a standalone emulator found in its usual install location when no
+   *  `emulators` row covers the platform. Only PS2 and GameCube/Wii have one
+   *  today, because RetroAchievements recognises no libretro core for either.
+   *  Nothing is downloaded and no config is written; an explicit row always
+   *  wins, so this only ever fills a gap. */
+  useDetectedEmulators: boolean;
   /** Cores to try first for a platform, ahead of the ones the frontend named.
    *  RomM's map picks a sensible core for playing; it does not know which cores
    *  RetroAchievements recognises, or which one you happen to prefer. Keyed by
