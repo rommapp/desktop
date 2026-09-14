@@ -139,9 +139,9 @@ started with a controller does not need a mouse to continue.
 
 ## Scope
 
-Set `saveDataPath` and the shell gives each game its own directory for saves and
-states, instead of leaving them wherever the emulator happened to write them
-(see [Save data](#save-data)). Syncing them back to RomM is still out of scope.
+Each game gets its own directory for saves and states, rather than leaving them
+wherever the emulator happened to write them (see [Save data](#save-data)).
+Syncing them back to RomM is still out of scope.
 
 ## Emulator configuration
 
@@ -261,27 +261,22 @@ The server supplies only the path below the root, and anything resolving
 outside the configured root is rejected rather than normalised, so this cannot
 be used to name an arbitrary file.
 
-Note that emulators write save files and states next to the ROM by default.
-Launching in place puts those in your library rather than in the cache, where
-RomM may then scan them. Setting `saveDataPath` keeps them out of both.
+Save data is unaffected by this: it goes to its own directory either way, so
+launching in place does not leave saves in your library for RomM to scan. See
+[Save data](#save-data).
 
 ### Save data
 
-By default each emulator decides where a game's saves and states go, and the
-usual default is next to the ROM. That has two consequences here. A ROM played
-from the cache keeps its save in `rom-cache`, where the eviction in
-[ROM cache](#rom-cache) eventually deletes it along with the ROM. And the cached
-copy is named `<romId>-<name>`, while an in-place launch under `libraryPath`
-sees the server's own filename, so the same game writes `1-Chrono Trigger.srm`
-one way and `Chrono Trigger.srm` the other. Two saves, one game, no warning.
+Left to itself an emulator writes save data next to the ROM, which here means
+two problems. A game played from the cache keeps its save in `rom-cache`, where
+the eviction in [ROM cache](#rom-cache) eventually deletes it along with the ROM
+it sits beside. And the cached copy is named `<romId>-<name>` while an in-place
+launch under `libraryPath` sees the server's own filename, so the same game
+writes `1-Chrono Trigger.srm` one way and `Chrono Trigger.srm` the other. Two
+saves, one game, no warning.
 
-Set `saveDataPath` and the shell hands each game a directory of its own instead:
-
-```json
-{
-  "saveDataPath": "/home/you/romm-saves"
-}
-```
+So the shell hands each game a directory of its own, under `save-data` beside
+the config file:
 
 ```
 <saveDataPath>/<romId>/saves/<name>.srm
@@ -291,8 +286,14 @@ Set `saveDataPath` and the shell hands each game a directory of its own instead:
 The directory is keyed on the ROM id and the filename comes from the server, so
 a cached launch and an in-place launch land on one file. RetroArch is passed
 `-s` and `-S`, which override whatever `savefile_directory` your `retroarch.cfg`
-sets. If you already keep RetroArch's saves somewhere deliberate, a synced folder
-say, leave `saveDataPath` unset and nothing changes.
+sets. Point `saveDataPath` somewhere else to move the whole tree, a synced
+folder say:
+
+```json
+{
+  "saveDataPath": "/home/you/romm-saves"
+}
+```
 
 A configured emulator has to be told, since the shell only passes the arguments
 a mapping asks for. `{saves}` and `{states}` expand to the two directories, and
@@ -301,7 +302,6 @@ wants a path rather than a directory:
 
 ```json
 {
-  "saveDataPath": "/home/you/romm-saves",
   "emulators": [
     {
       "platformSlug": "*",
@@ -328,9 +328,9 @@ line at all, varies: several only read a save directory from their own config
 file. There the shell cannot place the save for you, and the entry is better
 left without the tokens.
 
-A mapping naming any of them while `saveDataPath` is unset fails with an
-explanation rather than handing the emulator a blank argument, the same way
-`{core}` does.
+Should `saveDataPath` ever be empty, a mapping naming one of these tokens fails
+with an explanation rather than handing the emulator a blank argument, the same
+way `{core}` does.
 
 ### Fullscreen
 

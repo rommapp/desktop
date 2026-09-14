@@ -128,8 +128,7 @@ export interface DesktopConfig {
   cachePath: string | null;
   /** Root for the per-game directories an emulator is pointed at for save data.
    *  Keeping saves out of the cache protects them from its eviction, and out of
-   *  the library from being scanned. Null leaves saves wherever the emulator
-   *  would write them. */
+   *  the library from being scanned. Defaults to userData/save-data. */
   saveDataPath: string | null;
   /** Root of the RomM library as this machine sees it. When the server runs
    *  here, a ROM found under this path is launched in place rather than
