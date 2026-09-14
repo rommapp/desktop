@@ -23,6 +23,16 @@ const MAX_EOCD_SEARCH = 0xffff + EOCD_MIN_SIZE;
 const METHOD_STORE = 0;
 const METHOD_DEFLATE = 8;
 
+/**
+ * Ceiling on what one entry may unpack to.
+ *
+ * The largest libretro core, mame, is a couple of hundred megabytes unpacked,
+ * so this leaves room while still bounding the allocation an archive can ask
+ * for. Enforced before inflating: a limit on the compressed archive is no limit
+ * at all when deflate manages better than 1000:1.
+ */
+export const MAX_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024;
+
 /** Zip64 puts the real value in an extra field; these are the placeholders that
  *  say so. The buildbot's cores are megabytes, so rather than implement zip64
  *  this refuses the archive and says why. */
@@ -102,7 +112,11 @@ export function listZipEntries(archive: Buffer): string[] {
  * whatever it finds has to defend against entry names that escape the target
  * directory, and this never learns a path from the archive at all.
  */
-export function extractZipEntry(archive: Buffer, name: string): Buffer {
+export function extractZipEntry(
+  archive: Buffer,
+  name: string,
+  maxUncompressedBytes: number = MAX_UNCOMPRESSED_BYTES,
+): Buffer {
   const entries = readCentralDirectory(archive);
   const entry = entries.find((candidate) => candidate.name === name);
   if (!entry) {
@@ -140,13 +154,37 @@ export function extractZipEntry(archive: Buffer, name: string): Buffer {
   }
   const compressed = archive.subarray(start, end);
 
+  // Refuse before inflating, not after. Deflate reaches better than 1000:1 on
+  // compressible input, so a cap on the archive alone lets a few hundred
+  // kilobytes become hundreds of gigabytes of allocation, and comparing the
+  // result against uncompressedSize afterwards is far too late.
+  if (entry.uncompressedSize > maxUncompressedBytes) {
+    throw new ZipError(
+      `${name} declares ${entry.uncompressedSize} bytes, past the ${maxUncompressedBytes} limit.`,
+    );
+  }
+
   let contents: Buffer;
   switch (entry.method) {
     case METHOD_STORE:
       contents = Buffer.from(compressed);
       break;
     case METHOD_DEFLATE:
-      contents = inflateRawSync(compressed);
+      try {
+        // The declared size is a claim, so bound the inflation by it as well:
+        // zlib stops and throws rather than growing past what the header
+        // promised, which the length check below would only notice afterwards.
+        contents = inflateRawSync(compressed, {
+          maxOutputLength: Math.max(entry.uncompressedSize, 1),
+        });
+      } catch (error) {
+        // Both a corrupt stream and one that overran its declared size arrive
+        // here as zlib's own error types, and every caller of this reads a
+        // ZipError.
+        throw new ZipError(
+          `${name} could not be inflated: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
       break;
     default:
       throw new ZipError(

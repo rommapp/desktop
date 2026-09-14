@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { type DesktopConfig, LaunchError } from "../../shared/types.ts";
 import { updateConfig } from "../config.ts";
 import { createProgressGate } from "../progress.ts";
+import { assertBuildbotResponse } from "./buildbot.ts";
 import {
   BUILDBOT_ORIGIN,
   MAX_INSTALLER_BYTES,
@@ -83,6 +84,10 @@ async function downloadInstaller({
   }
 
   const response = await net.fetch(installer.url, { signal });
+  // net.fetch follows redirects, so the origin check above only covers what was
+  // asked for. This file is handed to the OS to execute, so the origin that
+  // actually answered is the one that matters.
+  assertBuildbotResponse(response, installer.url);
   if (!response.ok) {
     throw new LaunchError(
       "download-failed",
@@ -115,12 +120,23 @@ async function downloadInstaller({
   // a truncated installer that the user then runs.
   const temp = `${target}.part`;
   const file = createWriteStream(temp);
+  // Attached before the first write, not only around the backpressure wait: a
+  // stream reports a failed open asynchronously, and an "error" with no
+  // listener is an uncaught exception that takes the app down rather than
+  // reaching the catch below.
+  const failed = new Promise<never>((_resolve, reject) => {
+    file.once("error", reject);
+  });
+  // Nothing ever settles this rejection when the transfer succeeds, and an
+  // unobserved rejection would be reported at exit.
+  failed.catch(() => {});
+
   const reader = response.body.getReader();
   let received = 0;
 
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await Promise.race([reader.read(), failed]);
       if (done) break;
       received += value.length;
       if (received > MAX_INSTALLER_BYTES) {
@@ -133,16 +149,19 @@ async function downloadInstaller({
       // Respect the write stream's backpressure rather than holding a 200MB
       // transfer in memory.
       if (!file.write(value)) {
-        await new Promise<void>((resolve, reject) => {
-          file.once("drain", resolve);
-          file.once("error", reject);
-        });
+        await Promise.race([
+          new Promise<void>((resolve) => file.once("drain", resolve)),
+          failed,
+        ]);
       }
       onProgress(received, total);
     }
-    await new Promise<void>((resolve, reject) => {
-      file.end((error?: Error | null) => (error ? reject(error) : resolve()));
-    });
+    await Promise.race([
+      new Promise<void>((resolve, reject) => {
+        file.end((error?: Error | null) => (error ? reject(error) : resolve()));
+      }),
+      failed,
+    ]);
   } catch (error) {
     file.destroy();
     await rm(temp, { force: true });

@@ -13,11 +13,7 @@ import {
 import { loadConfig } from "./config.ts";
 import { canInstallCore, firstInstallableCore } from "./emulator/buildbot.ts";
 import { installCore } from "./emulator/install.ts";
-import {
-  emulatorIsPresent,
-  emulatorLabel,
-  resolveLaunch,
-} from "./emulator/resolve.ts";
+import { emulatorLabel, resolveLaunch } from "./emulator/resolve.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
 import { resolveSavePaths } from "./saves/paths.ts";
@@ -34,21 +30,44 @@ function toLaunchError(error: unknown): LaunchError {
   return new LaunchError("launch-failed", message);
 }
 
+/** A launch that was cancelled should stop, not carry on to the emulator. */
+function throwIfCancelled(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw new LaunchError("download-failed", "Launch cancelled");
+  }
+}
+
 /**
  * Name the emulator a launch would use when the only thing missing is a core
  * the buildbot can supply, or null when the launch would fail for some other
- * reason. The emulator has to be present: a download cannot conjure one, and
- * reporting support for a machine with no RetroArch would just move the failure
- * later.
+ * reason.
  */
 function describeInstallableCore(
   config: DesktopConfig,
   query: PlatformSupportQuery,
 ): string | null {
   if (!canInstallCore(config, query.platformSlug, query.cores)) return null;
-  if (!emulatorIsPresent(config, query.platformSlug)) return null;
   const core = firstInstallableCore(query.cores);
   if (!core) return null;
+
+  // Every other precondition has to hold too. Overlapping cache and save roots,
+  // or a mapping naming {saves} with no saveDataPath, are failures no download
+  // can fix, and reporting support for one of those would only move the error
+  // to the launch. So re-resolve with the core assumed present and believe the
+  // answer.
+  try {
+    assertSeparateRoots(config);
+    resolveLaunch({
+      config,
+      platformSlug: query.platformSlug,
+      cores: query.cores,
+      romPath: "",
+      savePaths: resolveSavePaths(config.saveDataPath, 0, "probe"),
+      assumeMissingCoreInstalled: true,
+    });
+  } catch {
+    return null;
+  }
   return `${emulatorLabel(config, query.platformSlug)} (installs ${core})`;
 }
 
@@ -107,21 +126,15 @@ export class Launcher {
     }
   }
 
-  /**
-   * Install a libretro core the launch needs and the user does not have.
-   *
-   * A no-op unless every condition in canInstallCore holds, so a platform with
-   * its core already in place, a standalone emulator, or a user who has turned
-   * the feature off never reaches the network.
-   */
+  /** Install a libretro core the launch needs and the user does not have. */
   private async ensureCore(
     config: DesktopConfig,
     request: LaunchRequest,
     signal: AbortSignal,
   ): Promise<void> {
+    // Whether to install at all is the caller's decision, made before the
+    // launch was validated; this only needs somewhere to put it.
     if (!config.retroarchCoresPath) return;
-    if (!canInstallCore(config, request.platformSlug, request.cores)) return;
-    if (!emulatorIsPresent(config, request.platformSlug)) return;
 
     // Reported as an ordinary download, distinguished only by the optional
     // stage, so a frontend that has never heard of core installation still
@@ -177,20 +190,34 @@ export class Launcher {
         request.fileName,
       );
 
-      // Fetch a missing core first, so the resolve below sees it. Doing it
-      // before the ROM means a core that cannot be had fails in seconds rather
-      // than after a multi-gigabyte transfer.
-      await this.ensureCore(config, request, controller.signal);
+      // Decided before validating, so the validation can account for it.
+      const installingCore = canInstallCore(
+        config,
+        request.platformSlug,
+        request.cores,
+      );
 
-      // Resolve the emulator before downloading: a missing core should fail
-      // immediately rather than after a multi-gigabyte transfer.
+      // Resolve the emulator before downloading anything: a launch that cannot
+      // work should fail in milliseconds rather than after a multi-gigabyte
+      // transfer. The core is assumed present exactly when it is about to be
+      // fetched, so a mapping that also names a {saves} path it does not have
+      // still fails here rather than after the core has been downloaded and
+      // written for a launch that was never going to start.
       resolveLaunch({
         config,
         platformSlug: request.platformSlug,
         cores: request.cores,
         romPath: "",
         savePaths,
+        assumeMissingCoreInstalled: installingCore,
       });
+
+      if (installingCore) {
+        await this.ensureCore(config, request, controller.signal);
+      }
+      // Extracting and writing a core is not itself interruptible, so a cancel
+      // landing during it is only observed here.
+      throwIfCancelled(controller.signal);
 
       // When the server runs on this machine the file is already on local disk,
       // so copying it into the cache would mean holding a second multi-gigabyte
@@ -245,6 +272,9 @@ export class Launcher {
         await mkdir(savePaths.stateDir, { recursive: true });
       }
 
+      // Resolved again, and this time strictly: the validation above may have
+      // assumed a core that had yet to be downloaded, and nothing is spawned
+      // from an assumption.
       const launch = resolveLaunch({
         config,
         platformSlug: request.platformSlug,
@@ -252,6 +282,11 @@ export class Launcher {
         romPath,
         savePaths,
       });
+
+      // A launch cancelled while the ROM came out of the local library never
+      // passed through an interruptible transfer, so without this the emulator
+      // would still start after the cancel was reported.
+      throwIfCancelled(controller.signal);
 
       // argv form, never a shell string, so a path containing shell
       // metacharacters stays a single argument.

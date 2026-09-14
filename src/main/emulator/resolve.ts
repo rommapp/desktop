@@ -141,6 +141,34 @@ export function requiresCore(
   return mapping.args.some((arg) => arg.includes("{core}"));
 }
 
+/**
+ * Resolve the core, optionally pretending a missing one is already installed.
+ *
+ * The pretence exists so a launch that is about to download a core can still
+ * have everything else validated first: without it, a mapping that also needs a
+ * save path it does not have would only fail after the transfer. The stand-in
+ * is the path the install will actually write to, so what is validated is the
+ * shape of the real launch.
+ *
+ * A result produced this way describes a launch that cannot run yet, so it is
+ * for validation only and must never be spawned.
+ */
+function resolveOrAssumeCore(
+  config: DesktopConfig,
+  cores: string[],
+  assumeMissingCoreInstalled: boolean,
+): { name: string; path: string } | null {
+  if (!config.retroarchCoresPath) return null;
+  const installed = resolveCore(config.retroarchCoresPath, cores);
+  if (installed || !assumeMissingCoreInstalled) return installed;
+  const candidate = cores.find(isSafeCoreName);
+  if (!candidate) return null;
+  return {
+    name: candidate,
+    path: join(config.retroarchCoresPath, coreFileName(candidate)),
+  };
+}
+
 /** Pick the first candidate core that is installed, so a missing preferred core
  *  falls back instead of failing the launch. */
 export function resolveCore(
@@ -192,12 +220,17 @@ export function resolveLaunch({
   cores,
   romPath,
   savePaths,
+  assumeMissingCoreInstalled = false,
 }: {
   config: DesktopConfig;
   platformSlug: string;
   cores: string[];
   romPath: string;
   savePaths: SavePaths | null;
+  /** Treat a core that is about to be downloaded as already installed, so a
+   *  launch can be validated in full before the transfer. Validation only: the
+   *  result names a core that is not on disk yet and must not be spawned. */
+  assumeMissingCoreInstalled?: boolean;
 }): ResolvedLaunch {
   const mapping = findMapping(config, platformSlug);
   if (mapping) {
@@ -213,9 +246,7 @@ export function resolveLaunch({
     }
     // A mapping may still reference {core}, so resolve one when cores are
     // available; standalone emulators simply never use the token.
-    const core = config.retroarchCoresPath
-      ? resolveCore(config.retroarchCoresPath, cores)
-      : null;
+    const core = resolveOrAssumeCore(config, cores, assumeMissingCoreInstalled);
     // Substituting an empty {core} would hand the emulator a blank argument and
     // fail somewhere far less legible, so refuse here instead.
     if (!core && mapping.args.some((arg) => arg.includes("{core}"))) {
@@ -265,7 +296,7 @@ export function resolveLaunch({
     );
   }
 
-  const core = resolveCore(config.retroarchCoresPath, cores);
+  const core = resolveOrAssumeCore(config, cores, assumeMissingCoreInstalled);
   if (!core) {
     throw new LaunchError(
       "no-emulator-configured",

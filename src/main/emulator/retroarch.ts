@@ -16,8 +16,11 @@
 // unit-testable; the fetching lives in bootstrap.ts.
 
 import { type DesktopConfig } from "../../shared/types.ts";
+import { BUILDBOT_ORIGIN } from "./buildbot.ts";
 
-export const BUILDBOT_ORIGIN = "https://buildbot.libretro.com";
+// The emulator and its cores come from the same host, so the origin is defined
+// once, next to the core downloading, rather than twice.
+export { BUILDBOT_ORIGIN };
 
 /** Where a user is sent when there is nothing to download for their system. */
 export const RETROARCH_DOWNLOAD_PAGE = "https://retroarch.com/?page=platforms";

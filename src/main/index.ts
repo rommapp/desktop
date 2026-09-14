@@ -30,6 +30,20 @@ function focusMainWindow(): void {
 // the server rather than reopening setup.
 let forceSetup = isSetupMode();
 
+// openInitialWindow also runs on macOS "activate", so without this a user who
+// answered "Not now" without ticking the box would be asked again every time
+// they closed and reopened the window. The offer is once on startup.
+let emulatorOfferMade = false;
+
+function offerEmulatorOnce(
+  config: Parameters<typeof offerRetroArchInstall>[0],
+  window: BrowserWindow,
+): void {
+  if (emulatorOfferMade) return;
+  emulatorOfferMade = true;
+  void offerRetroArchInstall(config, window);
+}
+
 // One instance owns the ROM cache and the launch registry; a second would race
 // both, so hand the argv to the window that is already running instead.
 if (!app.requestSingleInstanceLock()) {
@@ -47,7 +61,7 @@ async function openInitialWindow(): Promise<void> {
     // After the window, not before: the offer is a dialog, and one that appears
     // over nothing reads as an error rather than a suggestion. Not awaited, so
     // the page carries on loading behind it.
-    void offerRetroArchInstall(config, window);
+    offerEmulatorOnce(config, window);
     return;
   }
   forceSetup = false;
@@ -58,7 +72,7 @@ async function openInitialWindow(): Promise<void> {
     // Re-read rather than reuse: the config in hand predates the address just
     // saved, and the offer is gated on that being set. This is the true first
     // run, so it is the one time the offer matters most.
-    void loadConfig().then((saved) => offerRetroArchInstall(saved, window));
+    void loadConfig().then((saved) => offerEmulatorOnce(saved, window));
   });
 }
 

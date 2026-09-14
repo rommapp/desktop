@@ -5,15 +5,46 @@
 // nightly is used: it is the same build RetroArch's own core updater installs,
 // and there is no per-core stable channel to prefer instead.
 
-import { type DesktopConfig } from "../../shared/types.ts";
+import { type DesktopConfig, LaunchError } from "../../shared/types.ts";
 import {
   coreFileName,
+  emulatorIsPresent,
   isSafeCoreName,
   requiresCore,
   resolveCore,
 } from "./resolve.ts";
 
 export const BUILDBOT_ORIGIN = "https://buildbot.libretro.com";
+
+/**
+ * Insist that what actually answered is still the buildbot.
+ *
+ * Checking the URL before the request is not enough, because redirects are
+ * followed: a response can carry bytes from another origin while the origin
+ * check on the request passes. Everything fetched from here is either loaded
+ * into the emulator's address space or handed to the OS to run, so it is the
+ * final URL that has to be right.
+ */
+export function assertBuildbotResponse(
+  response: { url?: string },
+  requestedUrl: string,
+): void {
+  // A response with no url has not been redirected anywhere, so the URL asked
+  // for is the one that answered.
+  const finalUrl = response.url || requestedUrl;
+  let origin: string;
+  try {
+    origin = new URL(finalUrl).origin;
+  } catch {
+    throw new LaunchError("download-failed", `Unreadable response URL`);
+  }
+  if (origin !== BUILDBOT_ORIGIN) {
+    throw new LaunchError(
+      "download-failed",
+      `Refusing a response redirected to ${origin}`,
+    );
+  }
+}
 
 /**
  * The buildbot's directory for a platform and architecture, or null where it
@@ -99,6 +130,10 @@ export function canInstallCore(
   if (!config.retroarchCoresPath) return false;
   if (!buildbotSupportsThisMachine(platform, arch)) return false;
   if (!requiresCore(config, platformSlug)) return false;
+  // Checked here rather than left to each caller: a download cannot conjure an
+  // emulator, so a predicate that authorised one without an emulator to load it
+  // would be wrong for anyone who trusted its name.
+  if (!emulatorIsPresent(config, platformSlug)) return false;
   if (!cores.some(isSafeCoreName)) return false;
   return resolveCore(config.retroarchCoresPath, cores) === null;
 }

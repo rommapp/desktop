@@ -1,9 +1,15 @@
 import { net } from "electron";
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { LaunchError } from "../../shared/types.ts";
 import { extractZipEntry } from "../zip.ts";
-import { BUILDBOT_ORIGIN, coreDownloadUrl } from "./buildbot.ts";
+import {
+  BUILDBOT_ORIGIN,
+  assertBuildbotResponse,
+  coreDownloadUrl,
+} from "./buildbot.ts";
 import { coreFileName } from "./resolve.ts";
 
 /**
@@ -36,6 +42,12 @@ async function fetchArchive(
   // honours the system proxy and certificate store the same way the window
   // does.
   const response = await net.fetch(url, { signal });
+  // Checking the requested URL is not enough: net.fetch follows redirects, so
+  // the bytes that arrive can come from somewhere else entirely while the
+  // origin check on the request still passes. This ends up loaded into the
+  // emulator's address space, so it is the final URL that has to be on the
+  // buildbot.
+  assertBuildbotResponse(response, url);
   // A core the buildbot does not build for this architecture is a 404, and the
   // caller should simply try the next candidate.
   if (response.status === 404) return null;
@@ -146,15 +158,28 @@ export async function installCore({
     }
 
     const target = join(coresPath, fileName);
-    // Write beside the target and rename, so an interrupted write cannot leave
-    // a truncated core that then looks installed.
-    const temp = `${target}.part`;
     await mkdir(coresPath, { recursive: true });
+
+    // Two games on the same platform can be launched at once: the registry is
+    // keyed by ROM id, so both reach this for the same core. If the other one
+    // finished first its core is already in place and correct, so take it
+    // rather than writing over a file the emulator may be loading.
+    if (existsSync(target)) return { name: core, path: target };
+
+    // Write beside the target and rename, so an interrupted write cannot leave
+    // a truncated core that then looks installed. The suffix is unique per
+    // attempt for the same reason: two concurrent launches sharing one .part
+    // would interleave their writes.
+    const temp = `${target}.${process.pid}.${randomUUID()}.part`;
     try {
       await writeFile(temp, contents);
       await rename(temp, target);
     } catch (error) {
       await rm(temp, { force: true });
+      // Losing the rename to a concurrent launch is success, not failure:
+      // Windows refuses to rename onto an existing file, and that file is the
+      // same core.
+      if (existsSync(target)) return { name: core, path: target };
       throw new LaunchError(
         "download-failed",
         `Could not write ${target}: ${error instanceof Error ? error.message : String(error)}`,
@@ -164,8 +189,11 @@ export async function installCore({
     return { name: core, path: target };
   }
 
+  // Every candidate failed to download. The emulator is present -- canInstallCore
+  // required it -- so this is a transfer problem, and calling it a configuration
+  // one would send the user to fix the wrong thing.
   throw new LaunchError(
-    "no-emulator-configured",
+    "download-failed",
     failures.length
       ? `No core could be downloaded (${failures.join("; ")}).`
       : "No core could be downloaded for this system.",

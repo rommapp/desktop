@@ -572,3 +572,96 @@ test("emulatorLabel names the mapping, or RetroArch when there is none", () => {
   // No label, so the command stands in, the same way resolveLaunch reports it.
   assert.equal(emulatorLabel(config, "ps3"), "/usr/bin/rpcs3");
 });
+
+test("assumeMissingCoreInstalled resolves a core that is not there yet", () => {
+  const { root, binary } = fakeInstall([]);
+  const launch = resolveLaunch({
+    config: baseConfig({ retroarchPath: binary, retroarchCoresPath: root }),
+    platformSlug: "snes",
+    cores: ["snes9x"],
+    romPath: "/cache/1-game.sfc",
+    savePaths: null,
+    assumeMissingCoreInstalled: true,
+  });
+  // The stand-in is the path the install will write to, so what gets validated
+  // is the shape of the real launch.
+  assert.equal(launch.label, "RetroArch (snes9x)");
+  assert.ok(launch.args.includes(join(root, coreFileName("snes9x"))));
+});
+
+test("assuming a core does not paper over any other failure", () => {
+  // The whole point of validating with the core assumed present: everything
+  // else still has to hold, or a launch would download a core and then fail.
+  const { root } = fakeInstall([]);
+  const standalone = join(root, "flatpak");
+  writeFileSync(standalone, "");
+
+  assert.throws(
+    () =>
+      resolveLaunch({
+        config: baseConfig({
+          retroarchCoresPath: root,
+          emulators: [
+            {
+              platformSlug: "*",
+              command: standalone,
+              args: ["-L", "{core}", "-s", "{savefile}", "{rom}"],
+            },
+          ],
+        }),
+        platformSlug: "snes",
+        cores: ["snes9x"],
+        romPath: "/cache/1-game.sfc",
+        savePaths: null,
+        assumeMissingCoreInstalled: true,
+      }),
+    // The missing saveDataPath, not the missing core.
+    (error: unknown) =>
+      error instanceof LaunchError && error.message.includes("saveDataPath"),
+  );
+
+  // A missing emulator is likewise not something a core download can fix.
+  assert.throws(
+    () =>
+      resolveLaunch({
+        config: baseConfig({ retroarchCoresPath: root }),
+        platformSlug: "snes",
+        cores: ["snes9x"],
+        romPath: "/cache/1-game.sfc",
+        savePaths: null,
+        assumeMissingCoreInstalled: true,
+      }),
+    LaunchError,
+  );
+});
+
+test("assumeMissingCoreInstalled still needs a name that could be fetched", () => {
+  const { root, binary } = fakeInstall([]);
+  assert.throws(
+    () =>
+      resolveLaunch({
+        config: baseConfig({ retroarchPath: binary, retroarchCoresPath: root }),
+        platformSlug: "snes",
+        cores: ["../evil"],
+        romPath: "/cache/1-game.sfc",
+        savePaths: null,
+        assumeMissingCoreInstalled: true,
+      }),
+    LaunchError,
+  );
+});
+
+test("without the option a missing core still fails", () => {
+  const { root, binary } = fakeInstall([]);
+  assert.throws(
+    () =>
+      resolveLaunch({
+        config: baseConfig({ retroarchPath: binary, retroarchCoresPath: root }),
+        platformSlug: "snes",
+        cores: ["snes9x"],
+        romPath: "/cache/1-game.sfc",
+        savePaths: null,
+      }),
+    /None of the cores/,
+  );
+});
