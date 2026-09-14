@@ -1,0 +1,29 @@
+{
+  "shortrev": "2606a",
+  "artifacts": [
+    {
+      "system": "Linux x86_64 (Flatpak)",
+      "url": "https://dl.dolphin-emu.org/releases/2606a/dolphin-2606a-x86_64.flatpak"
+    },
+    {
+      "system": "Windows x64",
+      "url": "https://dl.dolphin-emu.org/releases/2606a/dolphin-2606a-x64.7z"
+    },
+    {
+      "system": "macOS (ARM/Intel Universal)",
+      "url": "https://dl.dolphin-emu.org/releases/2606a/dolphin-2606a-universal.dmg"
+    },
+    {
+      "system": "Linux aarch64 (Flatpak)",
+      "url": "https://dl.dolphin-emu.org/releases/2606a/dolphin-2606a-aarch64.flatpak"
+    },
+    {
+      "system": "Android",
+      "url": "https://dl.dolphin-emu.org/releases/2606a/dolphin-2606a.apk"
+    },
+    {
+      "system": "Windows arm64",
+      "url": "https://dl.dolphin-emu.org/releases/2606a/dolphin-2606a-arm64.7z"
+    }
+  ]
+}
