@@ -126,7 +126,12 @@ export function spikeScript(): string {
         const left = eta((s.total - s.received) / s.bytesPerSecond);
         if (left) parts.push(left + " left");
       }
-      say("Downloading" + pct + "..."
+      // A core install is reported as a download too, and it is worth saying
+      // so: the wait is otherwise unexplained and much shorter than a ROM's.
+      const what = s.stage === "core"
+        ? "Installing core" + (s.core ? " " + s.core : "")
+        : "Downloading";
+      say(what + pct + "..."
         + (parts.length ? "<br><span style='opacity:.65'>" + parts.join(" &middot; ") + "</span>" : ""));
       button.disabled = true;
       cancel.disabled = false;

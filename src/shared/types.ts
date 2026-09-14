@@ -49,6 +49,12 @@ export type LaunchStatus = "downloading" | "running" | "exited" | "failed";
 export interface LaunchState {
   romId: number;
   status: LaunchStatus;
+  /** What is being fetched while status is "downloading". Absent means the ROM,
+   *  so a frontend that predates core installation reads a core download as an
+   *  ordinary one rather than as an unknown status it has to handle. */
+  stage?: "rom" | "core";
+  /** The core being installed, while stage is "core". */
+  core?: string;
   /** 0..1 while downloading, absent otherwise. */
   progress?: number;
   /** Bytes transferred so far, while downloading. */
@@ -118,6 +124,14 @@ export interface DesktopConfig {
   retroarchPath: string | null;
   /** Directory holding RetroArch's libretro cores. */
   retroarchCoresPath: string | null;
+  /** Download a missing libretro core from the libretro buildbot rather than
+   *  failing the launch. Only ever fetches a core the frontend named for the
+   *  platform being launched, and only into `retroarchCoresPath`. */
+  autoInstallCores: boolean;
+  /** Offer, on startup, to fetch RetroArch's own installer when this machine
+   *  has no emulator at all. Nothing is ever installed without the user saying
+   *  so, and the offer stops once they have an emulator or decline for good. */
+  offerRetroArchInstall: boolean;
   /** Directory the frontends install emulators under, so an emulators entry can
    *  name a relative path instead of repeating an absolute one. Null means every
    *  command must be absolute. */

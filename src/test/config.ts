@@ -12,6 +12,8 @@ export function testConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     serverUrl: "https://romm.example.com",
     retroarchPath: null,
     retroarchCoresPath: null,
+    autoInstallCores: true,
+    offerRetroArchInstall: true,
     emulatorsBasePath: null,
     emulators: [],
     cachePath: null,
