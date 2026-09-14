@@ -1,0 +1,13 @@
+// The typecheck project: the whole source tree, tests included, emitting
+// nothing. It exists because tsconfig.json has to exclude the tests — that one
+// compiles dist/, which should carry only shippable code — and node --test
+// strips their types without checking them, so a fixture could drift from the
+// type it claims and nothing would report it.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": []
+}
