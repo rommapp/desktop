@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdirSync as makeDir, symlinkSync } from "node:fs";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -219,4 +220,32 @@ test("assertSeparateRoots rejects a save tree the cache would evict", () => {
       `${cache} and ${saves} must be refused`,
     );
   }
+});
+
+test("assertSeparateRoots sees through a filesystem root", () => {
+  // A prefix comparison misses this: resolve("/") already ends in a separator.
+  assert.throws(() => assertSeparateRoots(roots("/", "/save-data")), {
+    code: "invalid-request",
+  });
+});
+
+test("assertSeparateRoots follows a symlinked save tree", () => {
+  // Lexically distinct, physically the same directory, so eviction would take
+  // the save data with the ROM.
+  const base = mkdtempSync(join(tmpdir(), "romm-roots-"));
+  const cache = join(base, "rom-cache");
+  const link = join(base, "save-data");
+  makeDir(cache, { recursive: true });
+  symlinkSync(cache, link, "dir");
+
+  assert.throws(() => assertSeparateRoots(roots(cache, link)), {
+    code: "invalid-request",
+  });
+});
+
+test("assertSeparateRoots allows a save tree that does not exist yet", () => {
+  const base = mkdtempSync(join(tmpdir(), "romm-roots-"));
+  assertSeparateRoots(
+    roots(join(base, "rom-cache"), join(base, "not-created-yet")),
+  );
 });

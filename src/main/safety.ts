@@ -1,8 +1,8 @@
 // Validation for the two pieces of launch input that come from the renderer.
 // Deliberately free of Electron imports so it can be unit tested directly.
 
-import { statSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { realpathSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   type DesktopConfig,
   LaunchError,
@@ -111,11 +111,37 @@ export function safeFileName(fileName: string): string {
   return WINDOWS_RESERVED.test(stem) ? `_${cleaned}` : cleaned;
 }
 
-/** Whether `child` is `parent` or sits underneath it, once both are resolved. */
+/**
+ * Whether `child` is `parent` or sits underneath it, once both are resolved.
+ *
+ * Asking `relative` rather than comparing prefixes: a filesystem root resolves
+ * to a trailing separator of its own, so the prefix form misses `/` entirely,
+ * and on Windows this picks up the case insensitivity that `C:\Cache` and
+ * `c:\cache` need.
+ */
 export function isWithin(parent: string, child: string): boolean {
-  const root = resolve(parent);
-  const target = resolve(child);
-  return target === root || target.startsWith(root + sep);
+  const step = relative(resolve(parent), resolve(child));
+  return step === "" || (!step.startsWith("..") && !isAbsolute(step));
+}
+
+/**
+ * The path with every symlink above it followed, so two names for one
+ * directory compare equal. A path that does not exist yet still resolves as
+ * far as its nearest existing ancestor, which is where a link would sit.
+ */
+function canonical(path: string): string {
+  const full = resolve(path);
+  let existing = full;
+  for (;;) {
+    try {
+      return join(realpathSync(existing), relative(existing, full));
+    } catch {
+      const parent = dirname(existing);
+      // Nothing above resolves, so the lexical path is the best answer there is.
+      if (parent === existing) return full;
+      existing = parent;
+    }
+  }
 }
 
 /**
@@ -126,7 +152,11 @@ export function isWithin(parent: string, child: string): boolean {
 export function assertSeparateRoots(config: DesktopConfig): void {
   const { cachePath, saveDataPath } = config;
   if (!cachePath || !saveDataPath) return;
-  if (isWithin(cachePath, saveDataPath) || isWithin(saveDataPath, cachePath)) {
+  // Compared canonically: a saveDataPath symlinked at the cache is the same
+  // directory under a different name, and eviction would not care which.
+  const cache = canonical(cachePath);
+  const saves = canonical(saveDataPath);
+  if (isWithin(cache, saves) || isWithin(saves, cache)) {
     throw new LaunchError(
       "invalid-request",
       `saveDataPath (${saveDataPath}) and cachePath (${cachePath}) overlap. Cache eviction would delete save data, so set them to separate directories.`,

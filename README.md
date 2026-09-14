@@ -330,6 +330,14 @@ line at all, varies: several only read a save directory from their own config
 file. There the shell cannot place the save for you, and the entry is better
 left without the tokens.
 
+Prefer the file tokens where an emulator accepts one. Given only a directory,
+an emulator names the save after the ROM, and the cached copy carries a name
+the shell has made portable: Windows device names, trailing dots, and
+characters that are legal on Linux but not Windows are all rewritten. A ROM
+whose name needed rewriting therefore still derives two save names, one per
+launch path. `{savefile}`, `{statefile}` and RetroArch's own `-s` and `-S` name
+the file outright and are unaffected.
+
 Should `saveDataPath` ever be empty, a mapping naming one of these tokens fails
 with an explanation rather than handing the emulator a blank argument, the same
 way `{core}` does.
