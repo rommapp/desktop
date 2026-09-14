@@ -188,6 +188,17 @@ portable `.7z`, while your distribution's package is smaller and is the copy tha
 will actually receive updates, so the prompt points at the download page
 instead.
 
+Once the install finishes there is nothing to restart. Detection normally runs
+only when the config file changes, which would have made the answer to "I just
+installed it" be "now quit and reopen"; while no emulator has been found the
+usual locations are re-probed on each launch attempt instead, so the next press
+of Play picks it up. An install placed somewhere unusual is still not guessed at,
+and needs `retroarchPath` set by hand.
+
+One wrinkle on a completely fresh RetroArch: its cores directory is created the
+first time it runs, so [missing cores](#missing-cores) cannot be downloaded until
+you have opened RetroArch once.
+
 The installer is kept in `installers` beside the config, and deleted once an
 emulator has been found. Set `offerRetroArchInstall` to `false` to suppress the
 prompt outright:

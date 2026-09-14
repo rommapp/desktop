@@ -153,7 +153,18 @@ export async function loadConfig(): Promise<DesktopConfig> {
   // Re-read whenever the file has moved underneath us. Holding the first read
   // forever meant every settings change needed a restart, and made an edit made
   // while the app was running vanish on the next save.
-  if (cached && stamp === cachedStamp) return cached;
+  if (cached && stamp === cachedStamp) {
+    // Detection is the one part of the config that goes stale without the file
+    // changing: an emulator installed while the app is running would otherwise
+    // not be found until a restart. That matters most right after the shell has
+    // offered to install one, where the answer to "I just installed it" cannot
+    // be "now quit and reopen". Only re-probed while something is still
+    // missing, so the ordinary case stays a cache hit.
+    if (!cached.retroarchPath || !cached.retroarchCoresPath) {
+      cached = withDetectedDefaults(cached);
+    }
+    return cached;
+  }
 
   try {
     const raw = await readFile(target, "utf8");
