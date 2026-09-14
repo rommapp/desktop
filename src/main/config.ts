@@ -16,6 +16,7 @@ function emptyConfig(): DesktopConfig {
     retroarchPath: null,
     retroarchCoresPath: null,
     autoInstallCores: true,
+    offerRetroArchInstall: true,
     emulatorsBasePath: null,
     emulators: [],
     cachePath: null,

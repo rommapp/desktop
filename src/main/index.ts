@@ -1,6 +1,7 @@
 import { BrowserWindow, app } from "electron";
 import { isSetupMode } from "./argv.ts";
 import { loadConfig } from "./config.ts";
+import { offerRetroArchInstall } from "./emulator/bootstrap.ts";
 import { broadcastLaunchState, registerIpc } from "./ipc.ts";
 import { Launcher } from "./launcher.ts";
 import {
@@ -42,15 +43,23 @@ if (!app.requestSingleInstanceLock()) {
 async function openInitialWindow(): Promise<void> {
   const config = await loadConfig();
   if (config.serverUrl && !forceSetup) {
-    createMainWindow(config.serverUrl, config.fullscreen);
+    const window = createMainWindow(config.serverUrl, config.fullscreen);
+    // After the window, not before: the offer is a dialog, and one that appears
+    // over nothing reads as an error rather than a suggestion. Not awaited, so
+    // the page carries on loading behind it.
+    void offerRetroArchInstall(config, window);
     return;
   }
   forceSetup = false;
   // Setup stays windowed whatever the setting says: filling a screen to ask
   // for one address is hostile, and it is the one screen needing a keyboard.
-  createSetupWindow((serverUrl) =>
-    createMainWindow(serverUrl, config.fullscreen),
-  );
+  createSetupWindow((serverUrl) => {
+    const window = createMainWindow(serverUrl, config.fullscreen);
+    // Re-read rather than reuse: the config in hand predates the address just
+    // saved, and the offer is gated on that being set. This is the true first
+    // run, so it is the one time the offer matters most.
+    void loadConfig().then((saved) => offerRetroArchInstall(saved, window));
+  });
 }
 
 async function start(): Promise<void> {

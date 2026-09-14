@@ -128,6 +128,10 @@ export interface DesktopConfig {
    *  failing the launch. Only ever fetches a core the frontend named for the
    *  platform being launched, and only into `retroarchCoresPath`. */
   autoInstallCores: boolean;
+  /** Offer, on startup, to fetch RetroArch's own installer when this machine
+   *  has no emulator at all. Nothing is ever installed without the user saying
+   *  so, and the offer stops once they have an emulator or decline for good. */
+  offerRetroArchInstall: boolean;
   /** Directory the frontends install emulators under, so an emulators entry can
    *  name a relative path instead of repeating an absolute one. Null means every
    *  command must be absolute. */

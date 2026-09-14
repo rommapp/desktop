@@ -58,8 +58,9 @@ That has a few consequences worth being explicit about:
 
 - A reachable RomM server, running a version that ships the `useNativeShell`
   integration.
-- An emulator. RetroArch is autodetected and its missing cores are downloaded
-  on demand; anything else is configured by hand (see
+- An emulator. RetroArch is autodetected, the shell offers to fetch its
+  installer if you have none, and its missing cores are downloaded on demand;
+  anything else is configured by hand (see
   [Emulator configuration](#emulator-configuration)).
 
 ## Running it
@@ -165,6 +166,37 @@ directly, so there is no need to go looking for it.
 RetroArch and its cores directory are detected from the usual install
 locations. When a game is launched, RomM's own platform/core map decides which
 libretro cores are candidates, and the first one actually installed wins.
+
+#### No emulator at all
+
+On a machine with nothing installed and nothing configured, the shell offers
+once, on startup, to fetch RetroArch's official installer and open it. Answer
+"Don't ask again" and it never asks again; install an emulator by any means and
+the offer stops on its own.
+
+It does not install anything, and this is deliberate. The buildbot publishes
+RetroArch only as a `.7z` and a macOS `.dmg`, so unpacking one would mean either
+a runtime dependency for LZMA or a bundled extractor, and on macOS stripping a
+quarantine flag off a binary the shell then runs. Instead the installer is
+handed to the operating system: Windows runs it with the usual UAC and
+SmartScreen prompts, macOS mounts the image and you drag it across. You consent
+through the flow you already recognise, and RetroArch keeps ownership of its own
+updates.
+
+Linux is offered nothing to download. The only build published there is a 179 MB
+portable `.7z`, while your distribution's package is smaller and is the copy that
+will actually receive updates, so the prompt points at the download page
+instead.
+
+The installer is kept in `installers` beside the config, and deleted once an
+emulator has been found. Set `offerRetroArchInstall` to `false` to suppress the
+prompt outright:
+
+```json
+{
+  "offerRetroArchInstall": false
+}
+```
 
 #### Missing cores
 
@@ -420,6 +452,11 @@ from third-party metadata providers, so the renderer is treated as untrusted:
   is read, so an entry named to escape a directory has nothing to act on, and
   the contents are checked against the archive's own checksum before the
   emulator is asked to load them.
+- The RetroArch installer is downloaded only after you say yes, only from the
+  buildbot origin, and only to a fixed directory. The shell never runs it: it is
+  handed to the operating system, so Gatekeeper and SmartScreen see it the same
+  way they would a download from a browser. A transfer that stops short of the
+  length the server declared is deleted rather than opened.
 - Download URLs must resolve to the configured server origin and an `/api/`
   route.
 - Processes are spawned with an argument array, never a shell string.
@@ -469,9 +506,11 @@ src/
     argv.ts         Command-line flag parsing
     config.ts       Persisted settings and RetroArch autodetection
     emulator/       Platform to emulator/core resolution
+      bootstrap.ts  First-run offer to fetch RetroArch's own installer
       buildbot.ts   Where a missing libretro core comes from
       install.ts    Fetching and unpacking one
       resolve.ts    Choosing the emulator and core for a platform
+      retroarch.ts  Which RetroArch installer suits this machine
     index.ts        App lifecycle, single-instance lock, initial window
     ipc.ts          IPC handlers behind window.rommNative
     launcher.ts     Download, resolve, spawn, track

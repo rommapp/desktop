@@ -249,7 +249,7 @@ export function resolveLaunch({
   if (!config.retroarchPath || !config.retroarchCoresPath) {
     throw new LaunchError(
       "no-emulator-configured",
-      "No emulator is configured for this platform and RetroArch was not found.",
+      "No emulator is configured for this platform and RetroArch was not found. Install RetroArch from https://retroarch.com, or set retroarchPath in the settings if it is somewhere unusual.",
     );
   }
   if (!existsSync(config.retroarchPath)) {
