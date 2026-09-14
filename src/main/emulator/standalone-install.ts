@@ -24,7 +24,6 @@ import {
   installsWhereDetectionLooks,
   unwrapRelease,
 } from "./standalone-release.ts";
-import { STANDALONE_EMULATORS } from "./standalone.ts";
 
 /** Dolphin's macOS image is the largest of these at a few hundred megabytes. */
 const MAX_EMULATOR_BYTES = 1024 * 1024 * 1024;
@@ -32,15 +31,6 @@ const MAX_EMULATOR_BYTES = 1024 * 1024 * 1024;
 /** Kept beside the config, one at a time, like the RetroArch installer. */
 function downloadDirectory(id: string): string {
   return join(app.getPath("userData"), "installers", id);
-}
-
-/** Which standalone emulator, if any, serves this platform. */
-export function emulatorForPlatform(platformSlug: string): string | null {
-  const wanted = platformSlug.toLowerCase();
-  return (
-    STANDALONE_EMULATORS.find((entry) => entry.platformSlugs.includes(wanted))
-      ?.id ?? null
-  );
 }
 
 async function fetchIndex(

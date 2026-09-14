@@ -210,3 +210,12 @@ export function detectedMappingFor(
     ).find((mapping) => mapping.platformSlug === wanted) ?? null
   );
 }
+
+/** Which standalone emulator, if any, serves this platform. */
+export function emulatorForPlatform(platformSlug: string): string | null {
+  const wanted = platformSlug.toLowerCase();
+  return (
+    STANDALONE_EMULATORS.find((entry) => entry.platformSlugs.includes(wanted))
+      ?.id ?? null
+  );
+}

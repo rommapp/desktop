@@ -13,10 +13,9 @@ import {
 import { loadConfig } from "./config.ts";
 import { canInstallCore, firstInstallableCore } from "./emulator/buildbot.ts";
 import { installCore } from "./emulator/install.ts";
-import {
-  emulatorForPlatform,
-  offerStandaloneInstall,
-} from "./emulator/standalone-install.ts";
+import { offerStandaloneInstall } from "./emulator/standalone-install.ts";
+import { RELEASE_SOURCES } from "./emulator/standalone-release.ts";
+import { emulatorForPlatform } from "./emulator/standalone.ts";
 import {
   applyCorePreference,
   emulatorLabel,
@@ -81,6 +80,28 @@ function describeInstallableCore(
   return `${emulatorLabel(config, platformSlug)} (installs ${core})`;
 }
 
+/**
+ * Name the standalone emulator this platform needs but does not have, when the
+ * shell could offer to fetch it.
+ *
+ * The probe has to answer this, not just the launch. A frontend hides the Play
+ * button for a platform it is told is unsupported, and the launch is the only
+ * thing that raises the offer -- so reporting the truth here would make the
+ * offer unreachable in exactly the case it exists for. Same bargain as an
+ * installable core: say yes, and let pressing Play be what sets it up.
+ */
+function describeInstallableEmulator(
+  config: DesktopConfig,
+  platformSlug: string,
+): string | null {
+  if (!config.offerStandaloneInstall) return null;
+  const emulatorId = emulatorForPlatform(platformSlug);
+  if (!emulatorId) return null;
+  if (hasPlatformSpecificEmulator(config, platformSlug)) return null;
+  const label = RELEASE_SOURCES[emulatorId]?.label;
+  return label ? `${label} (to install)` : null;
+}
+
 export class Launcher {
   private readonly active = new Map<number, ActiveLaunch>();
   private readonly emit: (state: LaunchState) => void;
@@ -116,11 +137,11 @@ export class Launcher {
       // A core that is not installed but can be is reported as supported, so
       // the frontend offers the launch that will fetch it. The alternative is a
       // button that stays hidden and a core that therefore never arrives.
-      const installable = describeInstallableCore(
-        config,
-        query.platformSlug,
-        cores,
-      );
+      const installable =
+        describeInstallableCore(config, query.platformSlug, cores) ??
+        // A platform whose emulator is not a core at all, so no amount of core
+        // resolution above could have found it.
+        describeInstallableEmulator(config, query.platformSlug);
       if (installable) return { supported: true, emulator: installable };
 
       const launchError = toLaunchError(error);

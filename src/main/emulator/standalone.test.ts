@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   STANDALONE_EMULATORS,
   detectStandalone,
+  emulatorForPlatform,
   detectedMappingFor,
   resetStandaloneDetection,
   toEmulatorMappings,
@@ -176,4 +177,20 @@ test("a hit is not re-probed on every call", () => {
   }
   assert.equal(probes, afterFirst, "detection should be memoised once found");
   resetStandaloneDetection();
+});
+
+test("each platform maps to the emulator that serves it", () => {
+  assert.equal(emulatorForPlatform("ps2"), "pcsx2");
+  // One Dolphin, two platforms.
+  assert.equal(emulatorForPlatform("ngc"), "dolphin");
+  assert.equal(emulatorForPlatform("wii"), "dolphin");
+  assert.equal(emulatorForPlatform("NGC"), "dolphin");
+});
+
+test("a platform a core can handle maps to no standalone", () => {
+  // Only the platforms RetroAchievements leaves no core option for are listed,
+  // so nothing here should claim snes or psx.
+  for (const slug of ["snes", "psx", "n64", "dreamcast", "3ds", ""]) {
+    assert.equal(emulatorForPlatform(slug), null, slug);
+  }
 });

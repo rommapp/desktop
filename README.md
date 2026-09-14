@@ -303,8 +303,10 @@ Nothing is written to your config, and an emulator installed by any means is
 found the same way, a frontend's own tree included, so someone already running
 RetroBat gets its emulators without configuring them twice.
 
-When there is nothing to find, pressing Play on a game of that platform offers
-to fetch it from the project. The file is handed to the operating system exactly
+When there is nothing to find, the platform is still reported as launchable --
+naming the emulator it would set up rather than the one it has -- and pressing
+Play offers to fetch it from the project. Reporting the plain truth there would
+hide the button, and the button is the only thing that raises the offer. The file is handed to the operating system exactly
 as RetroArch's installer is -- an installer runs, a disk image mounts, a Flatpak
 goes to your software installer -- and the version comes from each project's own
 release index rather than a URL guessed here.
