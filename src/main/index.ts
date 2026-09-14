@@ -1,6 +1,7 @@
 import { BrowserWindow, app } from "electron";
 import { isSetupMode } from "./argv.ts";
 import { loadConfig } from "./config.ts";
+import { offerRetroArchInstall } from "./emulator/bootstrap.ts";
 import { broadcastLaunchState, registerIpc } from "./ipc.ts";
 import { Launcher } from "./launcher.ts";
 import {
@@ -29,6 +30,28 @@ function focusMainWindow(): void {
 // the server rather than reopening setup.
 let forceSetup = isSetupMode();
 
+// openInitialWindow also runs on macOS "activate", so without this a user who
+// answered "Not now" without ticking the box would be asked again every time
+// they closed and reopened the window. The offer is once on startup.
+let emulatorOfferMade = false;
+
+function offerEmulatorOnce(
+  config: Parameters<typeof offerRetroArchInstall>[0],
+  window: BrowserWindow,
+): void {
+  if (emulatorOfferMade) return;
+  emulatorOfferMade = true;
+  // Wait for the page before asking anything. On macOS a dialog parented to a
+  // window is a sheet, and only one sheet shows at a time: put up beside
+  // loadURL, this one queues in front of the certificate-trust prompt that a
+  // self-signed LAN server has to have answered before it can load at all. The
+  // offer can then sit there for as long as an emulator install takes, with the
+  // page never loading behind it.
+  window.webContents.once("did-finish-load", () => {
+    void offerRetroArchInstall(config, window);
+  });
+}
+
 // One instance owns the ROM cache and the launch registry; a second would race
 // both, so hand the argv to the window that is already running instead.
 if (!app.requestSingleInstanceLock()) {
@@ -42,15 +65,21 @@ if (!app.requestSingleInstanceLock()) {
 async function openInitialWindow(): Promise<void> {
   const config = await loadConfig();
   if (config.serverUrl && !forceSetup) {
-    createMainWindow(config.serverUrl, config.fullscreen);
+    const window = createMainWindow(config.serverUrl, config.fullscreen);
+    // After the page, not beside it: see offerEmulatorOnce.
+    offerEmulatorOnce(config, window);
     return;
   }
   forceSetup = false;
   // Setup stays windowed whatever the setting says: filling a screen to ask
   // for one address is hostile, and it is the one screen needing a keyboard.
-  createSetupWindow((serverUrl) =>
-    createMainWindow(serverUrl, config.fullscreen),
-  );
+  createSetupWindow((serverUrl) => {
+    const window = createMainWindow(serverUrl, config.fullscreen);
+    // Re-read rather than reuse: the config in hand predates the address just
+    // saved, and the offer is gated on that being set. This is the true first
+    // run, so it is the one time the offer matters most.
+    void loadConfig().then((saved) => offerEmulatorOnce(saved, window));
+  });
 }
 
 async function start(): Promise<void> {

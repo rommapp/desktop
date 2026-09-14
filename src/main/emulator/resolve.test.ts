@@ -11,7 +11,10 @@ import {
 import {
   applyTokens,
   coreFileName,
+  emulatorIsPresent,
+  emulatorLabel,
   isSafeCoreName,
+  requiresCore,
   resolveCore,
   resolveEmulatorCommand,
   resolveLaunch,
@@ -22,6 +25,7 @@ function baseConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     serverUrl: "https://romm.example.com",
     retroarchPath: null,
     retroarchCoresPath: null,
+    autoInstallCores: true,
     emulators: [],
     cachePath: null,
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
@@ -488,5 +492,176 @@ test("resolveLaunch refuses a mapping naming {saves} with no saveDataPath", () =
       error instanceof LaunchError &&
       error.code === "no-emulator-configured" &&
       error.message.includes("saveDataPath"),
+  );
+});
+
+test("requiresCore is true for the RetroArch default path", () => {
+  assert.ok(requiresCore(baseConfig(), "snes"));
+});
+
+test("requiresCore is false for a standalone emulator", () => {
+  // The platform may still have candidate cores; this mapping never loads one.
+  const config = baseConfig({
+    emulators: [
+      { platformSlug: "ps2", command: "/usr/bin/pcsx2", args: ["{rom}"] },
+    ],
+  });
+  assert.equal(requiresCore(config, "ps2"), false);
+});
+
+test("requiresCore follows the wildcard row for an unmapped platform", () => {
+  const config = baseConfig({
+    emulators: [
+      { platformSlug: "*", command: "/usr/bin/flatpak", args: ["{rom}"] },
+    ],
+  });
+  assert.equal(requiresCore(config, "snes"), false);
+});
+
+test("requiresCore is true for a mapping that names {core}", () => {
+  const config = baseConfig({
+    emulators: [
+      {
+        platformSlug: "*",
+        command: "/usr/bin/flatpak",
+        args: ["-L", "{core}", "{rom}"],
+      },
+    ],
+  });
+  assert.ok(requiresCore(config, "snes"));
+});
+
+test("emulatorIsPresent sees a RetroArch that exists", () => {
+  const { binary } = fakeInstall([]);
+  assert.ok(emulatorIsPresent(baseConfig({ retroarchPath: binary }), "snes"));
+  assert.equal(emulatorIsPresent(baseConfig(), "snes"), false);
+  assert.equal(
+    emulatorIsPresent(baseConfig({ retroarchPath: "/nope/retroarch" }), "snes"),
+    false,
+  );
+});
+
+test("emulatorIsPresent resolves a mapping against the base path", () => {
+  const { root } = fakeInstall([]);
+  writeFileSync(join(root, "pcsx2"), "");
+  const config = baseConfig({
+    emulatorsBasePath: root,
+    emulators: [
+      { platformSlug: "ps2", command: "pcsx2", args: ["{rom}"] },
+      { platformSlug: "ps3", command: "rpcs3", args: ["{rom}"] },
+    ],
+  });
+  assert.ok(emulatorIsPresent(config, "ps2"));
+  assert.equal(emulatorIsPresent(config, "ps3"), false);
+});
+
+test("emulatorLabel names the mapping, or RetroArch when there is none", () => {
+  assert.equal(emulatorLabel(baseConfig(), "snes"), "RetroArch");
+  const config = baseConfig({
+    emulators: [
+      {
+        platformSlug: "ps2",
+        label: "PCSX2",
+        command: "/usr/bin/pcsx2",
+        args: ["{rom}"],
+      },
+      { platformSlug: "ps3", command: "/usr/bin/rpcs3", args: ["{rom}"] },
+    ],
+  });
+  assert.equal(emulatorLabel(config, "ps2"), "PCSX2");
+  // No label, so the command stands in, the same way resolveLaunch reports it.
+  assert.equal(emulatorLabel(config, "ps3"), "/usr/bin/rpcs3");
+});
+
+test("assumeMissingCoreInstalled resolves a core that is not there yet", () => {
+  const { root, binary } = fakeInstall([]);
+  const launch = resolveLaunch({
+    config: baseConfig({ retroarchPath: binary, retroarchCoresPath: root }),
+    platformSlug: "snes",
+    cores: ["snes9x"],
+    romPath: "/cache/1-game.sfc",
+    savePaths: null,
+    assumeMissingCoreInstalled: true,
+  });
+  // The stand-in is the path the install will write to, so what gets validated
+  // is the shape of the real launch.
+  assert.equal(launch.label, "RetroArch (snes9x)");
+  assert.ok(launch.args.includes(join(root, coreFileName("snes9x"))));
+});
+
+test("assuming a core does not paper over any other failure", () => {
+  // The whole point of validating with the core assumed present: everything
+  // else still has to hold, or a launch would download a core and then fail.
+  const { root } = fakeInstall([]);
+  const standalone = join(root, "flatpak");
+  writeFileSync(standalone, "");
+
+  assert.throws(
+    () =>
+      resolveLaunch({
+        config: baseConfig({
+          retroarchCoresPath: root,
+          emulators: [
+            {
+              platformSlug: "*",
+              command: standalone,
+              args: ["-L", "{core}", "-s", "{savefile}", "{rom}"],
+            },
+          ],
+        }),
+        platformSlug: "snes",
+        cores: ["snes9x"],
+        romPath: "/cache/1-game.sfc",
+        savePaths: null,
+        assumeMissingCoreInstalled: true,
+      }),
+    // The missing saveDataPath, not the missing core.
+    (error: unknown) =>
+      error instanceof LaunchError && error.message.includes("saveDataPath"),
+  );
+
+  // A missing emulator is likewise not something a core download can fix.
+  assert.throws(
+    () =>
+      resolveLaunch({
+        config: baseConfig({ retroarchCoresPath: root }),
+        platformSlug: "snes",
+        cores: ["snes9x"],
+        romPath: "/cache/1-game.sfc",
+        savePaths: null,
+        assumeMissingCoreInstalled: true,
+      }),
+    LaunchError,
+  );
+});
+
+test("assumeMissingCoreInstalled still needs a name that could be fetched", () => {
+  const { root, binary } = fakeInstall([]);
+  assert.throws(
+    () =>
+      resolveLaunch({
+        config: baseConfig({ retroarchPath: binary, retroarchCoresPath: root }),
+        platformSlug: "snes",
+        cores: ["../evil"],
+        romPath: "/cache/1-game.sfc",
+        savePaths: null,
+        assumeMissingCoreInstalled: true,
+      }),
+    LaunchError,
+  );
+});
+
+test("without the option a missing core still fails", () => {
+  const { root, binary } = fakeInstall([]);
+  assert.throws(
+    () =>
+      resolveLaunch({
+        config: baseConfig({ retroarchPath: binary, retroarchCoresPath: root }),
+        platformSlug: "snes",
+        cores: ["snes9x"],
+        romPath: "/cache/1-game.sfc",
+        savePaths: null,
+      }),
+    /None of the cores/,
   );
 });

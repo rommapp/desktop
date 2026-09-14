@@ -4,6 +4,11 @@ import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  coresCandidates,
+  defaultCoresPath,
+  retroarchCandidates,
+} from "./emulator/locations.ts";
+import {
   DEFAULT_CACHE_LIMIT_BYTES,
   type DesktopConfig,
 } from "../shared/types.ts";
@@ -15,6 +20,8 @@ function emptyConfig(): DesktopConfig {
     serverUrl: null,
     retroarchPath: null,
     retroarchCoresPath: null,
+    autoInstallCores: true,
+    offerRetroArchInstall: true,
     emulatorsBasePath: null,
     emulators: [],
     cachePath: null,
@@ -26,84 +33,6 @@ function emptyConfig(): DesktopConfig {
   };
 }
 
-/** Common install locations, most specific first. */
-function retroarchCandidates(): string[] {
-  const home = homedir();
-  switch (process.platform) {
-    case "darwin":
-      return [
-        "/Applications/RetroArch.app/Contents/MacOS/RetroArch",
-        join(home, "Applications/RetroArch.app/Contents/MacOS/RetroArch"),
-      ];
-    case "win32": {
-      // RetroArch ships portable about as often as it is installed, and
-      // frontends bundle their own copy, so cover the usual roots. An install
-      // on another drive still needs retroarchPath set by hand.
-      const programFiles = process.env.ProgramFiles ?? "C:\\Program Files";
-      const programFilesX86 =
-        process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)";
-      const localAppData =
-        process.env.LOCALAPPDATA ?? join(home, "AppData\\Local");
-      return [
-        "C:\\RetroArch-Win64\\retroarch.exe",
-        join(programFiles, "RetroArch\\retroarch.exe"),
-        join(programFilesX86, "RetroArch\\retroarch.exe"),
-        join(localAppData, "Programs\\RetroArch\\retroarch.exe"),
-        join(home, "scoop\\apps\\retroarch\\current\\retroarch.exe"),
-        join(
-          programFilesX86,
-          "Steam\\steamapps\\common\\RetroArch\\retroarch.exe",
-        ),
-        join(
-          programFiles,
-          "Steam\\steamapps\\common\\RetroArch\\retroarch.exe",
-        ),
-        "C:\\RetroBat\\emulators\\retroarch\\retroarch.exe",
-      ];
-    }
-    default:
-      return [
-        "/usr/bin/retroarch",
-        "/usr/local/bin/retroarch",
-        join(home, ".local/bin/retroarch"),
-      ];
-  }
-}
-
-function coresCandidates(retroarchPath: string | null): string[] {
-  const home = homedir();
-  const candidates: string[] = [];
-  switch (process.platform) {
-    case "darwin":
-      candidates.push(
-        join(home, "Library/Application Support/RetroArch/cores"),
-      );
-      break;
-    case "win32": {
-      // A portable install keeps cores beside the binary; an installed one puts
-      // them under the user profile. Probe both, so the cores directory can
-      // still be found when the binary was set by hand or not found at all.
-      const appData = process.env.APPDATA ?? join(home, "AppData\\Roaming");
-      const localAppData =
-        process.env.LOCALAPPDATA ?? join(home, "AppData\\Local");
-      if (retroarchPath) candidates.push(join(dirname(retroarchPath), "cores"));
-      candidates.push(
-        join(appData, "RetroArch\\cores"),
-        join(localAppData, "RetroArch\\cores"),
-      );
-      break;
-    }
-    default:
-      candidates.push(
-        join(home, ".config/retroarch/cores"),
-        join(home, ".var/app/org.libretro.RetroArch/config/retroarch/cores"),
-        "/usr/lib/libretro",
-        "/usr/lib/x86_64-linux-gnu/libretro",
-      );
-  }
-  return candidates;
-}
-
 function firstExisting(paths: string[]): string | null {
   return paths.find((candidate) => existsSync(candidate)) ?? null;
 }
@@ -113,14 +42,20 @@ function firstExisting(paths: string[]): string | null {
  * standard RetroArch install works with no setup.
  */
 export function withDetectedDefaults(config: DesktopConfig): DesktopConfig {
+  const home = homedir();
   const retroarchPath =
-    config.retroarchPath ?? firstExisting(retroarchCandidates());
+    config.retroarchPath ?? firstExisting(retroarchCandidates(undefined, home));
   return {
     ...config,
     retroarchPath,
+    // Falling back to where cores belong, not just where they already are: a
+    // RetroArch that has never been run has no cores directory, and treating
+    // that as "nowhere to put cores" would switch core downloading off for
+    // exactly the fresh install the shell may have just offered to set up.
     retroarchCoresPath:
       config.retroarchCoresPath ??
-      firstExisting(coresCandidates(retroarchPath)),
+      firstExisting(coresCandidates(retroarchPath, undefined, home)) ??
+      defaultCoresPath(retroarchPath, undefined, home),
     cachePath: config.cachePath ?? join(app.getPath("userData"), "rom-cache"),
     saveDataPath:
       config.saveDataPath ?? join(app.getPath("userData"), "save-data"),
@@ -151,7 +86,18 @@ export async function loadConfig(): Promise<DesktopConfig> {
   // Re-read whenever the file has moved underneath us. Holding the first read
   // forever meant every settings change needed a restart, and made an edit made
   // while the app was running vanish on the next save.
-  if (cached && stamp === cachedStamp) return cached;
+  if (cached && stamp === cachedStamp) {
+    // Detection is the one part of the config that goes stale without the file
+    // changing: an emulator installed while the app is running would otherwise
+    // not be found until a restart. That matters most right after the shell has
+    // offered to install one, where the answer to "I just installed it" cannot
+    // be "now quit and reopen". Only re-probed while something is still
+    // missing, so the ordinary case stays a cache hit.
+    if (!cached.retroarchPath || !cached.retroarchCoresPath) {
+      cached = withDetectedDefaults(cached);
+    }
+    return cached;
+  }
 
   try {
     const raw = await readFile(target, "utf8");

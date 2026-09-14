@@ -18,8 +18,12 @@ export function isSafeCoreName(core: string): boolean {
   return SAFE_CORE_NAME.test(core);
 }
 
-function coreFileExtension(): string {
-  switch (process.platform) {
+/** Platform is a parameter rather than read straight from process, so the
+ *  naming can be exercised for all three from one machine. */
+export function coreFileExtension(
+  platform: NodeJS.Platform = process.platform,
+): string {
+  switch (platform) {
     case "darwin":
       return "dylib";
     case "win32":
@@ -29,8 +33,11 @@ function coreFileExtension(): string {
   }
 }
 
-export function coreFileName(core: string): string {
-  return `${core}_libretro.${coreFileExtension()}`;
+export function coreFileName(
+  core: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return `${core}_libretro.${coreFileExtension(platform)}`;
 }
 
 export interface ResolvedLaunch {
@@ -87,6 +94,81 @@ function findMapping(
   );
 }
 
+/** What to call the emulator this platform would use, before a launch has
+ *  resolved a core to name alongside it. */
+export function emulatorLabel(
+  config: DesktopConfig,
+  platformSlug: string,
+): string {
+  const mapping = findMapping(config, platformSlug);
+  if (!mapping) return "RetroArch";
+  return mapping.label ?? mapping.command;
+}
+
+/**
+ * Whether the executable this platform would run is actually on disk.
+ *
+ * Separate from resolveLaunch because a missing core and a missing emulator
+ * raise the same error code, and only the first of the two is worth trying to
+ * fix by downloading something.
+ */
+export function emulatorIsPresent(
+  config: DesktopConfig,
+  platformSlug: string,
+): boolean {
+  const mapping = findMapping(config, platformSlug);
+  if (mapping) {
+    return existsSync(
+      resolveEmulatorCommand(mapping.command, config.emulatorsBasePath),
+    );
+  }
+  return Boolean(config.retroarchPath && existsSync(config.retroarchPath));
+}
+
+/**
+ * Whether launching this platform needs a libretro core at all.
+ *
+ * A standalone emulator mapping does not, even for a platform whose candidate
+ * core list is non-empty, so this is what keeps a PCSX2 row from triggering a
+ * core download it would never load.
+ */
+export function requiresCore(
+  config: DesktopConfig,
+  platformSlug: string,
+): boolean {
+  const mapping = findMapping(config, platformSlug);
+  if (!mapping) return true; // The RetroArch default path always needs one.
+  return mapping.args.some((arg) => arg.includes("{core}"));
+}
+
+/**
+ * Resolve the core, optionally pretending a missing one is already installed.
+ *
+ * The pretence exists so a launch that is about to download a core can still
+ * have everything else validated first: without it, a mapping that also needs a
+ * save path it does not have would only fail after the transfer. The stand-in
+ * is the path the install will actually write to, so what is validated is the
+ * shape of the real launch.
+ *
+ * A result produced this way describes a launch that cannot run yet, so it is
+ * for validation only and must never be spawned.
+ */
+function resolveOrAssumeCore(
+  config: DesktopConfig,
+  cores: string[],
+  assumeMissingCoreInstalled: boolean,
+): { name: string; path: string } | null {
+  if (!config.retroarchCoresPath) return null;
+  const installed = resolveCore(config.retroarchCoresPath, cores);
+  if (installed || !assumeMissingCoreInstalled) return installed;
+  const candidate = cores.find(isSafeCoreName);
+  if (!candidate) return null;
+  return {
+    name: candidate,
+    path: join(config.retroarchCoresPath, coreFileName(candidate)),
+  };
+}
+
 /** Pick the first candidate core that is installed, so a missing preferred core
  *  falls back instead of failing the launch. */
 export function resolveCore(
@@ -138,12 +220,17 @@ export function resolveLaunch({
   cores,
   romPath,
   savePaths,
+  assumeMissingCoreInstalled = false,
 }: {
   config: DesktopConfig;
   platformSlug: string;
   cores: string[];
   romPath: string;
   savePaths: SavePaths | null;
+  /** Treat a core that is about to be downloaded as already installed, so a
+   *  launch can be validated in full before the transfer. Validation only: the
+   *  result names a core that is not on disk yet and must not be spawned. */
+  assumeMissingCoreInstalled?: boolean;
 }): ResolvedLaunch {
   const mapping = findMapping(config, platformSlug);
   if (mapping) {
@@ -159,9 +246,7 @@ export function resolveLaunch({
     }
     // A mapping may still reference {core}, so resolve one when cores are
     // available; standalone emulators simply never use the token.
-    const core = config.retroarchCoresPath
-      ? resolveCore(config.retroarchCoresPath, cores)
-      : null;
+    const core = resolveOrAssumeCore(config, cores, assumeMissingCoreInstalled);
     // Substituting an empty {core} would hand the emulator a blank argument and
     // fail somewhere far less legible, so refuse here instead.
     if (!core && mapping.args.some((arg) => arg.includes("{core}"))) {
@@ -195,7 +280,7 @@ export function resolveLaunch({
   if (!config.retroarchPath || !config.retroarchCoresPath) {
     throw new LaunchError(
       "no-emulator-configured",
-      "No emulator is configured for this platform and RetroArch was not found.",
+      "No emulator is configured for this platform and RetroArch was not found. Install RetroArch from https://retroarch.com, or set retroarchPath in the settings if it is somewhere unusual.",
     );
   }
   if (!existsSync(config.retroarchPath)) {
@@ -211,7 +296,7 @@ export function resolveLaunch({
     );
   }
 
-  const core = resolveCore(config.retroarchCoresPath, cores);
+  const core = resolveOrAssumeCore(config, cores, assumeMissingCoreInstalled);
   if (!core) {
     throw new LaunchError(
       "no-emulator-configured",
