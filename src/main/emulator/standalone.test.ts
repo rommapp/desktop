@@ -3,8 +3,8 @@ import { test } from "node:test";
 import {
   STANDALONE_EMULATORS,
   detectStandalone,
-  emulatorForPlatform,
   detectedMappingFor,
+  emulatorForPlatform,
   resetStandaloneDetection,
   toEmulatorMappings,
 } from "./standalone.ts";
@@ -14,24 +14,88 @@ const WIN_ENV = {
   LOCALAPPDATA: "C:\\Users\\sam\\AppData\\Local",
 };
 
-/** Stand in for the filesystem, so every platform's paths can be exercised. */
-function onDisk(...paths: string[]) {
+/**
+ * Stand in for the filesystem, so every platform's paths can be exercised.
+ *
+ * Returns both halves, because macOS detection scans /Applications for a bundle
+ * whose name carries a version rather than checking a fixed path. The listing
+ * is derived from the paths, so a test names a file once.
+ */
+function fakeFs(...paths: string[]) {
   const present = new Set(paths);
-  return (path: string) => present.has(path);
+  const dirs = new Map<string, Set<string>>();
+  for (const path of paths) {
+    const match = /^(.*)\/([^/]+\.app)\//.exec(path);
+    if (!match) continue;
+    const root = match[1]!;
+    if (!dirs.has(root)) dirs.set(root, new Set());
+    dirs.get(root)!.add(match[2]!);
+  }
+  return {
+    exists: (path: string) => present.has(path),
+    readDir: (dir: string) => [...(dirs.get(dir) ?? [])],
+  };
 }
 
-function pathsFor(id: string, platform: NodeJS.Platform, home: string) {
+/** Just the directory half, for exercising paths() directly. */
+function listing(entries: Record<string, string[]> = {}) {
+  return (directory: string) => entries[directory] ?? [];
+}
+
+function pathsFor(
+  id: string,
+  platform: NodeJS.Platform,
+  home: string,
+  readDir = listing(),
+) {
   const emulator = STANDALONE_EMULATORS.find((entry) => entry.id === id);
   assert.ok(emulator, `no such emulator: ${id}`);
-  return emulator.paths(platform, home, WIN_ENV);
+  return emulator.paths(platform, home, WIN_ENV, readDir);
 }
 
+function detect(platform: NodeJS.Platform, home: string, ...paths: string[]) {
+  const fs = fakeFs(...paths);
+  return detectStandalone(platform, home, WIN_ENV, fs.exists, fs.readDir);
+}
+
+test("finds a PCSX2 bundle that carries its version number", () => {
+  // The real one is PCSX2-v2.8.2.app, so nothing fixed can match it and the
+  // directory has to be scanned. This is what "no libretro core is known for
+  // ps2" turned out to mean on a Mac with PCSX2 sitting in /Applications.
+  const readDir = listing({
+    "/Applications": ["PCSX2-v2.8.2.app", "Safari.app"],
+  });
+  assert.deepEqual(pathsFor("pcsx2", "darwin", "/Users/sam", readDir), [
+    "/Applications/PCSX2-v2.8.2.app/Contents/MacOS/PCSX2",
+  ]);
+});
+
+test("an unversioned bundle and one under the home folder both count", () => {
+  const readDir = listing({
+    "/Applications": ["PCSX2.app"],
+    "/Users/sam/Applications": ["PCSX2 2.9.app"],
+  });
+  assert.deepEqual(pathsFor("pcsx2", "darwin", "/Users/sam", readDir), [
+    "/Applications/PCSX2.app/Contents/MacOS/PCSX2",
+    "/Users/sam/Applications/PCSX2 2.9.app/Contents/MacOS/PCSX2",
+  ]);
+});
+
+test("a different application starting with the same letters is not it", () => {
+  // The suffix has to begin with a separator, or PCSX2Manager.app would be
+  // launched as though it were the emulator.
+  const readDir = listing({
+    "/Applications": ["PCSX2Manager.app", "NotPCSX2.app", "PCSX2.txt"],
+  });
+  assert.deepEqual(pathsFor("pcsx2", "darwin", "/Users/sam", readDir), []);
+});
+
+test("an Applications folder with nothing in it yields nothing", () => {
+  assert.deepEqual(pathsFor("dolphin", "darwin", "/Users/sam"), []);
+  assert.deepEqual(detect("darwin", "/Users/sam"), []);
+});
+
 test("looks for PCSX2 where each platform puts it", () => {
-  assert.ok(
-    pathsFor("pcsx2", "darwin", "/Users/sam").includes(
-      "/Applications/PCSX2.app/Contents/MacOS/PCSX2",
-    ),
-  );
   const windows = pathsFor("pcsx2", "win32", "C:\\Users\\sam");
   assert.ok(windows.includes("C:\\Program Files\\PCSX2\\pcsx2-qt.exe"));
   // The executable name is not guessable from the directory, which is the
@@ -45,8 +109,9 @@ test("looks for PCSX2 where each platform puts it", () => {
 });
 
 test("looks for Dolphin where each platform puts it", () => {
+  const readDir = listing({ "/Applications": ["Dolphin.app"] });
   assert.ok(
-    pathsFor("dolphin", "darwin", "/Users/sam").includes(
+    pathsFor("dolphin", "darwin", "/Users/sam", readDir).includes(
       "/Applications/Dolphin.app/Contents/MacOS/Dolphin",
     ),
   );
@@ -63,11 +128,10 @@ test("looks for Dolphin where each platform puts it", () => {
 test("finds an emulator inside a frontend's own tree", () => {
   // Someone running RetroBat already has these; asking them to configure what
   // they installed would be the wrong request.
-  const found = detectStandalone(
+  const found = detect(
     "win32",
     "C:\\Users\\sam",
-    WIN_ENV,
-    onDisk("C:\\RetroBat\\emulators\\pcsx2\\pcsx2-qt.exe"),
+    "C:\\RetroBat\\emulators\\pcsx2\\pcsx2-qt.exe",
   );
   assert.equal(found.length, 1);
   assert.equal(found[0]?.emulator.id, "pcsx2");
@@ -82,21 +146,14 @@ test("Windows paths are built with Windows separators", () => {
   }
 });
 
-test("finds nothing when nothing is installed", () => {
-  assert.deepEqual(
-    detectStandalone("darwin", "/Users/sam", {}, () => false),
-    [],
-  );
-});
-
 test("one Dolphin covers both GameCube and Wii", () => {
-  const detected = detectStandalone(
-    "darwin",
-    "/Users/sam",
-    {},
-    onDisk("/Applications/Dolphin.app/Contents/MacOS/Dolphin"),
+  const mappings = toEmulatorMappings(
+    detect(
+      "darwin",
+      "/Users/sam",
+      "/Applications/Dolphin.app/Contents/MacOS/Dolphin",
+    ),
   );
-  const mappings = toEmulatorMappings(detected);
   assert.deepEqual(
     mappings.map((mapping) => mapping.platformSlug),
     ["ngc", "wii"],
@@ -112,16 +169,15 @@ test("a detected row is shaped exactly like a hand-written one", () => {
   // So a detected emulator and a configured one travel the same launch path,
   // rather than there being a second mechanism to keep in step.
   const [mapping] = toEmulatorMappings(
-    detectStandalone(
+    detect(
       "darwin",
       "/Users/sam",
-      {},
-      onDisk("/Applications/PCSX2.app/Contents/MacOS/PCSX2"),
+      "/Applications/PCSX2-v2.8.2.app/Contents/MacOS/PCSX2",
     ),
   );
   assert.deepEqual(mapping, {
     platformSlug: "ps2",
-    command: "/Applications/PCSX2.app/Contents/MacOS/PCSX2",
+    command: "/Applications/PCSX2-v2.8.2.app/Contents/MacOS/PCSX2",
     args: ["-batch", "{rom}"],
     label: "PCSX2",
   });
@@ -129,10 +185,26 @@ test("a detected row is shaped exactly like a hand-written one", () => {
 
 test("a platform with no standalone emulator gets nothing", () => {
   resetStandaloneDetection();
-  const exists = onDisk("/Applications/PCSX2.app/Contents/MacOS/PCSX2");
-  assert.ok(detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists));
+  const fs = fakeFs("/Applications/PCSX2.app/Contents/MacOS/PCSX2");
+  assert.ok(
+    detectedMappingFor(
+      "ps2",
+      "darwin",
+      "/Users/sam",
+      {},
+      fs.exists,
+      fs.readDir,
+    ),
+  );
   assert.equal(
-    detectedMappingFor("snes", "darwin", "/Users/sam", {}, exists),
+    detectedMappingFor(
+      "snes",
+      "darwin",
+      "/Users/sam",
+      {},
+      fs.exists,
+      fs.readDir,
+    ),
     null,
   );
   resetStandaloneDetection();
@@ -140,8 +212,17 @@ test("a platform with no standalone emulator gets nothing", () => {
 
 test("platform slugs match without regard to case", () => {
   resetStandaloneDetection();
-  const exists = onDisk("/Applications/Dolphin.app/Contents/MacOS/Dolphin");
-  assert.ok(detectedMappingFor("NGC", "darwin", "/Users/sam", {}, exists));
+  const fs = fakeFs("/Applications/Dolphin.app/Contents/MacOS/Dolphin");
+  assert.ok(
+    detectedMappingFor(
+      "NGC",
+      "darwin",
+      "/Users/sam",
+      {},
+      fs.exists,
+      fs.readDir,
+    ),
+  );
   resetStandaloneDetection();
 });
 
@@ -150,32 +231,74 @@ test("a miss is retried rather than remembered", () => {
   // restart, so only a successful detection is worth caching.
   resetStandaloneDetection();
   let installed = false;
-  const exists = (path: string) =>
-    installed && path === "/Applications/PCSX2.app/Contents/MacOS/PCSX2";
+  const path = "/Applications/PCSX2.app/Contents/MacOS/PCSX2";
+  const exists = (candidate: string) => installed && candidate === path;
+  const readDir = (dir: string) =>
+    installed && dir === "/Applications" ? ["PCSX2.app"] : [];
 
   assert.equal(
-    detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists),
+    detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists, readDir),
     null,
   );
   installed = true;
-  assert.ok(detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists));
+  assert.ok(
+    detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists, readDir),
+  );
+  resetStandaloneDetection();
+});
+
+test("finding one emulator does not stop the other being looked for", () => {
+  // The memo is per emulator. Remembering "something was found" would mean
+  // installing PCSX2 on a machine that already had Dolphin went unnoticed
+  // until a restart -- exactly the case this has to handle.
+  resetStandaloneDetection();
+  let pcsx2Installed = false;
+  const dolphin = "/Applications/Dolphin.app/Contents/MacOS/Dolphin";
+  const pcsx2 = "/Applications/PCSX2.app/Contents/MacOS/PCSX2";
+  const exists = (candidate: string) =>
+    candidate === dolphin || (pcsx2Installed && candidate === pcsx2);
+  const readDir = (dir: string) =>
+    dir === "/Applications"
+      ? ["Dolphin.app", ...(pcsx2Installed ? ["PCSX2.app"] : [])]
+      : [];
+
+  assert.ok(
+    detectedMappingFor("ngc", "darwin", "/Users/sam", {}, exists, readDir),
+  );
+  assert.equal(
+    detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists, readDir),
+    null,
+  );
+  pcsx2Installed = true;
+  assert.ok(
+    detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists, readDir),
+    "PCSX2 installed later must still be found",
+  );
   resetStandaloneDetection();
 });
 
 test("a hit is not re-probed on every call", () => {
   resetStandaloneDetection();
   let probes = 0;
-  const exists = (path: string) => {
+  const path = "/Applications/PCSX2.app/Contents/MacOS/PCSX2";
+  const exists = (candidate: string) => {
     probes += 1;
-    return path === "/Applications/PCSX2.app/Contents/MacOS/PCSX2";
+    return candidate === path;
   };
-  detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists);
+  const readDir = (dir: string) =>
+    dir === "/Applications" ? ["PCSX2.app"] : [];
+
+  detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists, readDir);
   const afterFirst = probes;
   assert.ok(afterFirst > 0);
   for (let i = 0; i < 5; i += 1) {
-    detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists);
+    detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists, readDir);
   }
-  assert.equal(probes, afterFirst, "detection should be memoised once found");
+  // Dolphin is still missing so it is re-probed; PCSX2 is not.
+  assert.ok(
+    probes - afterFirst < 5,
+    `expected the PCSX2 hit to be memoised, probes went ${afterFirst} -> ${probes}`,
+  );
   resetStandaloneDetection();
 });
 

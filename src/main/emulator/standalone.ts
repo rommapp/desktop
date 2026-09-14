@@ -14,7 +14,7 @@
 // Platform, home and environment are parameters rather than read from the
 // process, so all three platforms' paths can be exercised from any machine.
 
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { posix, win32 } from "node:path";
 import { type EmulatorMapping } from "../../shared/types.ts";
 
@@ -31,15 +31,51 @@ export interface StandaloneEmulator {
     platform: NodeJS.Platform,
     home: string,
     env: NodeJS.ProcessEnv,
+    readDir: ReadDir,
   ): string[];
 }
 
-/** A .app bundle in either of the two places macOS puts them. */
-function macApp(home: string, bundle: string, binary: string): string[] {
-  return [
-    `/Applications/${bundle}.app/Contents/MacOS/${binary}`,
-    posix.join(home, `Applications/${bundle}.app/Contents/MacOS/${binary}`),
-  ];
+/** Entries of a directory, or none when it cannot be read. */
+export type ReadDir = (directory: string) => string[];
+
+const readDirSafe: ReadDir = (directory) => {
+  try {
+    return readdirSync(directory);
+  } catch {
+    // /Applications always exists; ~/Applications often does not.
+    return [];
+  }
+};
+
+/**
+ * A .app bundle in either of the two places macOS puts them.
+ *
+ * Scanned rather than named, because the bundle carries its version: PCSX2
+ * ships PCSX2-v2.8.2.app, so the path changes with every release and no fixed
+ * string can match it. The binary inside is stable, so the version only affects
+ * the directory around it.
+ */
+function macApp(
+  home: string,
+  bundle: string,
+  binary: string,
+  readDir: ReadDir,
+): string[] {
+  const roots = ["/Applications", posix.join(home, "Applications")];
+  const found: string[] = [];
+  for (const root of roots) {
+    for (const entry of readDir(root)) {
+      if (!entry.endsWith(".app")) continue;
+      const name = entry.slice(0, -".app".length);
+      if (!name.startsWith(bundle)) continue;
+      // "PCSX2", "PCSX2-v2.8.2" and "PCSX2 2.8" all count; "PCSX2Something"
+      // does not, so a differently named application cannot be mistaken for it.
+      const suffix = name.slice(bundle.length);
+      if (suffix !== "" && !/^[-_ ]/.test(suffix)) continue;
+      found.push(posix.join(root, entry, "Contents/MacOS", binary));
+    }
+  }
+  return found;
 }
 
 /** A Flatpak's exported launcher, system-wide and per-user. */
@@ -58,10 +94,10 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
     // -batch skips the GUI and exits when the game stops, which is what the
     // shell wants: the window comes back rather than a launcher being left open.
     args: ["-batch", "{rom}"],
-    paths(platform, home, env) {
+    paths(platform, home, env, readDir) {
       switch (platform) {
         case "darwin":
-          return macApp(home, "PCSX2", "PCSX2");
+          return macApp(home, "PCSX2", "PCSX2", readDir);
         case "win32": {
           const programFiles = env.ProgramFiles ?? "C:\\Program Files";
           const localAppData =
@@ -92,10 +128,10 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
     platformSlugs: ["ngc", "wii"],
     // -b exits when the game stops; -e names the file to run.
     args: ["-b", "-e", "{rom}"],
-    paths(platform, home, env) {
+    paths(platform, home, env, readDir) {
       switch (platform) {
         case "darwin":
-          return macApp(home, "Dolphin", "Dolphin");
+          return macApp(home, "Dolphin", "Dolphin", readDir);
         case "win32": {
           const programFiles = env.ProgramFiles ?? "C:\\Program Files";
           const localAppData =
@@ -136,10 +172,13 @@ export function detectStandalone(
   home: string,
   env: NodeJS.ProcessEnv = process.env,
   exists: (path: string) => boolean = existsSync,
+  readDir: ReadDir = readDirSafe,
+  only?: ReadonlySet<string>,
 ): DetectedEmulator[] {
   const found: DetectedEmulator[] = [];
   for (const emulator of STANDALONE_EMULATORS) {
-    const command = emulator.paths(platform, home, env).find(exists);
+    if (only && !only.has(emulator.id)) continue;
+    const command = emulator.paths(platform, home, env, readDir).find(exists);
     if (command) found.push({ emulator, command });
   }
   return found;
@@ -169,25 +208,48 @@ export function toEmulatorMappings(
  * Detection is repeated far more often than it changes.
  *
  * findMapping runs several times per launch and once per platform the frontend
- * probes, and each pass is a handful of existsSync calls per emulator. The
- * answer is memoised for as long as it holds, and re-probed while nothing has
- * been found, so an emulator installed while the app is running is still
- * noticed without a restart -- the same bargain the RetroArch path detection
- * makes.
+ * probes, and each pass is a directory scan and a handful of existsSync calls
+ * per emulator.
+ *
+ * Remembered per emulator, not in one lump. Remembering "something was found"
+ * would stop the ones that were not found from ever being looked for again --
+ * so installing PCSX2 on a machine that already had Dolphin would go unnoticed
+ * until a restart, which is exactly the case this has to handle.
  */
-let memo: { key: string; found: DetectedEmulator[] } | null = null;
+let memo: { key: string; found: Map<string, DetectedEmulator> } | null = null;
 
 function detectStandaloneCached(
   platform: NodeJS.Platform,
   home: string,
   env: NodeJS.ProcessEnv,
   exists: (path: string) => boolean,
+  readDir: ReadDir = readDirSafe,
 ): DetectedEmulator[] {
   const key = `${platform}\u0000${home}`;
-  if (memo && memo.key === key && memo.found.length > 0) return memo.found;
-  const found = detectStandalone(platform, home, env, exists);
-  memo = { key, found };
-  return found;
+  if (!memo || memo.key !== key) memo = { key, found: new Map() };
+
+  // Only the ones not already found are looked for again.
+  const missing = new Set(
+    STANDALONE_EMULATORS.map((entry) => entry.id).filter(
+      (id) => !memo!.found.has(id),
+    ),
+  );
+  if (missing.size > 0) {
+    for (const detected of detectStandalone(
+      platform,
+      home,
+      env,
+      exists,
+      readDir,
+      missing,
+    )) {
+      memo.found.set(detected.emulator.id, detected);
+    }
+  }
+  // Kept in table order, so two emulators never swap places between calls.
+  return STANDALONE_EMULATORS.map((entry) => memo!.found.get(entry.id)).filter(
+    (entry): entry is DetectedEmulator => entry !== undefined,
+  );
 }
 
 /** Forget the memo, so a test can change what is on disk between cases. */
@@ -202,11 +264,12 @@ export function detectedMappingFor(
   home: string,
   env: NodeJS.ProcessEnv = process.env,
   exists: (path: string) => boolean = existsSync,
+  readDir: ReadDir = readDirSafe,
 ): EmulatorMapping | null {
   const wanted = platformSlug.toLowerCase();
   return (
     toEmulatorMappings(
-      detectStandaloneCached(platform, home, env, exists),
+      detectStandaloneCached(platform, home, env, exists, readDir),
     ).find((mapping) => mapping.platformSlug === wanted) ?? null
   );
 }
