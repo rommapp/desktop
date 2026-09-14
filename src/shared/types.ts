@@ -132,6 +132,12 @@ export interface DesktopConfig {
    *  has no emulator at all. Nothing is ever installed without the user saying
    *  so, and the offer stops once they have an emulator or decline for good. */
   offerRetroArchInstall: boolean;
+  /** Cores to try first for a platform, ahead of the ones the frontend named.
+   *  RomM's map picks a sensible core for playing; it does not know which cores
+   *  RetroAchievements recognises, or which one you happen to prefer. Keyed by
+   *  platform slug, matched case-insensitively. A name the frontend never
+   *  offered is still honoured, so this can reach a core RomM does not list. */
+  preferredCores: Record<string, string[]>;
   /** Directory the frontends install emulators under, so an emulators entry can
    *  name a relative path instead of repeating an absolute one. Null means every
    *  command must be absolute. */

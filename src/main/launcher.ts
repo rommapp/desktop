@@ -13,7 +13,11 @@ import {
 import { loadConfig } from "./config.ts";
 import { canInstallCore, firstInstallableCore } from "./emulator/buildbot.ts";
 import { installCore } from "./emulator/install.ts";
-import { emulatorLabel, resolveLaunch } from "./emulator/resolve.ts";
+import {
+  applyCorePreference,
+  emulatorLabel,
+  resolveLaunch,
+} from "./emulator/resolve.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
 import { resolveSavePaths } from "./saves/paths.ts";
@@ -44,10 +48,11 @@ function throwIfCancelled(signal: AbortSignal): void {
  */
 function describeInstallableCore(
   config: DesktopConfig,
-  query: PlatformSupportQuery,
+  platformSlug: string,
+  cores: string[],
 ): string | null {
-  if (!canInstallCore(config, query.platformSlug, query.cores)) return null;
-  const core = firstInstallableCore(query.cores);
+  if (!canInstallCore(config, platformSlug, cores)) return null;
+  const core = firstInstallableCore(cores);
   if (!core) return null;
 
   // Every other precondition has to hold too. Overlapping cache and save roots,
@@ -59,8 +64,8 @@ function describeInstallableCore(
     assertSeparateRoots(config);
     resolveLaunch({
       config,
-      platformSlug: query.platformSlug,
-      cores: query.cores,
+      platformSlug,
+      cores,
       romPath: "",
       savePaths: resolveSavePaths(config.saveDataPath, 0, "probe"),
       assumeMissingCoreInstalled: true,
@@ -68,7 +73,7 @@ function describeInstallableCore(
   } catch {
     return null;
   }
-  return `${emulatorLabel(config, query.platformSlug)} (installs ${core})`;
+  return `${emulatorLabel(config, platformSlug)} (installs ${core})`;
 }
 
 export class Launcher {
@@ -86,12 +91,15 @@ export class Launcher {
     query: PlatformSupportQuery,
   ): Promise<PlatformSupport> {
     const config = await loadConfig();
+    // The user's preference is applied once, here, so the probe and the launch
+    // never disagree about which core they are talking about.
+    const cores = applyCorePreference(config, query.platformSlug, query.cores);
     try {
       assertSeparateRoots(config);
       const launch = resolveLaunch({
         config,
         platformSlug: query.platformSlug,
-        cores: query.cores,
+        cores,
         // A probe never runs, so the ROM path only has to be non-empty. The
         // save paths do have to be shaped like a real launch's, since a mapping
         // naming {saves} without a saveDataPath is part of what is being probed.
@@ -103,7 +111,11 @@ export class Launcher {
       // A core that is not installed but can be is reported as supported, so
       // the frontend offers the launch that will fetch it. The alternative is a
       // button that stays hidden and a core that therefore never arrives.
-      const installable = describeInstallableCore(config, query);
+      const installable = describeInstallableCore(
+        config,
+        query.platformSlug,
+        cores,
+      );
       if (installable) return { supported: true, emulator: installable };
 
       const launchError = toLaunchError(error);
@@ -130,6 +142,7 @@ export class Launcher {
   private async ensureCore(
     config: DesktopConfig,
     request: LaunchRequest,
+    cores: string[],
     signal: AbortSignal,
   ): Promise<void> {
     // Whether to install at all is the caller's decision, made before the
@@ -148,7 +161,7 @@ export class Launcher {
     const shouldReport = createProgressGate();
     await installCore({
       coresPath: config.retroarchCoresPath,
-      cores: request.cores,
+      cores,
       signal,
       onProgress: ({ core, received, total }) => {
         const progress = total ? received / total : undefined;
@@ -190,11 +203,19 @@ export class Launcher {
         request.fileName,
       );
 
+      // Applied before anything consults the list, so validation, installation
+      // and the spawn all agree on which core this launch is about.
+      const cores = applyCorePreference(
+        config,
+        request.platformSlug,
+        request.cores,
+      );
+
       // Decided before validating, so the validation can account for it.
       const installingCore = canInstallCore(
         config,
         request.platformSlug,
-        request.cores,
+        cores,
       );
 
       // Resolve the emulator before downloading anything: a launch that cannot
@@ -206,14 +227,14 @@ export class Launcher {
       resolveLaunch({
         config,
         platformSlug: request.platformSlug,
-        cores: request.cores,
+        cores,
         romPath: "",
         savePaths,
         assumeMissingCoreInstalled: installingCore,
       });
 
       if (installingCore) {
-        await this.ensureCore(config, request, controller.signal);
+        await this.ensureCore(config, request, cores, controller.signal);
       }
       // Extracting and writing a core is not itself interruptible, so a cancel
       // landing during it is only observed here.
@@ -278,7 +299,7 @@ export class Launcher {
       const launch = resolveLaunch({
         config,
         platformSlug: request.platformSlug,
-        cores: request.cores,
+        cores,
         romPath,
         savePaths,
       });

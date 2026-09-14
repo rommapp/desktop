@@ -9,6 +9,7 @@ import {
   LaunchError,
 } from "../../shared/types.ts";
 import {
+  applyCorePreference,
   applyTokens,
   coreFileName,
   emulatorIsPresent,
@@ -26,6 +27,7 @@ function baseConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     retroarchPath: null,
     retroarchCoresPath: null,
     autoInstallCores: true,
+    preferredCores: {},
     emulators: [],
     cachePath: null,
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
@@ -664,4 +666,82 @@ test("without the option a missing core still fails", () => {
       }),
     /None of the cores/,
   );
+});
+
+test("preferred cores go in front of the frontend's", () => {
+  const config = baseConfig({
+    preferredCores: { psx: ["swanstation", "mednafen_psx_hw"] },
+  });
+  assert.deepEqual(
+    applyCorePreference(config, "psx", ["pcsx_rearmed", "mednafen_psx_hw"]),
+    // The preference leads; what the frontend offered and the preference did
+    // not name still follows, so nothing is narrowed away.
+    ["swanstation", "mednafen_psx_hw", "pcsx_rearmed"],
+  );
+});
+
+test("a preferred core the frontend never offered is still honoured", () => {
+  // The whole point: RomM's map cannot know which core RetroAchievements
+  // recognises, so naming one it does not list has to reach it.
+  const config = baseConfig({ preferredCores: { "3ds": ["azahar"] } });
+  assert.deepEqual(applyCorePreference(config, "3ds", []), ["azahar"]);
+});
+
+test("platform slugs match without regard to case", () => {
+  const config = baseConfig({ preferredCores: { PSX: ["swanstation"] } });
+  assert.deepEqual(applyCorePreference(config, "psx", ["pcsx_rearmed"]), [
+    "swanstation",
+    "pcsx_rearmed",
+  ]);
+});
+
+test("a platform with no preference is left exactly as it came", () => {
+  const config = baseConfig({ preferredCores: { psx: ["swanstation"] } });
+  const cores = ["snes9x", "bsnes"];
+  assert.deepEqual(applyCorePreference(config, "snes", cores), cores);
+  assert.deepEqual(applyCorePreference(baseConfig(), "snes", cores), cores);
+});
+
+test("a preferred core is not repeated when the frontend named it too", () => {
+  const config = baseConfig({ preferredCores: { snes: ["snes9x"] } });
+  assert.deepEqual(applyCorePreference(config, "snes", ["snes9x", "bsnes"]), [
+    "snes9x",
+    "bsnes",
+  ]);
+});
+
+test("a preference that cannot be a filename is dropped, not obeyed", () => {
+  // These names reach a filesystem path and a buildbot URL, so the config is no
+  // more trusted here than the renderer is.
+  const config = baseConfig({
+    preferredCores: { snes: ["../../evil", "Snes9x", "snes9x"] },
+  });
+  assert.deepEqual(applyCorePreference(config, "snes", ["bsnes"]), [
+    "snes9x",
+    "bsnes",
+  ]);
+});
+
+test("a malformed preferredCores table is ignored rather than fatal", () => {
+  // Hand-edited JSON, so every wrong shape has to fall through to the
+  // frontend's list instead of throwing mid-launch.
+  const cores = ["snes9x"];
+  for (const table of [
+    null,
+    undefined,
+    "snes9x",
+    42,
+    { snes: "snes9x" },
+    { snes: null },
+    { snes: [1, 2, 3] },
+  ]) {
+    const config = baseConfig({
+      preferredCores: table as DesktopConfig["preferredCores"],
+    });
+    assert.deepEqual(
+      applyCorePreference(config, "snes", cores),
+      cores,
+      `${table}`,
+    );
+  }
 });

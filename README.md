@@ -212,6 +212,41 @@ prompt outright:
 }
 ```
 
+#### Choosing a core
+
+RomM's map names the cores that will play a game, in its own order, and the
+first one installed wins. It has no opinion about which of them
+[RetroAchievements recognises](https://docs.retroachievements.org/general/emulator-support-and-issues.html),
+and no way to know that you prefer one. `preferredCores` puts your choice at the
+front, for resolving and for downloading alike:
+
+```json
+{
+  "preferredCores": {
+    "psx": ["mednafen_psx_hw", "swanstation"],
+    "saturn": ["mednafen_saturn"],
+    "3ds": ["azahar"]
+  }
+}
+```
+
+A core named here is honoured even when the frontend never offered it, which is
+the point: it is how you reach a core RomM's map does not list. Nothing is
+narrowed away either -- whatever the frontend did offer still follows, in its
+original order, so a preference that turns out not to be published for your
+system quietly falls through to RomM's suggestion.
+
+Two worked reasons to set it. `pcsx_rearmed` plays PlayStation games perfectly
+well but is not on RetroAchievements' supported list, while `mednafen_psx_hw`
+and `swanstation` are; and RetroAchievements wants Beetle Saturn
+(`mednafen_saturn`) rather than the Kronos core some frontends default to, which
+is also not published for Apple Silicon.
+
+Names are checked against the same `[a-z0-9_]+` alphabet as everything else
+before they become a path or a request, so a typo is ignored rather than
+obeyed. Achievements themselves are RetroArch's business: log in under its own
+Settings, and RomM will show the progression once it syncs.
+
 #### Missing cores
 
 A core that is not installed is fetched from the

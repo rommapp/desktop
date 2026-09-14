@@ -142,6 +142,55 @@ export function requiresCore(
 }
 
 /**
+ * The cores the user asked for on this platform, ahead of the frontend's.
+ *
+ * RomM's map names cores that will play the game; it has no opinion about which
+ * ones RetroAchievements recognises, and no way to know a preference. Naming a
+ * core here puts it first for both resolving and installing.
+ *
+ * The config is hand-edited JSON, so every shape it could be in is tolerated
+ * rather than trusted, and names still have to survive isSafeCoreName before
+ * they can become a path or a request.
+ */
+function findPreferredCores(
+  config: DesktopConfig,
+  platformSlug: string,
+): string[] {
+  const table: unknown = config.preferredCores;
+  if (typeof table !== "object" || table === null) return [];
+  const wanted = platformSlug.toLowerCase();
+  for (const [slug, cores] of Object.entries(table)) {
+    if (slug.toLowerCase() !== wanted) continue;
+    if (!Array.isArray(cores)) return [];
+    return cores.filter(
+      (core): core is string =>
+        typeof core === "string" && isSafeCoreName(core),
+    );
+  }
+  return [];
+}
+
+/**
+ * Put the user's preferred cores at the front of the candidate list.
+ *
+ * A preferred core the frontend never offered is kept, which is deliberate: the
+ * point is to reach a core RomM's map does not name. Everything the frontend
+ * did offer stays, in its original order, so this narrows nothing -- a
+ * preference that turns out not to be published still falls through to what
+ * RomM suggested.
+ */
+export function applyCorePreference(
+  config: DesktopConfig,
+  platformSlug: string,
+  cores: string[],
+): string[] {
+  const preferred = findPreferredCores(config, platformSlug);
+  if (preferred.length === 0) return cores;
+  const seen = new Set(preferred);
+  return [...preferred, ...cores.filter((core) => !seen.has(core))];
+}
+
+/**
  * Resolve the core, optionally pretending a missing one is already installed.
  *
  * The pretence exists so a launch that is about to download a core can still
