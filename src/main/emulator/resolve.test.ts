@@ -11,7 +11,10 @@ import {
 import {
   applyTokens,
   coreFileName,
+  emulatorIsPresent,
+  emulatorLabel,
   isSafeCoreName,
+  requiresCore,
   resolveCore,
   resolveEmulatorCommand,
   resolveLaunch,
@@ -22,6 +25,7 @@ function baseConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     serverUrl: "https://romm.example.com",
     retroarchPath: null,
     retroarchCoresPath: null,
+    autoInstallCores: true,
     emulators: [],
     cachePath: null,
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
@@ -489,4 +493,82 @@ test("resolveLaunch refuses a mapping naming {saves} with no saveDataPath", () =
       error.code === "no-emulator-configured" &&
       error.message.includes("saveDataPath"),
   );
+});
+
+test("requiresCore is true for the RetroArch default path", () => {
+  assert.ok(requiresCore(baseConfig(), "snes"));
+});
+
+test("requiresCore is false for a standalone emulator", () => {
+  // The platform may still have candidate cores; this mapping never loads one.
+  const config = baseConfig({
+    emulators: [
+      { platformSlug: "ps2", command: "/usr/bin/pcsx2", args: ["{rom}"] },
+    ],
+  });
+  assert.equal(requiresCore(config, "ps2"), false);
+});
+
+test("requiresCore follows the wildcard row for an unmapped platform", () => {
+  const config = baseConfig({
+    emulators: [
+      { platformSlug: "*", command: "/usr/bin/flatpak", args: ["{rom}"] },
+    ],
+  });
+  assert.equal(requiresCore(config, "snes"), false);
+});
+
+test("requiresCore is true for a mapping that names {core}", () => {
+  const config = baseConfig({
+    emulators: [
+      {
+        platformSlug: "*",
+        command: "/usr/bin/flatpak",
+        args: ["-L", "{core}", "{rom}"],
+      },
+    ],
+  });
+  assert.ok(requiresCore(config, "snes"));
+});
+
+test("emulatorIsPresent sees a RetroArch that exists", () => {
+  const { binary } = fakeInstall([]);
+  assert.ok(emulatorIsPresent(baseConfig({ retroarchPath: binary }), "snes"));
+  assert.equal(emulatorIsPresent(baseConfig(), "snes"), false);
+  assert.equal(
+    emulatorIsPresent(baseConfig({ retroarchPath: "/nope/retroarch" }), "snes"),
+    false,
+  );
+});
+
+test("emulatorIsPresent resolves a mapping against the base path", () => {
+  const { root } = fakeInstall([]);
+  writeFileSync(join(root, "pcsx2"), "");
+  const config = baseConfig({
+    emulatorsBasePath: root,
+    emulators: [
+      { platformSlug: "ps2", command: "pcsx2", args: ["{rom}"] },
+      { platformSlug: "ps3", command: "rpcs3", args: ["{rom}"] },
+    ],
+  });
+  assert.ok(emulatorIsPresent(config, "ps2"));
+  assert.equal(emulatorIsPresent(config, "ps3"), false);
+});
+
+test("emulatorLabel names the mapping, or RetroArch when there is none", () => {
+  assert.equal(emulatorLabel(baseConfig(), "snes"), "RetroArch");
+  const config = baseConfig({
+    emulators: [
+      {
+        platformSlug: "ps2",
+        label: "PCSX2",
+        command: "/usr/bin/pcsx2",
+        args: ["{rom}"],
+      },
+      { platformSlug: "ps3", command: "/usr/bin/rpcs3", args: ["{rom}"] },
+    ],
+  });
+  assert.equal(emulatorLabel(config, "ps2"), "PCSX2");
+  // No label, so the command stands in, the same way resolveLaunch reports it.
+  assert.equal(emulatorLabel(config, "ps3"), "/usr/bin/rpcs3");
 });

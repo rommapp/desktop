@@ -18,8 +18,12 @@ export function isSafeCoreName(core: string): boolean {
   return SAFE_CORE_NAME.test(core);
 }
 
-function coreFileExtension(): string {
-  switch (process.platform) {
+/** Platform is a parameter rather than read straight from process, so the
+ *  naming can be exercised for all three from one machine. */
+export function coreFileExtension(
+  platform: NodeJS.Platform = process.platform,
+): string {
+  switch (platform) {
     case "darwin":
       return "dylib";
     case "win32":
@@ -29,8 +33,11 @@ function coreFileExtension(): string {
   }
 }
 
-export function coreFileName(core: string): string {
-  return `${core}_libretro.${coreFileExtension()}`;
+export function coreFileName(
+  core: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return `${core}_libretro.${coreFileExtension(platform)}`;
 }
 
 export interface ResolvedLaunch {
@@ -85,6 +92,53 @@ function findMapping(
     config.emulators.find((entry) => entry.platformSlug === WILDCARD_SLUG) ??
     null
   );
+}
+
+/** What to call the emulator this platform would use, before a launch has
+ *  resolved a core to name alongside it. */
+export function emulatorLabel(
+  config: DesktopConfig,
+  platformSlug: string,
+): string {
+  const mapping = findMapping(config, platformSlug);
+  if (!mapping) return "RetroArch";
+  return mapping.label ?? mapping.command;
+}
+
+/**
+ * Whether the executable this platform would run is actually on disk.
+ *
+ * Separate from resolveLaunch because a missing core and a missing emulator
+ * raise the same error code, and only the first of the two is worth trying to
+ * fix by downloading something.
+ */
+export function emulatorIsPresent(
+  config: DesktopConfig,
+  platformSlug: string,
+): boolean {
+  const mapping = findMapping(config, platformSlug);
+  if (mapping) {
+    return existsSync(
+      resolveEmulatorCommand(mapping.command, config.emulatorsBasePath),
+    );
+  }
+  return Boolean(config.retroarchPath && existsSync(config.retroarchPath));
+}
+
+/**
+ * Whether launching this platform needs a libretro core at all.
+ *
+ * A standalone emulator mapping does not, even for a platform whose candidate
+ * core list is non-empty, so this is what keeps a PCSX2 row from triggering a
+ * core download it would never load.
+ */
+export function requiresCore(
+  config: DesktopConfig,
+  platformSlug: string,
+): boolean {
+  const mapping = findMapping(config, platformSlug);
+  if (!mapping) return true; // The RetroArch default path always needs one.
+  return mapping.args.some((arg) => arg.includes("{core}"));
 }
 
 /** Pick the first candidate core that is installed, so a missing preferred core

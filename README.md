@@ -58,8 +58,9 @@ That has a few consequences worth being explicit about:
 
 - A reachable RomM server, running a version that ships the `useNativeShell`
   integration.
-- An emulator. RetroArch is autodetected; anything else is configured by hand
-  (see [Emulator configuration](#emulator-configuration)).
+- An emulator. RetroArch is autodetected and its missing cores are downloaded
+  on demand; anything else is configured by hand (see
+  [Emulator configuration](#emulator-configuration)).
 
 ## Running it
 
@@ -164,6 +165,34 @@ directly, so there is no need to go looking for it.
 RetroArch and its cores directory are detected from the usual install
 locations. When a game is launched, RomM's own platform/core map decides which
 libretro cores are candidates, and the first one actually installed wins.
+
+#### Missing cores
+
+A core that is not installed is fetched from the
+[libretro buildbot](https://buildbot.libretro.com/) rather than failing the
+launch, which is the same build RetroArch's own core updater installs. The
+candidates are tried in the frontend's order of preference and the first one
+published for this machine wins, so the usual case is a few seconds' wait
+before the game starts.
+
+This is deliberately narrow. Nothing is downloaded unless RetroArch itself is
+already installed, the emulator for that platform actually loads a libretro
+core, the cores directory is known, none of the candidates are present, and the
+buildbot publishes for this architecture. A standalone emulator never triggers
+it. Set `autoInstallCores` to `false` to turn it off and go back to a launch
+that fails with the missing cores named:
+
+```json
+{
+  "autoInstallCores": false
+}
+```
+
+Two things worth knowing. The core has to match the emulator's architecture
+rather than this shell's, so an x86_64 RetroArch under Rosetta on an Apple
+Silicon Mac will be handed arm64 cores it cannot load; install those through
+RetroArch's own updater. And only the nightly channel exists per core, so this
+tracks upstream rather than pinning a version.
 
 Detection covers the standard package locations on Linux and macOS, and on
 Windows the portable `C:\RetroArch-Win64` layout, both Program Files
@@ -384,7 +413,13 @@ from third-party metadata providers, so the renderer is treated as untrusted:
   the libretro cores its platform supports; the command comes only from your
   own config.
 - Core names are matched against `[a-z0-9_]+` before becoming a path, so they
-  cannot point the loader outside the cores directory.
+  cannot point the loader outside the cores directory. The same check gates the
+  buildbot URL, so a name that cannot be a filename cannot be a request either.
+- A downloaded core is written only to the configured cores directory, under the
+  filename the shell derived. The archive is never walked and no path inside it
+  is read, so an entry named to escape a directory has nothing to act on, and
+  the contents are checked against the archive's own checksum before the
+  emulator is asked to load them.
 - Download URLs must resolve to the configured server origin and an `/api/`
   route.
 - Processes are spawned with an argument array, never a shell string.
@@ -434,6 +469,9 @@ src/
     argv.ts         Command-line flag parsing
     config.ts       Persisted settings and RetroArch autodetection
     emulator/       Platform to emulator/core resolution
+      buildbot.ts   Where a missing libretro core comes from
+      install.ts    Fetching and unpacking one
+      resolve.ts    Choosing the emulator and core for a platform
     index.ts        App lifecycle, single-instance lock, initial window
     ipc.ts          IPC handlers behind window.rommNative
     launcher.ts     Download, resolve, spawn, track
@@ -443,6 +481,7 @@ src/
     safety.ts       Validation of everything the renderer sends
     spike.ts        TEMPORARY: the --spike harness (see above)
     window.ts       Window creation and navigation policy
+    zip.ts          Minimal reader for the buildbot's core archives
   preload/          contextBridge surface (window.rommNative)
   shared/           Types shared with the RomM frontend
 ```

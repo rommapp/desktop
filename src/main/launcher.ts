@@ -2,6 +2,7 @@ import { type Session } from "electron";
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import {
+  type DesktopConfig,
   type LaunchRequest,
   type LaunchResult,
   type LaunchState,
@@ -10,7 +11,13 @@ import {
   type PlatformSupportQuery,
 } from "../shared/types.ts";
 import { loadConfig } from "./config.ts";
-import { resolveLaunch } from "./emulator/resolve.ts";
+import { canInstallCore, firstInstallableCore } from "./emulator/buildbot.ts";
+import { installCore } from "./emulator/install.ts";
+import {
+  emulatorIsPresent,
+  emulatorLabel,
+  resolveLaunch,
+} from "./emulator/resolve.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
 import { resolveSavePaths } from "./saves/paths.ts";
@@ -27,6 +34,24 @@ function toLaunchError(error: unknown): LaunchError {
   return new LaunchError("launch-failed", message);
 }
 
+/**
+ * Name the emulator a launch would use when the only thing missing is a core
+ * the buildbot can supply, or null when the launch would fail for some other
+ * reason. The emulator has to be present: a download cannot conjure one, and
+ * reporting support for a machine with no RetroArch would just move the failure
+ * later.
+ */
+function describeInstallableCore(
+  config: DesktopConfig,
+  query: PlatformSupportQuery,
+): string | null {
+  if (!canInstallCore(config, query.platformSlug, query.cores)) return null;
+  if (!emulatorIsPresent(config, query.platformSlug)) return null;
+  const core = firstInstallableCore(query.cores);
+  if (!core) return null;
+  return `${emulatorLabel(config, query.platformSlug)} (installs ${core})`;
+}
+
 export class Launcher {
   private readonly active = new Map<number, ActiveLaunch>();
   private readonly emit: (state: LaunchState) => void;
@@ -35,7 +60,9 @@ export class Launcher {
     this.emit = emit;
   }
 
-  /** Whether the platform would launch right now, without downloading anything. */
+  /** Whether the platform would launch, without downloading anything to find
+   *  out. A platform whose only gap is a core that can be fetched counts as
+   *  supported: the fetch then happens on the launch itself. */
   async getPlatformSupport(
     query: PlatformSupportQuery,
   ): Promise<PlatformSupport> {
@@ -54,6 +81,12 @@ export class Launcher {
       });
       return { supported: true, emulator: launch.label };
     } catch (error) {
+      // A core that is not installed but can be is reported as supported, so
+      // the frontend offers the launch that will fetch it. The alternative is a
+      // button that stays hidden and a core that therefore never arrives.
+      const installable = describeInstallableCore(config, query);
+      if (installable) return { supported: true, emulator: installable };
+
       const launchError = toLaunchError(error);
       switch (launchError.code) {
         case "unsupported-platform":
@@ -72,6 +105,52 @@ export class Launcher {
           };
       }
     }
+  }
+
+  /**
+   * Install a libretro core the launch needs and the user does not have.
+   *
+   * A no-op unless every condition in canInstallCore holds, so a platform with
+   * its core already in place, a standalone emulator, or a user who has turned
+   * the feature off never reaches the network.
+   */
+  private async ensureCore(
+    config: DesktopConfig,
+    request: LaunchRequest,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (!config.retroarchCoresPath) return;
+    if (!canInstallCore(config, request.platformSlug, request.cores)) return;
+    if (!emulatorIsPresent(config, request.platformSlug)) return;
+
+    // Reported as an ordinary download, distinguished only by the optional
+    // stage, so a frontend that has never heard of core installation still
+    // shows the wait rather than sitting silent.
+    this.emit({
+      romId: request.romId,
+      status: "downloading",
+      stage: "core",
+      progress: 0,
+    });
+    const shouldReport = createProgressGate();
+    await installCore({
+      coresPath: config.retroarchCoresPath,
+      cores: request.cores,
+      signal,
+      onProgress: ({ core, received, total }) => {
+        const progress = total ? received / total : undefined;
+        if (!shouldReport(progress)) return;
+        this.emit({
+          romId: request.romId,
+          status: "downloading",
+          stage: "core",
+          core,
+          progress,
+          received,
+          total: total ?? undefined,
+        });
+      },
+    });
   }
 
   async launch(
@@ -98,6 +177,11 @@ export class Launcher {
         request.fileName,
       );
 
+      // Fetch a missing core first, so the resolve below sees it. Doing it
+      // before the ROM means a core that cannot be had fails in seconds rather
+      // than after a multi-gigabyte transfer.
+      await this.ensureCore(config, request, controller.signal);
+
       // Resolve the emulator before downloading: a missing core should fail
       // immediately rather than after a multi-gigabyte transfer.
       resolveLaunch({
@@ -121,7 +205,12 @@ export class Launcher {
       if (inLibrary) {
         romPath = inLibrary;
       } else {
-        this.emit({ romId: request.romId, status: "downloading", progress: 0 });
+        this.emit({
+          romId: request.romId,
+          status: "downloading",
+          stage: "rom",
+          progress: 0,
+        });
         // ensureRom reports every chunk. Sending all of them would cost more
         // than the download itself on a large ROM, so rate limit before the
         // IPC hop.
@@ -140,6 +229,7 @@ export class Launcher {
             this.emit({
               romId: request.romId,
               status: "downloading",
+              stage: "rom",
               progress,
               received,
               total: total ?? undefined,
