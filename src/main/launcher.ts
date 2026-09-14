@@ -1,4 +1,4 @@
-import { type Session } from "electron";
+import { type BrowserWindow, type Session } from "electron";
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import {
@@ -14,8 +14,13 @@ import { loadConfig } from "./config.ts";
 import { canInstallCore, firstInstallableCore } from "./emulator/buildbot.ts";
 import { installCore } from "./emulator/install.ts";
 import {
+  emulatorForPlatform,
+  offerStandaloneInstall,
+} from "./emulator/standalone-install.ts";
+import {
   applyCorePreference,
   emulatorLabel,
+  hasPlatformSpecificEmulator,
   resolveLaunch,
 } from "./emulator/resolve.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
@@ -179,9 +184,45 @@ export class Launcher {
     });
   }
 
+  /** Emulators already offered this run, so a decline is not re-asked on the
+   *  next game of the same platform. */
+  private readonly offered = new Set<string>();
+
+  /**
+   * Offer a standalone emulator this platform needs and the machine lacks.
+   *
+   * Returns true when something was handed to the OS, which means the launch
+   * cannot continue: installing is interactive and finishes long after this
+   * does. Declining returns false and the launch proceeds exactly as it would
+   * have, so this never breaks one that would have worked.
+   */
+  private async offerMissingEmulator(
+    config: DesktopConfig,
+    request: LaunchRequest,
+    parent: BrowserWindow | null,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    if (!config.offerStandaloneInstall) return false;
+    const emulatorId = emulatorForPlatform(request.platformSlug);
+    if (!emulatorId || this.offered.has(emulatorId)) return false;
+    // Only when nothing specific to this platform covers it. Not
+    // emulatorIsPresent: that says yes for every platform once RetroArch is
+    // installed, which is the normal case and not an answer for PS2.
+    if (hasPlatformSpecificEmulator(config, request.platformSlug)) return false;
+
+    this.offered.add(emulatorId);
+    const { handedOff } = await offerStandaloneInstall({
+      emulatorId,
+      parent,
+      signal,
+    });
+    return handedOff;
+  }
+
   async launch(
     request: LaunchRequest,
     session: Session,
+    parent: BrowserWindow | null = null,
   ): Promise<LaunchResult> {
     if (this.active.has(request.romId)) {
       throw new LaunchError(
@@ -202,6 +243,23 @@ export class Launcher {
         request.romId,
         request.fileName,
       );
+
+      // Before anything else touches the network: a platform that needs a
+      // standalone emulator nobody has is a launch that cannot work, and the
+      // moment someone pressed Play is the moment they have shown they want it.
+      if (
+        await this.offerMissingEmulator(
+          config,
+          request,
+          parent,
+          controller.signal,
+        )
+      ) {
+        throw new LaunchError(
+          "emulator-not-found",
+          "Finish installing the emulator, then press Play again.",
+        );
+      }
 
       // Applied before anything consults the list, so validation, installation
       // and the spawn all agree on which core this launch is about.

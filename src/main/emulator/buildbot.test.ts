@@ -29,6 +29,7 @@ function baseConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     // Off, so a host that happens to have Dolphin installed cannot change
     // what these tests see.
     useDetectedEmulators: false,
+    offerStandaloneInstall: false,
     emulatorsBasePath: null,
     emulators: [],
     cachePath: null,

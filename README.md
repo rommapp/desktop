@@ -299,10 +299,29 @@ RetroArch, and launches what it finds:
 | PCSX2    | `ps2`        | `/Applications`, Program Files, the per-user Programs directory, scoop, RetroBat |
 | Dolphin  | `ngc`, `wii` | the same, plus `/usr/bin` and `/usr/games` and each one's Flatpak on Linux       |
 
-Nothing is downloaded and nothing is written to your config. An emulator
-installed by any means is found the same way, a frontend's own tree included, so
-someone already running RetroBat gets its emulators without configuring them
-twice.
+Nothing is written to your config, and an emulator installed by any means is
+found the same way, a frontend's own tree included, so someone already running
+RetroBat gets its emulators without configuring them twice.
+
+When there is nothing to find, pressing Play on a game of that platform offers
+to fetch it from the project. The file is handed to the operating system exactly
+as RetroArch's installer is -- an installer runs, a disk image mounts, a Flatpak
+goes to your software installer -- and the version comes from each project's own
+release index rather than a URL guessed here.
+
+Coverage is uneven, and not in a way this shell can fix:
+
+| Emulator | macOS                            | Windows                        | Linux   |
+| -------- | -------------------------------- | ------------------------------ | ------- |
+| PCSX2    | `.tar.xz`, opens Archive Utility | installer                      | Flatpak |
+| Dolphin  | disk image                       | `.7z`, opens in Explorer on 11 | Flatpak |
+
+Dolphin publishes no Windows installer and PCSX2 no macOS disk image, so those
+two leave a portable build wherever you extract it. Detection cannot guess where
+that is, so the prompt says as much and you point at the executable under
+`emulators` afterwards. Asked at most once per emulator per run; declining just
+lets the launch carry on as it would have. Set `offerStandaloneInstall` to
+`false` to never ask.
 
 A row you wrote yourself always wins, so configuring either of these overrides
 the detection entirely. A detected emulator does beat a `*` wildcard row,
@@ -599,6 +618,8 @@ src/
       locations.ts  Where RetroArch and its cores live, per platform
       resolve.ts    Choosing the emulator and core for a platform
       standalone.ts Finding an installed PCSX2 or Dolphin
+      standalone-install.ts  Offering to fetch one that is missing
+      standalone-release.ts  Reading each project's release index
       retroarch.ts  Which RetroArch installer suits this machine
     index.ts        App lifecycle, single-instance lock, initial window
     ipc.ts          IPC handlers behind window.rommNative
@@ -606,6 +627,7 @@ src/
     cache/          LRU eviction over the ROM cache
     rom-cache.ts    Download with the window's session cookies
     saves/          Per-game save and state directories
+    download.ts     Fetching a file the OS is then asked to open
     safety.ts       Validation of everything the renderer sends
     spike.ts        TEMPORARY: the --spike harness (see above)
     window.ts       Window creation and navigation policy

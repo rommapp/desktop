@@ -240,3 +240,47 @@ export function validateLaunchRequest(value: unknown): LaunchRequest {
     ...(fileSize === undefined ? {} : { fileSize }),
   };
 }
+
+/**
+ * Where a download is allowed to come from.
+ *
+ * Exact origins for a host that serves its own files, and host suffixes for one
+ * that hands off to a CDN: a GitHub release asset answers from
+ * release-assets.githubusercontent.com, and that name has changed before, so
+ * pinning today's spelling would break the next time it does.
+ */
+export interface OriginPolicy {
+  /** Full origins, compared exactly. */
+  origins?: string[];
+  /** Registrable suffixes, e.g. "githubusercontent.com". */
+  hostSuffixes?: string[];
+}
+
+/**
+ * Whether a URL is one of these downloads may come from.
+ *
+ * Applied to the response's final URL as well as the request, because redirects
+ * are followed and everything fetched this way is either loaded into an
+ * emulator or handed to the OS to run. A suffix has to match on a dot boundary,
+ * so evil-githubusercontent.com cannot pass as githubusercontent.com, and plain
+ * http never qualifies however the host reads.
+ */
+export function isAllowedDownloadOrigin(
+  url: string,
+  policy: OriginPolicy,
+): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:") return false;
+  if (policy.origins?.includes(parsed.origin)) return true;
+  return (
+    policy.hostSuffixes?.some(
+      (suffix) =>
+        parsed.hostname === suffix || parsed.hostname.endsWith(`.${suffix}`),
+    ) ?? false
+  );
+}

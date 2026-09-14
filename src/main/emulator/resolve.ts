@@ -108,6 +108,30 @@ function findMapping(
   );
 }
 
+/**
+ * Whether anything specific to this platform would handle it.
+ *
+ * Deliberately not emulatorIsPresent, which answers "would this launch find an
+ * executable" and so says yes for every platform the moment RetroArch exists.
+ * That is the wrong question when deciding whether to offer PCSX2: RetroArch
+ * being installed is exactly the normal case, and a libretro core is not a
+ * substitute when RetroAchievements recognises none for PS2 or GameCube.
+ *
+ * A wildcard row does not count either. It is a catch-all for platforms with
+ * nothing better, not a considered choice for this one -- the same reason
+ * detection outranks it in findMapping.
+ */
+export function hasPlatformSpecificEmulator(
+  config: DesktopConfig,
+  platformSlug: string,
+): boolean {
+  const wanted = platformSlug.toLowerCase();
+  if (config.emulators.some((row) => row.platformSlug.toLowerCase() === wanted))
+    return true;
+  if (!config.useDetectedEmulators) return false;
+  return detectedMappingFor(platformSlug, undefined, homedir()) !== null;
+}
+
 /** What to call the emulator this platform would use, before a launch has
  *  resolved a core to name alongside it. */
 export function emulatorLabel(

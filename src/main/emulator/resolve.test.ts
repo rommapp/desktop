@@ -14,6 +14,7 @@ import {
   coreFileName,
   emulatorIsPresent,
   emulatorLabel,
+  hasPlatformSpecificEmulator,
   isSafeCoreName,
   requiresCore,
   resolveCore,
@@ -31,6 +32,7 @@ function baseConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     // Off, so a host that happens to have Dolphin installed cannot change
     // what these tests see.
     useDetectedEmulators: false,
+    offerStandaloneInstall: false,
     emulators: [],
     cachePath: null,
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
@@ -747,4 +749,45 @@ test("a malformed preferredCores table is ignored rather than fatal", () => {
       `${table}`,
     );
   }
+});
+
+test("RetroArch being installed does not count as a PS2 emulator", () => {
+  // The bug this guards: emulatorIsPresent answers "would a launch find an
+  // executable", which is true for every platform once RetroArch exists. Asking
+  // that before offering PCSX2 would mean never offering it, since RetroArch is
+  // the normal case and a libretro core earns no achievements on PS2.
+  const { binary, root } = fakeInstall(["snes9x"]);
+  const config = baseConfig({
+    retroarchPath: binary,
+    retroarchCoresPath: root,
+    useDetectedEmulators: false,
+  });
+  assert.ok(emulatorIsPresent(config, "ps2"));
+  assert.equal(hasPlatformSpecificEmulator(config, "ps2"), false);
+});
+
+test("an explicit row for the platform does count", () => {
+  const { root } = fakeInstall([]);
+  const standalone = join(root, "pcsx2");
+  writeFileSync(standalone, "");
+  const config = baseConfig({
+    emulators: [{ platformSlug: "PS2", command: standalone, args: ["{rom}"] }],
+    useDetectedEmulators: false,
+  });
+  // Matched without regard to case, like every other slug lookup.
+  assert.ok(hasPlatformSpecificEmulator(config, "ps2"));
+  assert.equal(hasPlatformSpecificEmulator(config, "ngc"), false);
+});
+
+test("a wildcard row is not a considered choice for this platform", () => {
+  // It is a catch-all for platforms with nothing better, which is the same
+  // reason detection outranks it in findMapping.
+  const { root } = fakeInstall([]);
+  const generic = join(root, "generic");
+  writeFileSync(generic, "");
+  const config = baseConfig({
+    emulators: [{ platformSlug: "*", command: generic, args: ["{rom}"] }],
+    useDetectedEmulators: false,
+  });
+  assert.equal(hasPlatformSpecificEmulator(config, "ps2"), false);
 });

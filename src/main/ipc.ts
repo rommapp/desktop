@@ -32,8 +32,14 @@ export function registerIpc(launcher: Launcher): void {
   ipcMain.handle("romm:launch", async (event, raw: unknown) => {
     const request = validateLaunchRequest(raw);
     // The session comes from the calling window, never from the request, so a
-    // launch always downloads with that window's own credentials.
-    return launcher.launch(request, event.sender.session);
+    // launch always downloads with that window's own credentials. The window
+    // comes along too, so an emulator offer is a sheet on the page that asked
+    // rather than a dialog from nowhere.
+    return launcher.launch(
+      request,
+      event.sender.session,
+      BrowserWindow.fromWebContents(event.sender),
+    );
   });
 
   ipcMain.handle("romm:cancel", (_event, romId: unknown) => {

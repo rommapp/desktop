@@ -138,6 +138,11 @@ export interface DesktopConfig {
    *  Nothing is downloaded and no config is written; an explicit row always
    *  wins, so this only ever fills a gap. */
   useDetectedEmulators: boolean;
+  /** When a game needs a standalone emulator that is not installed, offer to
+   *  fetch it from the project rather than failing the launch. Asked at most
+   *  once per emulator per run, and declining simply lets the launch proceed as
+   *  it would have. */
+  offerStandaloneInstall: boolean;
   /** Cores to try first for a platform, ahead of the ones the frontend named.
    *  RomM's map picks a sensible core for playing; it does not know which cores
    *  RetroAchievements recognises, or which one you happen to prefer. Keyed by

@@ -5,9 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
+  assertSeparateRoots,
+  isAllowedDownloadOrigin,
   resolveDownloadUrl,
   resolveLibraryRom,
-  assertSeparateRoots,
   safeFileName,
   validateLaunchRequest,
 } from "./safety.ts";
@@ -248,4 +249,74 @@ test("assertSeparateRoots allows a save tree that does not exist yet", () => {
   assertSeparateRoots(
     roots(join(base, "rom-cache"), join(base, "not-created-yet")),
   );
+});
+
+test("a download origin is allowed only when it matches exactly", () => {
+  const policy = { origins: ["https://dl.dolphin-emu.org"] };
+  assert.ok(
+    isAllowedDownloadOrigin(
+      "https://dl.dolphin-emu.org/releases/a.dmg",
+      policy,
+    ),
+  );
+  assert.equal(
+    isAllowedDownloadOrigin("https://dolphin-emu.org/releases/a.dmg", policy),
+    false,
+  );
+  assert.equal(
+    isAllowedDownloadOrigin("https://evil.example.com/a.dmg", policy),
+    false,
+  );
+});
+
+test("a host suffix matches only on a dot boundary", () => {
+  // GitHub release assets answer from release-assets.githubusercontent.com, and
+  // that name has changed before, so the suffix is what is pinned. It must not
+  // let a lookalike through.
+  const policy = {
+    origins: ["https://github.com"],
+    hostSuffixes: ["githubusercontent.com"],
+  };
+  assert.ok(isAllowedDownloadOrigin("https://github.com/a/b/c.exe", policy));
+  assert.ok(
+    isAllowedDownloadOrigin(
+      "https://release-assets.githubusercontent.com/x?sig=y",
+      policy,
+    ),
+  );
+  assert.ok(isAllowedDownloadOrigin("https://githubusercontent.com/x", policy));
+  assert.equal(
+    isAllowedDownloadOrigin("https://evil-githubusercontent.com/x", policy),
+    false,
+  );
+  assert.equal(
+    isAllowedDownloadOrigin(
+      "https://githubusercontent.com.evil.test/x",
+      policy,
+    ),
+    false,
+  );
+});
+
+test("plain http never qualifies, whatever the host", () => {
+  const policy = {
+    origins: ["https://dl.dolphin-emu.org", "http://dl.dolphin-emu.org"],
+    hostSuffixes: ["githubusercontent.com"],
+  };
+  assert.equal(
+    isAllowedDownloadOrigin("http://dl.dolphin-emu.org/a.dmg", policy),
+    false,
+  );
+  assert.equal(
+    isAllowedDownloadOrigin("http://x.githubusercontent.com/a", policy),
+    false,
+  );
+});
+
+test("an unparseable or empty policy allows nothing", () => {
+  assert.equal(
+    isAllowedDownloadOrigin("not a url", { origins: ["https://x"] }),
+    false,
+  );
+  assert.equal(isAllowedDownloadOrigin("https://x/", {}), false);
 });

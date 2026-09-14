@@ -15,6 +15,27 @@
 // Kept free of Electron imports so every platform's selection can be checked
 // against the real payloads; the fetching lives in standalone-install.ts.
 
+import { type OriginPolicy } from "../safety.ts";
+
+/** Where each project publishes its releases, and where its bytes may come
+ *  from. Both indexes are the ones the projects' own download pages call. */
+export interface ReleaseSource {
+  id: string;
+  label: string;
+  indexUrl: string;
+  /** Shown when there is nothing this machine can be handed. */
+  downloadPage: string;
+  /** Origins the index may answer from. */
+  indexPolicy: OriginPolicy;
+  /** Origins the artifact may answer from, redirects included. */
+  artifactPolicy: OriginPolicy;
+  pick(
+    release: unknown,
+    platform?: NodeJS.Platform,
+    arch?: string,
+  ): ReleaseArtifact | null;
+}
+
 /** What the operating system will do when handed the file. */
 export type ArtifactKind = "installer" | "disk-image" | "flatpak" | "archive";
 
@@ -27,14 +48,20 @@ export interface ReleaseArtifact {
 }
 
 /**
- * Whether handing this to the OS actually installs anything.
+ * Whether opening this leaves the emulator somewhere the shell will find it.
  *
- * An archive does not: opening a .7z or a .tar.xz produces a folder somewhere,
- * which is not an install and leaves the user worse off than a download page
- * would. Dolphin publishes no Windows installer and PCSX2 no macOS disk image,
- * so this is false rather more often than one would like.
+ * An installer, a disk image and a Flatpak all end with the application in a
+ * standard location, which is exactly where detection looks. An archive does
+ * not: it unpacks a portable build wherever the user puts it, so it still works
+ * -- Windows 11 opens a .7z in Explorer and macOS gives a .tar.xz to Archive
+ * Utility -- but the user has to be told the extra step, because nothing will
+ * detect a folder we cannot guess.
+ *
+ * Not a reason to withhold the download. Dolphin publishes no Windows installer
+ * and PCSX2 no macOS disk image, and an archive someone can extract beats
+ * sending them away to find it themselves.
  */
-export function canHandOffToOs(kind: ArtifactKind): boolean {
+export function installsWhereDetectionLooks(kind: ArtifactKind): boolean {
   return kind !== "archive";
 }
 
@@ -179,7 +206,56 @@ export function pickPcsx2Artifact(
     });
   }
   if (candidates.length === 0) return null;
-  // Something installable wins; otherwise hand back the first so the caller can
-  // still name a version and point at the download page.
-  return candidates.find((one) => canHandOffToOs(one.kind)) ?? candidates[0]!;
+  // Something that installs itself wins -- the Flatpak over the AppImage on
+  // Linux, the installer over the portable .7z on Windows. Otherwise the first,
+  // so an archive is still offered rather than nothing.
+  return (
+    candidates.find((one) => installsWhereDetectionLooks(one.kind)) ??
+    candidates[0]!
+  );
+}
+
+export const RELEASE_SOURCES: Record<string, ReleaseSource> = {
+  dolphin: {
+    id: "dolphin",
+    label: "Dolphin",
+    // The beta channel, not dev: RetroAchievements wants a release build, and
+    // a nightly would change under the user daily.
+    indexUrl: "https://dolphin-emu.org/update/latest/beta",
+    downloadPage: "https://dolphin-emu.org/download/",
+    indexPolicy: { origins: ["https://dolphin-emu.org"] },
+    // Serves its own artifacts; no redirect to a CDN.
+    artifactPolicy: { origins: ["https://dl.dolphin-emu.org"] },
+    pick: pickDolphinArtifact,
+  },
+  pcsx2: {
+    id: "pcsx2",
+    label: "PCSX2",
+    indexUrl: "https://api.pcsx2.net/v1/latestReleasesAndPullRequests",
+    downloadPage: "https://pcsx2.net/downloads/",
+    indexPolicy: { origins: ["https://api.pcsx2.net"] },
+    // Release assets live on GitHub and redirect to its asset host, whose name
+    // has changed before, so the suffix is what is pinned rather than today's
+    // spelling of it.
+    artifactPolicy: {
+      origins: ["https://github.com"],
+      hostSuffixes: ["githubusercontent.com"],
+    },
+    pick: pickPcsx2Artifact,
+  },
+};
+
+/** PCSX2 wraps its releases in an envelope; unwrap before picking. */
+export function pcsx2LatestStable(index: unknown): unknown {
+  if (typeof index !== "object" || index === null) return null;
+  const releases = (index as { stableReleases?: unknown }).stableReleases;
+  if (typeof releases !== "object" || releases === null) return null;
+  const data = (releases as { data?: unknown }).data;
+  if (!Array.isArray(data)) return null;
+  return data[0] ?? null;
+}
+
+/** The shape each source's index arrives in, reduced to the release itself. */
+export function unwrapRelease(sourceId: string, index: unknown): unknown {
+  return sourceId === "pcsx2" ? pcsx2LatestStable(index) : index;
 }

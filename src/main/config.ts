@@ -23,6 +23,7 @@ function emptyConfig(): DesktopConfig {
     autoInstallCores: true,
     offerRetroArchInstall: true,
     useDetectedEmulators: true,
+    offerStandaloneInstall: true,
     preferredCores: {},
     emulatorsBasePath: null,
     emulators: [],
