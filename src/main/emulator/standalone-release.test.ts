@@ -209,7 +209,6 @@ test("RPCS3 publishes a portable build for every platform it has", () => {
   for (const [platform, arch, pattern, kind] of [
     ["win32", "x64", /_win64_msvc\.7z$/, "archive"],
     ["linux", "x64", /_linux64\.AppImage$/, "appimage"],
-    ["darwin", "arm64", /_macos\.7z$/, "archive"],
     ["darwin", "x64", /_macos\.7z$/, "archive"],
   ] as [NodeJS.Platform, string, RegExp, string][]) {
     const found = pickRpcs3Artifact(RPCS3, platform, arch);
@@ -233,6 +232,19 @@ test("a machine RPCS3 does not build for is offered nothing", () => {
   assert.equal(pickRpcs3Artifact(RPCS3, "linux", "arm64"), null);
   assert.equal(pickRpcs3Artifact(RPCS3, "win32", "ia32"), null);
   assert.equal(pickRpcs3Artifact(RPCS3, "freebsd", "x64"), null);
+});
+
+test("an Apple silicon Mac is not quietly handed the Intel build", () => {
+  // The endpoint's only macOS build is x86-64. RPCS3 publishes a native arm64
+  // one from its own repository, just not here, so the honest answer is the
+  // download page -- where both are offered -- rather than Rosetta chosen on
+  // the user's behalf for the one kind of program that cannot spare it.
+  assert.equal(pickRpcs3Artifact(RPCS3, "darwin", "arm64"), null);
+  // An Intel Mac still gets its build, which is the one this feed is for.
+  assert.match(
+    pickRpcs3Artifact(RPCS3, "darwin", "x64")?.fileName ?? "",
+    /_macos\.7z$/,
+  );
 });
 
 test("RPCS3's status envelope is unwrapped before picking", () => {

@@ -339,19 +339,26 @@ export function pickPcsx2Artifact(
  * The RPCS3 `latest_build` key this machine matches.
  *
  * The index carries exactly three builds, which is what the project's own
- * updater offers: a 64-bit Windows build, an x86-64 AppImage, and one macOS
- * archive. Anything outside that -- 32-bit Windows, an ARM Linux box -- gets no
- * key and is sent to the download page rather than handed a build it cannot
- * run.
+ * updater offers: a 64-bit Windows build, an x86-64 AppImage, and one x86-64
+ * macOS archive. Anything outside that gets no key and is sent to the download
+ * page rather than handed a build that is wrong for it.
  */
 function rpcs3Key(platform: NodeJS.Platform, arch: string): string | null {
   switch (platform) {
     case "darwin":
-      // The index publishes one macOS build, an x86-64 one, which is what
-      // Apple silicon runs under Rosetta. RPCS3 does ship a native arm64
-      // archive, but not through this endpoint, so it is not something to
-      // construct a URL for here.
-      return "mac";
+      // The one macOS build here is x86-64. RPCS3 does publish a native arm64
+      // one -- rpcs3-binaries-mac-arm64 carries the same build tags as the
+      // three repositories this endpoint points at -- but not through this
+      // endpoint, and guessing an asset URL for a release this cannot read is
+      // how a download breaks silently on the next naming change.
+      //
+      // So Apple silicon is sent to the download page, where both builds are
+      // offered and the native one is one click away. Handing it the Intel
+      // build instead would be choosing Rosetta on the user's behalf for a PS3
+      // emulator, which is the one kind of program that cannot spare the
+      // performance -- and it is a choice they cannot see being made, since
+      // what arrives is simply "RPCS3".
+      return arch === "arm64" ? null : "mac";
     case "win32":
       // arm64 Windows emulates x64, as it does for RetroArch. 32-bit cannot.
       return arch === "ia32" ? null : "windows";

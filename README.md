@@ -297,7 +297,7 @@ Coverage is uneven, and not in a way this shell can fix:
 | -------- | -------------------------------- | ------------------------------ | -------- |
 | PCSX2    | `.tar.xz`, opens Archive Utility | installer                      | Flatpak  |
 | Dolphin  | disk image                       | `.7z`, opens in Explorer on 11 | Flatpak  |
-| RPCS3    | `.7z`                            | `.7z`                          | AppImage |
+| RPCS3    | `.7z`, Intel only                | `.7z`                          | AppImage |
 | Cemu     | disk image                       | installer                      | AppImage |
 
 A macOS archive holds a `.app`, and a `.app` goes to Applications, which is the
@@ -314,10 +314,15 @@ A machine a project does not build for -- 32-bit Windows in every case, ARM
 Linux for all but Dolphin -- is sent to the download page rather than handed a
 binary it cannot run. That still waits: a package manager and a project's own
 installer both land where detection looks, so installing it from there starts
-your game without a second press of Play. Where only an x86-64 build exists it is offered and left
-to Rosetta, which is how an Apple silicon Mac gets RPCS3. Asked at most once per
-emulator per run; declining lets the launch carry on as it would have. Set
-`offerStandaloneInstall` to `false` to never ask.
+your game without a second press of Play.
+
+An Apple silicon Mac goes the same way for RPCS3. The endpoint its own updater
+calls carries one macOS build and that build is x86-64; the native arm64 one is
+published from a separate repository the feed does not mention, so rather than
+quietly hand a PS3 emulator to Rosetta, the offer opens the download page where
+both are listed. Asked at most once per emulator per run; declining lets the
+launch carry on as it would have. Set `offerStandaloneInstall` to `false` to
+never ask.
 
 Each version comes from the project's own release index: Dolphin's update
 channel, PCSX2's release API, the endpoint RPCS3's in-app updater calls, and for
