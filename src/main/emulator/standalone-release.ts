@@ -336,6 +336,43 @@ export function pickPcsx2Artifact(
 }
 
 /**
+ * The Apple silicon build of the same release.
+ *
+ * RPCS3's update endpoint names one macOS build and it is the Intel one, so
+ * Apple silicon would otherwise be handed a PS3 emulator to run under
+ * translation -- the one kind of program least able to spare it, chosen on the
+ * user's behalf and invisibly, since what arrives is simply "RPCS3".
+ *
+ * The native build is published from a repository of its own, from the same
+ * build tag, under the same name with `_aarch64` before the suffix. That makes
+ * it nameable rather than guessable: every part comes from the URL the endpoint
+ * just gave, and the result is checked against the binary repositories like any
+ * other artifact.
+ *
+ * A build that ever stops following this naming, or a commit whose arm64 build
+ * did not publish, ends at a 404 the offer already handles by sending the user
+ * to the download page -- where the native build is listed, which is where they
+ * would have been sent anyway.
+ */
+function appleSiliconBuild(intel: ReleaseArtifact): ReleaseArtifact | null {
+  const MACOS_SUFFIX = "_macos.7z";
+  if (!intel.fileName.endsWith(MACOS_SUFFIX)) return null;
+  const rename = (text: string): string =>
+    text.slice(0, -MACOS_SUFFIX.length) + "_macos_aarch64.7z";
+  const url = rename(
+    intel.url.replace(
+      "/RPCS3/rpcs3-binaries-mac/",
+      "/RPCS3/rpcs3-binaries-mac-arm64/",
+    ),
+  );
+  // The rename has to have moved it to the arm64 repository; otherwise this is
+  // a URL of some shape this was not written for, and the Intel build is not
+  // the answer to that.
+  if (!onGithubRelease(url, ["RPCS3/rpcs3-binaries-mac-arm64"])) return null;
+  return { ...intel, url, fileName: rename(intel.fileName) };
+}
+
+/**
  * The RPCS3 `latest_build` key this machine matches.
  *
  * The index carries exactly three builds, which is what the project's own
@@ -346,19 +383,10 @@ export function pickPcsx2Artifact(
 function rpcs3Key(platform: NodeJS.Platform, arch: string): string | null {
   switch (platform) {
     case "darwin":
-      // The one macOS build here is x86-64. RPCS3 does publish a native arm64
-      // one -- rpcs3-binaries-mac-arm64 carries the same build tags as the
-      // three repositories this endpoint points at -- but not through this
-      // endpoint, and guessing an asset URL for a release this cannot read is
-      // how a download breaks silently on the next naming change.
-      //
-      // So Apple silicon is sent to the download page, where both builds are
-      // offered and the native one is one click away. Handing it the Intel
-      // build instead would be choosing Rosetta on the user's behalf for a PS3
-      // emulator, which is the one kind of program that cannot spare the
-      // performance -- and it is a choice they cannot see being made, since
-      // what arrives is simply "RPCS3".
-      return arch === "arm64" ? null : "mac";
+      // The only macOS build here is x86-64. Apple silicon takes it as the
+      // starting point and is handed its own build instead -- see
+      // appleSiliconBuild.
+      return "mac";
     case "win32":
       // arm64 Windows emulates x64, as it does for RetroArch. 32-bit cannot.
       return arch === "ia32" ? null : "windows";
@@ -375,6 +403,9 @@ const RPCS3_BINARY_REPOSITORIES = [
   "RPCS3/rpcs3-binaries-win",
   "RPCS3/rpcs3-binaries-linux",
   "RPCS3/rpcs3-binaries-mac",
+  // The Apple silicon build, which the update endpoint does not mention. Named
+  // here so a derived URL is checked against an allowlist like any other.
+  "RPCS3/rpcs3-binaries-mac-arm64",
 ];
 
 /**
@@ -403,12 +434,19 @@ export function pickRpcs3Artifact(
   if (!fileName) return null;
   const kind = kindOf(fileName);
   if (!kind) return null;
-  return {
+  const artifact: ReleaseArtifact = {
     url: download,
     fileName,
     kind,
     version: typeof version === "string" ? version : "latest",
   };
+  // Apple silicon gets its own build of this same release, or nothing: falling
+  // back to what the endpoint named would be handing it the Intel one, which is
+  // the thing this exists to stop.
+  if (platform === "darwin" && arch === "arm64") {
+    return appleSiliconBuild(artifact);
+  }
+  return artifact;
 }
 
 /**

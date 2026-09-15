@@ -223,6 +223,7 @@ test("RPCS3 publishes a portable build for every platform it has", () => {
     ["win32", "x64", /_win64_msvc\.7z$/, "archive"],
     ["linux", "x64", /_linux64\.AppImage$/, "appimage"],
     ["darwin", "x64", /_macos\.7z$/, "archive"],
+    ["darwin", "arm64", /_macos_aarch64\.7z$/, "archive"],
   ] as [NodeJS.Platform, string, RegExp, string][]) {
     const found = pickRpcs3Artifact(RPCS3, platform, arch);
     assert.match(found?.fileName ?? "", pattern, platform);
@@ -247,16 +248,53 @@ test("a machine RPCS3 does not build for is offered nothing", () => {
   assert.equal(pickRpcs3Artifact(RPCS3, "freebsd", "x64"), null);
 });
 
-test("an Apple silicon Mac is not quietly handed the Intel build", () => {
-  // The endpoint's only macOS build is x86-64. RPCS3 publishes a native arm64
-  // one from its own repository, just not here, so the honest answer is the
-  // download page -- where both are offered -- rather than Rosetta chosen on
-  // the user's behalf for the one kind of program that cannot spare it.
-  assert.equal(pickRpcs3Artifact(RPCS3, "darwin", "arm64"), null);
-  // An Intel Mac still gets its build, which is the one this feed is for.
+test("an Apple silicon Mac gets its own build, not the Intel one", () => {
+  // The endpoint names one macOS build and it is x86-64, so a Mac would
+  // otherwise be handed a PS3 emulator to run under translation without ever
+  // being told. The native build is the same release from a repository of its
+  // own, named the same way with _aarch64 before the suffix.
+  const arm = pickRpcs3Artifact(RPCS3, "darwin", "arm64");
+  assert.equal(arm?.fileName, "rpcs3-v0.0.42-20004-0646d367_macos_aarch64.7z");
+  assert.equal(
+    arm?.url,
+    "https://github.com/RPCS3/rpcs3-binaries-mac-arm64/releases/download/build-0646d36708cee4ea33690a6b8c4ec5a94e634914/rpcs3-v0.0.42-20004-0646d367_macos_aarch64.7z",
+  );
+  // Same release, same kind: only the architecture changed.
+  const intel = pickRpcs3Artifact(RPCS3, "darwin", "x64");
+  assert.equal(arm?.version, intel?.version);
+  assert.equal(arm?.kind, "archive");
+  assert.equal(intel?.fileName, "rpcs3-v0.0.42-20004-0646d367_macos.7z");
+});
+
+test("a derived Apple silicon URL that lands anywhere else is refused", () => {
+  // The derivation only ever renames what the endpoint gave, so the check that
+  // it ended up in RPCS3's own arm64 repository is what stops a redirected or
+  // reshaped index from sending the download elsewhere. Falling back to the
+  // Intel build here would defeat the point, so the answer is nothing, and the
+  // offer opens the download page.
+  const elsewhere = {
+    version: "0.0.42-20004",
+    mac: {
+      download:
+        "https://github.com/someone/else/releases/download/build-1/rpcs3_macos.7z",
+    },
+  };
+  assert.equal(pickRpcs3Artifact(elsewhere, "darwin", "arm64"), null);
+
+  // A macOS asset that is not named the way every build so far has been is not
+  // something to guess a second URL from.
+  const renamed = {
+    version: "0.0.42-20004",
+    mac: {
+      download:
+        "https://github.com/RPCS3/rpcs3-binaries-mac/releases/download/build-1/rpcs3-macos-universal.7z",
+    },
+  };
+  assert.equal(pickRpcs3Artifact(renamed, "darwin", "arm64"), null);
+  // The Intel Mac is unaffected: that build is exactly what it wanted.
   assert.match(
-    pickRpcs3Artifact(RPCS3, "darwin", "x64")?.fileName ?? "",
-    /_macos\.7z$/,
+    pickRpcs3Artifact(renamed, "darwin", "x64")?.fileName ?? "",
+    /universal\.7z$/,
   );
 });
 

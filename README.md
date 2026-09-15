@@ -297,7 +297,7 @@ Coverage is uneven, and not in a way this shell can fix:
 | -------- | -------------------------------- | ------------------------------ | -------- |
 | PCSX2    | `.tar.xz`, opens Archive Utility | installer                      | Flatpak  |
 | Dolphin  | disk image                       | `.7z`, opens in Explorer on 11 | Flatpak  |
-| RPCS3    | `.7z`, Intel only                | `.7z`                          | AppImage |
+| RPCS3    | `.7z`, one per architecture      | `.7z`                          | AppImage |
 | Cemu     | disk image                       | installer                      | AppImage |
 
 A macOS archive holds a `.app`, and a `.app` goes to Applications, which is the
@@ -316,13 +316,19 @@ binary it cannot run. That still waits: a package manager and a project's own
 installer both land where detection looks, so installing it from there starts
 your game without a second press of Play.
 
-An Apple silicon Mac goes the same way for RPCS3. The endpoint its own updater
-calls carries one macOS build and that build is x86-64; the native arm64 one is
-published from a separate repository the feed does not mention, so rather than
-quietly hand a PS3 emulator to Rosetta, the offer opens the download page where
-both are listed. Asked at most once per emulator per run; declining lets the
-launch carry on as it would have. Set `offerStandaloneInstall` to `false` to
-never ask.
+RPCS3 on an Apple silicon Mac is the one build that is not simply read out of
+an index. The endpoint RPCS3's own updater calls names a single macOS build and
+that build is x86-64, so following it literally would hand a PS3 emulator to
+Rosetta without telling anyone -- the one kind of program least able to spare
+the performance. The native build is the same release from a repository of its
+own, `rpcs3-binaries-mac-arm64`, under the same name with `_aarch64` before the
+suffix, so it is named from the URL the endpoint just gave rather than guessed
+at, and checked against RPCS3's own repositories like any other download. If a
+release ever stops following that naming the download 404s and the offer falls
+back to the download page, where the native build is listed.
+
+Asked at most once per emulator per run; declining lets the launch carry on as
+it would have. Set `offerStandaloneInstall` to `false` to never ask.
 
 Each version comes from the project's own release index: Dolphin's update
 channel, PCSX2's release API, the endpoint RPCS3's in-app updater calls, and for
