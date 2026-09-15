@@ -20,6 +20,7 @@ import {
   resolveBiosPaths,
   retroarchSystemConfig,
 } from "./paths.ts";
+import { oneAtATime } from "./queue.ts";
 import {
   type LocalFirmware,
   platformIdFor,
@@ -137,7 +138,7 @@ export interface FirmwareMirror extends BiosPaths {
  * its presence on disk is what tells the launch whether pointing RetroArch's
  * system_directory here would mean anything.
  */
-export function syncPlatformFirmware(options: {
+interface SyncOptions {
   config: DesktopConfig;
   session: Session;
   platformSlug: string;
@@ -148,67 +149,23 @@ export function syncPlatformFirmware(options: {
     received: number,
     total: number | null,
   ) => void;
-}): Promise<FirmwareMirror | null> {
-  const paths = resolveBiosPaths(options.config.biosPath, options.platformSlug);
-  if (!paths) return Promise.resolve(null);
-  return serialised(paths.directory, () => runSync(paths, options));
 }
 
-/**
- * One sync per platform directory at a time.
- *
- * Firmware is shared by every game on a platform, so two launches of two games
- * can ask for the same mirror at once -- pressing Play on a second PS1 game
- * while the first is still starting is an ordinary thing to do. Left to run
- * side by side they would write the same temporary file, interleave their
- * bytes, and each rename it out from under the other.
- *
- * A second caller therefore waits for the first and takes its result, which is
- * also the right answer rather than merely a safe one: the mirror it wanted is
- * exactly what the first call is producing. One process is enough to reason
- * about because the app holds a single-instance lock.
- */
-const running = new Map<string, Promise<FirmwareMirror | null>>();
-
-function serialised(
-  key: string,
-  work: () => Promise<FirmwareMirror | null>,
+export function syncPlatformFirmware(
+  options: SyncOptions,
 ): Promise<FirmwareMirror | null> {
-  const queued = (running.get(key) ?? Promise.resolve(null))
-    // The previous sync's failure is its own caller's business, and must not
-    // stop this one from running.
-    .catch(() => null)
-    .then(work);
-  running.set(key, queued);
-  // Cleared only if this is still the newest, so a third caller queued behind
-  // it keeps waiting on the right promise.
-  void queued
-    .catch(() => null)
-    .finally(() => {
-      if (running.get(key) === queued) running.delete(key);
-    });
-  return queued;
+  const paths = resolveBiosPaths(options.config.biosPath, options.platformSlug);
+  if (!paths) return Promise.resolve(null);
+  // Firmware belongs to the platform, so two launches of two games can ask for
+  // this at once; the second takes the first's answer instead of racing it.
+  return oneAtATime(paths.directory, options.signal, () =>
+    runSync(paths, options),
+  );
 }
 
 async function runSync(
   paths: BiosPaths,
-  {
-    config,
-    session,
-    platformSlug,
-    signal,
-    onProgress,
-  }: {
-    config: DesktopConfig;
-    session: Session;
-    platformSlug: string;
-    signal: AbortSignal;
-    onProgress?: (
-      fileName: string,
-      received: number,
-      total: number | null,
-    ) => void;
-  },
+  { config, session, platformSlug, signal, onProgress }: SyncOptions,
 ): Promise<FirmwareMirror | null> {
   const { serverUrl, useRommFirmware } = config;
   if (!useRommFirmware || !serverUrl) {

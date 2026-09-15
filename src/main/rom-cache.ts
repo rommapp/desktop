@@ -70,9 +70,36 @@ export function downloadFromServer({
       method: "GET",
     });
 
+    // Opened once the response arrives, and closed before this promise settles
+    // either way. Every caller deletes the file it was writing when a download
+    // fails, and on Windows that removal fails while a handle is still open.
+    let file: ReturnType<typeof createWriteStream> | null = null;
+    let settled = false;
+
     const fail = (error: Error) => {
+      // A failed transfer can be reported twice -- an aborted request emits its
+      // own error, and a cancel during a write reaches both listeners -- and
+      // the second report would otherwise close a file the next attempt had
+      // already opened.
+      if (settled) return;
+      settled = true;
       request.abort();
-      reject(error);
+      const stream = file;
+      if (!stream || stream.closed) {
+        reject(error);
+        return;
+      }
+      // Rejected only once the descriptor is gone, so the caller's cleanup runs
+      // against a file nothing is holding. Buffered bytes are discarded rather
+      // than flushed: this file is about to be deleted.
+      stream.once("close", () => reject(error));
+      stream.destroy();
+    };
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
     };
 
     signal.addEventListener("abort", () =>
@@ -80,7 +107,7 @@ export function downloadFromServer({
     );
 
     request.on("error", (error) =>
-      reject(new LaunchError("download-failed", error.message)),
+      fail(new LaunchError("download-failed", error.message)),
     );
 
     request.on("response", (incoming) => {
@@ -111,10 +138,11 @@ export function downloadFromServer({
       }
       let received = 0;
 
-      const file = createWriteStream(destination, {
+      const writing = createWriteStream(destination, {
         highWaterMark: WRITE_BUFFER_BYTES,
       });
-      file.on("error", (error) => fail(error));
+      file = writing;
+      writing.on("error", (error) => fail(error));
 
       response.on("data", (chunk: Buffer) => {
         received += chunk.length;
@@ -132,9 +160,9 @@ export function downloadFromServer({
         }
         // A ROM can be several GB, so respect the write stream's backpressure
         // instead of buffering the whole transfer in memory.
-        if (!file.write(chunk)) {
+        if (!writing.write(chunk)) {
           response.pause();
-          file.once("drain", () => response.resume());
+          writing.once("drain", () => response.resume());
         }
         onProgress(received, Number.isFinite(total) ? total : null);
       });
@@ -142,7 +170,8 @@ export function downloadFromServer({
         fail(new LaunchError("download-failed", error.message)),
       );
       response.on("end", () => {
-        file.end(() => resolve());
+        if (settled) return;
+        writing.end(() => finish());
       });
     });
 
