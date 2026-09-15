@@ -33,7 +33,7 @@ import {
   RELEASE_SOURCES,
   type ReleaseArtifact,
   type ReleaseSource,
-  installsWhereDetectionLooks,
+  mayAppearWhereDetectionLooks,
   unwrapRelease,
 } from "./standalone-release.ts";
 
@@ -122,13 +122,14 @@ export interface InstallOffer {
   /** True when something was downloaded and handed over, so the caller should
    *  stop rather than carry on with a launch that cannot work yet. */
   handedOff: boolean;
-  /** True when what was handed over installs where detection looks, so waiting
-   *  for it to appear will eventually succeed. False for a portable archive or
-   *  an AppImage, which land somewhere only the user knows. */
-  detectable: boolean;
+  /** True when the emulator may still turn up where detection looks once the
+   *  user is done, so waiting for it is worth doing. False only for a portable
+   *  archive or an AppImage, which are a file the user keeps wherever they
+   *  like. */
+  mayAppear: boolean;
 }
 
-const DECLINED: InstallOffer = { handedOff: false, detectable: false };
+const DECLINED: InstallOffer = { handedOff: false, mayAppear: false };
 
 /**
  * Ask whether to fetch a standalone emulator, and hand it over if so.
@@ -174,17 +175,19 @@ async function runOffer(
     message: `This game needs ${source.label}, which RomM Desktop could not find on this machine.`,
     detail: artifact
       ? `${source.label} ${artifact.version} can be downloaded from the project directly. ${whatHappensNext(artifact, source.label)}\n\nAlready have it somewhere unusual? Point at it under "emulators" in the settings instead.`
-      : `Nothing could be fetched automatically for this system. The download page has the options.\n\nAlready have it somewhere unusual? Point at it under "emulators" in the settings instead.`,
+      : `Nothing could be fetched automatically for this system. The download page has the options; install it from there and your game starts by itself.\n\nAlready have it somewhere unusual? Point at it under "emulators" in the settings instead.`,
   });
 
   if (response !== 1) return DECLINED;
   if (!artifact) {
     void shell.openExternal(source.downloadPage);
-    // Nothing was fetched, so there is nothing to wait for appearing.
-    return { handedOff: true, detectable: false };
+    // Nothing was fetched, but the user is off to install it by whatever means
+    // that page offers -- a package manager, the project's own installer --
+    // and both of those land where detection looks. So this waits like any
+    // other hand-off rather than failing the launch in front of someone who is
+    // in the middle of doing exactly what was asked of them.
+    return { handedOff: true, mayAppear: true };
   }
-
-  const detectable = installsWhereDetectionLooks(artifact.kind);
   try {
     const shouldReport = createProgressGate();
     const file = await downloadToFile({
@@ -218,15 +221,20 @@ async function runOffer(
       // failing a launch over.
       await chmod(file, 0o755).catch(() => {});
       shell.showItemInFolder(file);
-      return { handedOff: true, detectable: false };
+      return { handedOff: true, mayAppear: false };
     }
 
+    const mayAppear = mayAppearWhereDetectionLooks(artifact);
     const failure = await shell.openPath(file);
     // An archive has no handler on Windows 10, and revealing it is a better
     // answer than silence. Worth doing for the portable case anyway, since the
     // user has to go and find what it unpacked.
-    if (failure || !detectable) shell.showItemInFolder(file);
-    return { handedOff: true, detectable: detectable && !failure };
+    if (failure || !mayAppear) shell.showItemInFolder(file);
+    // A failed openPath does not change where an installer ends up. It was
+    // revealed instead of opened, so the user runs it from their file manager
+    // and it installs itself in the same place it would have -- which is a
+    // reason to keep waiting, not to give up on their behalf.
+    return { handedOff: true, mayAppear };
   } catch (error) {
     clearTaskbarProgress(parent);
     // Neither of these handed anything over, and saying they did would have the

@@ -8,8 +8,11 @@ import {
   RPCS3_LATEST,
 } from "../../test/release-fixtures.ts";
 import {
+  type ArtifactKind,
   RELEASE_SOURCES,
+  type ReleaseArtifact,
   installsWhereDetectionLooks,
+  mayAppearWhereDetectionLooks,
   pickCemuArtifact,
   pickDolphinArtifact,
   pickPcsx2Artifact,
@@ -533,5 +536,32 @@ test("a malformed PCSX2 envelope unwraps to nothing rather than throwing", () =>
       pickPcsx2Artifact(unwrapRelease("pcsx2", junk), "win32", "x64"),
       null,
     );
+  }
+});
+
+test("nothing to fetch is still worth waiting for", () => {
+  // The case this exists for. A system with no artifact sends the user to the
+  // download page, and what they do there -- a package manager, the project's
+  // own installer -- lands where detection looks, so the launch waits and
+  // their game starts by itself rather than failing in front of someone who is
+  // installing the emulator it asked for.
+  assert.equal(mayAppearWhereDetectionLooks(null), true);
+});
+
+test("only a file the user keeps is beyond waiting for", () => {
+  const artifact = (kind: ArtifactKind): ReleaseArtifact => ({
+    url: "https://example.invalid/x",
+    fileName: "x",
+    kind,
+    version: "1",
+  });
+
+  for (const kind of ["installer", "disk-image", "flatpak"] as ArtifactKind[]) {
+    assert.equal(mayAppearWhereDetectionLooks(artifact(kind)), true, kind);
+  }
+  // An AppImage is the emulator itself and an archive unpacks to one, both
+  // wherever the user puts them. No amount of polling finds either.
+  for (const kind of ["appimage", "archive"] as ArtifactKind[]) {
+    assert.equal(mayAppearWhereDetectionLooks(artifact(kind)), false, kind);
   }
 });

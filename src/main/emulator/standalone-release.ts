@@ -78,6 +78,26 @@ export function installsWhereDetectionLooks(kind: ArtifactKind): boolean {
   return kind !== "archive" && kind !== "appimage";
 }
 
+/**
+ * Whether waiting for this to turn up is worth doing.
+ *
+ * Not the same question as the one above, and the difference is the whole
+ * reason both exist. That one asks what *this file* will do when opened; this
+ * one asks whether the emulator has any chance of appearing where detection
+ * looks once the user is finished -- and a user who was handed nothing still
+ * usually installs the thing, through a package manager or the project's own
+ * installer, both of which land exactly there.
+ *
+ * So the only answer of no is the one where the emulator is a file the user
+ * keeps somewhere of their own choosing. Waiting on that would be half an hour
+ * of pretending; waiting on the others ends with the game starting by itself.
+ */
+export function mayAppearWhereDetectionLooks(
+  artifact: ReleaseArtifact | null,
+): boolean {
+  return artifact === null || installsWhereDetectionLooks(artifact.kind);
+}
+
 /** Archive formats the shell is willing to hand to a file manager. */
 const ARCHIVE_SUFFIXES = [
   ".7z",

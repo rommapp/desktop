@@ -284,10 +284,12 @@ When there is nothing to find, the platform is still reported as launchable --
 naming the emulator it would set up rather than the one it has -- and pressing
 Play offers to fetch it from the project. Reporting the plain truth there would
 hide the button, and the button is the only thing that raises the offer. The
-file is handed to the operating system exactly as RetroArch's installer is. Where
-what it fetched installs itself the launch then waits: install it the way its
-project intends and the game starts on its own once it appears. Cancelling the
-download stops the wait, and so does closing the window.
+file is handed to the operating system exactly as RetroArch's installer is. The
+launch then waits: install it the way its project intends and the game starts on
+its own once it appears, whether what was fetched installs itself or you went and
+installed it from the download page. The wait only ends the launch early where
+the emulator is a file you keep somewhere of your own choosing, which nothing can
+detect. Cancelling the download stops the wait, and so does closing the window.
 
 Coverage is uneven, and not in a way this shell can fix:
 
@@ -308,7 +310,9 @@ you to point at.
 
 A machine a project does not build for -- 32-bit Windows in every case, ARM
 Linux for all but Dolphin -- is sent to the download page rather than handed a
-binary it cannot run. Where only an x86-64 build exists it is offered and left
+binary it cannot run. That still waits: a package manager and a project's own
+installer both land where detection looks, so installing it from there starts
+your game without a second press of Play. Where only an x86-64 build exists it is offered and left
 to Rosetta, which is how an Apple silicon Mac gets RPCS3. Asked at most once per
 emulator per run; declining lets the launch carry on as it would have. Set
 `offerStandaloneInstall` to `false` to never ask.
