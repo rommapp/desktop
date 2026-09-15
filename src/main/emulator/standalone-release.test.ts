@@ -108,6 +108,19 @@ test("PCSX2 publishes only an archive for macOS", () => {
   assert.equal(installsWhereDetectionLooks(found!.kind), false);
 });
 
+test("PCSX2 publishes one macOS build, so neither arch is choosing", () => {
+  // Worth pinning rather than assuming. Unlike Cemu, which builds a disk image
+  // per architecture, the MacOS key here holds a single asset whose name says
+  // nothing about an architecture -- so an Apple silicon Mac and an Intel one
+  // are handed the same file because that is the only file there is, not
+  // because the wrong one was picked for it.
+  const arm = pickPcsx2Artifact(PCSX2, "darwin", "arm64");
+  const intel = pickPcsx2Artifact(PCSX2, "darwin", "x64");
+  assert.ok(arm);
+  assert.deepEqual(arm, intel);
+  assert.doesNotMatch(arm.fileName, /arm64|aarch64|x86_64|universal/i);
+});
+
 test("32-bit Windows is offered no PCSX2 at all", () => {
   // Only x64 is published, and handing an x64 build to a 32-bit machine would
   // fail after the download rather than before it.
