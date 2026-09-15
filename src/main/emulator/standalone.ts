@@ -32,6 +32,8 @@ export interface StandaloneEmulator {
   platformSlugs: string[];
   /** Argument template, in the same form an emulators entry takes. */
   args: string[];
+  /** Whether it boots an .m3u playlist, for a multi-disc game. */
+  playlist: boolean;
   /** Where it lands on each platform, most likely first. */
   paths(
     platform: NodeJS.Platform,
@@ -144,8 +146,11 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
     id: "pcsx2",
     label: "PCSX2",
     platformSlugs: ["ps2"],
-    // -batch skips the GUI and exits when the game stops, which is what the
-    // shell wants: the window comes back rather than a launcher being left open.
+    // PCSX2 reads no playlist: the request for one was closed as not planned
+    // and automatic swapping is still open, so changing disc is by hand.
+    playlist: false,
+    // -batch exits when the game stops, so the shell's window comes back. Never
+    // -nogui, which hides the menu bar a multi-disc game changes disc from.
     args: ["-batch", "{rom}"],
     paths(platform, home, env, readDir) {
       switch (platform) {
@@ -177,6 +182,7 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
     label: "Dolphin",
     // One emulator, two platforms, so both slugs get a row.
     platformSlugs: ["ngc", "wii"],
+    playlist: true,
     // -b exits when the game stops; -e names the file to run.
     args: ["-b", "-e", "{rom}"],
     paths(platform, home, env, readDir) {
@@ -206,6 +212,7 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
     id: "rpcs3",
     label: "RPCS3",
     platformSlugs: ["ps3"],
+    playlist: false,
     // --no-gui boots what it is handed and quits when the game stops, so the
     // shell's window comes back instead of a game list being left behind.
     args: ["--no-gui", "{rom}"],
@@ -236,6 +243,7 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
     id: "cemu",
     label: "Cemu",
     platformSlugs: ["wiiu"],
+    playlist: false,
     // -g names the game to launch. Cemu has no flag that closes it when the
     // game stops, so unlike the other three its window stays until the user
     // closes it -- the launch is still tracked the same way, by the process.
@@ -314,6 +322,7 @@ export function toEmulatorMappings(
       command,
       args: emulator.args,
       label: emulator.label,
+      playlist: emulator.playlist,
     })),
   );
 }

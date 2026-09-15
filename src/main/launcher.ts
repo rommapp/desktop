@@ -29,10 +29,12 @@ import {
 import {
   applyCorePreference,
   emulatorLabel,
+  emulatorReadsPlaylist,
   findPreferredCores,
   hasPlatformSpecificEmulator,
   resolveLaunch,
 } from "./emulator/resolve.ts";
+import { syncDiscSet } from "./discs/sync.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
 import { resolveSavePaths } from "./saves/paths.ts";
@@ -535,6 +537,49 @@ export class Launcher {
       // landing during it is only observed here.
       throwIfCancelled(controller.signal);
 
+      // A disc set is fetched as the individual discs the server holds,
+      // because the archive the content endpoint would otherwise hand over is
+      // not something any emulator can boot a multi-disc game out of. Returns
+      // null for everything else, including a server that would not answer, and
+      // the ordinary download below runs.
+      // One gate and one meter per file, not per set: both read the byte count
+      // of the transfer in front of them, and the next file starting over at
+      // zero would otherwise measure as a transfer running backwards.
+      let staging = 0;
+      let shouldReportFile = createProgressGate();
+      let fileRateOf = createRateMeter();
+      const discs = await syncDiscSet({
+        config,
+        session,
+        romId: request.romId,
+        signal: controller.signal,
+        playlist: emulatorReadsPlaylist(config, request.platformSlug),
+        onProgress: (fileName, received, total, index, count) => {
+          if (index !== staging) {
+            staging = index;
+            shouldReportFile = createProgressGate();
+            fileRateOf = createRateMeter();
+          }
+          const progress = total ? received / total : undefined;
+          if (!shouldReportFile(progress)) return;
+          this.emit({
+            romId: request.romId,
+            status: "downloading",
+            stage: "rom",
+            // Named, and placed in the set, so four discs read as four
+            // transfers rather than one that keeps restarting at zero.
+            file: fileName,
+            fileIndex: index,
+            fileCount: count,
+            progress,
+            received,
+            total: total ?? undefined,
+            bytesPerSecond: fileRateOf(received),
+          });
+        },
+      });
+      throwIfCancelled(controller.signal);
+
       // When the server runs on this machine the file is already on local disk,
       // so copying it into the cache would mean holding a second multi-gigabyte
       // copy and waiting for a transfer that never needed to happen.
@@ -545,7 +590,9 @@ export class Launcher {
       );
 
       let romPath: string;
-      if (inLibrary) {
+      if (discs) {
+        romPath = discs;
+      } else if (inLibrary) {
         romPath = inLibrary;
       } else {
         this.emit({

@@ -126,9 +126,10 @@ export function spikeScript(): string {
         const left = eta((s.total - s.received) / s.bytesPerSecond);
         if (left) parts.push(left + " left");
       }
-      // A core install, an emulator install and a firmware sync are all
-      // reported as downloads, and all are worth naming: the wait is otherwise
-      // unexplained. The emulator stage covers two different waits -- fetching
+      // A core install, an emulator install, a firmware sync and each file of a
+      // multi-disc set are all reported as downloads, and all are worth naming:
+      // the wait is otherwise unexplained, and a disc set would read as one
+      // transfer restarting at zero. The emulator stage covers two different waits -- fetching
       // the file, then the user installing it -- and the missing byte count is
       // what tells them apart, because nothing here can see inside their
       // installer.
@@ -141,6 +142,8 @@ export function spikeScript(): string {
           ? (s.received === undefined
             ? "Waiting for " + named + " to be installed. Your game starts by itself"
             : "Downloading " + named)
+        : s.file
+          ? "Downloading " + s.file + " (" + s.fileIndex + " of " + s.fileCount + ")"
         : "Downloading";
       say(what + pct + "..."
         + (parts.length ? "<br><span style='opacity:.65'>" + parts.join(" &middot; ") + "</span>" : ""));
