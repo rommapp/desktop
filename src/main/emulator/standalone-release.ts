@@ -40,7 +40,12 @@ export interface ReleaseSource {
 }
 
 /** What the operating system will do when handed the file. */
-export type ArtifactKind = "installer" | "disk-image" | "flatpak" | "archive";
+export type ArtifactKind =
+  | "installer"
+  | "disk-image"
+  | "flatpak"
+  | "archive"
+  | "appimage";
 
 export interface ReleaseArtifact {
   url: string;
@@ -60,13 +65,17 @@ export interface ReleaseArtifact {
  * Utility -- but the user has to be told the extra step, because nothing will
  * detect a folder we cannot guess.
  *
+ * An AppImage does not either, for a different reason: it is the emulator
+ * itself rather than something that unpacks to one, so it lands wherever the
+ * user keeps it and is theirs to point at.
+ *
  * Not a reason to withhold the download. Dolphin publishes no Windows
  * installer, PCSX2 no macOS disk image, and RPCS3 nothing but archives on every
  * platform it builds for -- an archive someone can extract beats sending them
  * away to find it themselves.
  */
 export function installsWhereDetectionLooks(kind: ArtifactKind): boolean {
-  return kind !== "archive";
+  return kind !== "archive" && kind !== "appimage";
 }
 
 /** Archive formats the shell is willing to hand to a file manager. */
@@ -77,7 +86,6 @@ const ARCHIVE_SUFFIXES = [
   ".tar.gz",
   ".tar.bz2",
   ".tar.zst",
-  ".AppImage",
 ];
 
 /**
@@ -92,6 +100,10 @@ const ARCHIVE_SUFFIXES = [
 function kindOf(fileName: string): ArtifactKind | null {
   if (fileName.endsWith(".dmg")) return "disk-image";
   if (fileName.endsWith(".flatpak")) return "flatpak";
+  // Its own kind rather than an archive: there is nothing inside it to extract,
+  // and unlike every other kind here it has to be made executable before it
+  // will run at all. RPCS3 and Cemu publish one as their only Linux build.
+  if (fileName.endsWith(".AppImage")) return "appimage";
   // Only an actual installer counts; a bare .exe could be anything. Matched on
   // a word boundary, because "uninstaller.exe" ends with "installer.exe" and
   // running one of those is the opposite of what was asked for.
@@ -331,9 +343,8 @@ const RPCS3_BINARY_REPOSITORIES = [
  *
  * One build per platform, each an object with its own download URL, so there is
  * nothing to choose between: the platform key either has a usable asset or it
- * does not. A `return_code` other than 0 means the endpoint declined to answer,
- * which arrives here as a missing or empty build and is handled by the same
- * shape checks as any other malformed response.
+ * does not. Whether the endpoint answered at all is rpcs3LatestBuild's
+ * question, and it is asked before this sees anything.
  */
 export function pickRpcs3Artifact(
   release: unknown,
@@ -506,10 +517,28 @@ export function pcsx2LatestStable(index: unknown): unknown {
   return data[0] ?? null;
 }
 
-/** RPCS3 answers with a status code and the build beside it. */
+/**
+ * RPCS3 answers with a status code and the build beside it.
+ *
+ * A negative code is the error case, and the build alongside one is not to be
+ * trusted: RPCS3's own updater bails on anything below zero, which covers
+ * maintenance mode, an illegal search, and -- as the default when the key is
+ * missing entirely -- a response that carries no code at all.
+ *
+ * Zero and above are both answers. Their own client reads 0 as "you are
+ * already on this build" and anything higher as "there is a newer one", and
+ * either way `latest_build` is the build to fetch. This shell has no installed
+ * version to compare against, so it asks without a commit hash and is told 0;
+ * demanding exactly that would break the offer the day the endpoint answers 1.
+ */
 export function rpcs3LatestBuild(index: unknown): unknown {
   if (typeof index !== "object" || index === null) return null;
-  return (index as { latest_build?: unknown }).latest_build ?? null;
+  const { return_code: code, latest_build: build } = index as {
+    return_code?: unknown;
+    latest_build?: unknown;
+  };
+  if (typeof code !== "number" || !(code >= 0)) return null;
+  return build ?? null;
 }
 
 /** The shape each source's index arrives in, reduced to the release itself. */

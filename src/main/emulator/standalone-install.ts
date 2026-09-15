@@ -11,8 +11,15 @@
 // goes to the Flatpak installer, and an archive opens in Explorer or Archive
 // Utility. The last of those leaves a portable build wherever the user puts it,
 // which detection cannot guess, so it says so rather than pretending otherwise.
+//
+// An AppImage is the one thing not handed over at all. It is the emulator
+// itself, so opening it would mean this shell running a binary it has just
+// downloaded -- the one thing every other kind here avoids by letting the OS
+// ask. It is made executable, revealed in the file manager, and left for the
+// user to start.
 
 import { type BrowserWindow, app, dialog, net, shell } from "electron";
+import { chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { LaunchError } from "../../shared/types.ts";
 import { downloadToFile } from "../download.ts";
@@ -87,10 +94,11 @@ function ask(
 /**
  * What the user will have to do once the file opens.
  *
- * Three of the four end with the emulator where detection looks, so the launch
- * waits and starts the game itself -- saying so is the difference between a
- * hand-off that feels finished and one that reads as a chore. The fourth cannot
- * promise that, and says what it does need instead.
+ * An installer, a disk image and a Flatpak all end with the emulator where
+ * detection looks, so the launch waits and starts the game itself -- saying so
+ * is the difference between a hand-off that feels finished and one that reads
+ * as a chore. An AppImage and a portable archive cannot promise that, and say
+ * what they do need instead.
  */
 function whatHappensNext(artifact: ReleaseArtifact, label: string): string {
   switch (artifact.kind) {
@@ -100,6 +108,10 @@ function whatHappensNext(artifact: ReleaseArtifact, label: string): string {
       return `The disk image will open. Drag ${label} into your Applications folder and your game starts by itself.`;
     case "flatpak":
       return `The Flatpak will open in your software installer. Install it and your game starts by itself.`;
+    case "appimage":
+      // Not an installer and not an archive: one executable file, which is the
+      // emulator. There is nothing to extract and nothing to open.
+      return `${label} publishes an AppImage for this system, which is the emulator itself rather than an installer. It will be made executable and shown in your file manager; point at it under "emulators" in the settings.`;
     default:
       // The one case that does not end with the emulator somewhere findable.
       return `${label} publishes only a portable archive for this system, so it will open in your file manager. Extract it, then point at the executable under "emulators" in the settings.`;
@@ -111,8 +123,8 @@ export interface InstallOffer {
    *  stop rather than carry on with a launch that cannot work yet. */
   handedOff: boolean;
   /** True when what was handed over installs where detection looks, so waiting
-   *  for it to appear will eventually succeed. False for a portable archive,
-   *  which lands somewhere only the user knows. */
+   *  for it to appear will eventually succeed. False for a portable archive or
+   *  an AppImage, which land somewhere only the user knows. */
   detectable: boolean;
 }
 
@@ -194,6 +206,20 @@ async function runOffer(
     // does not watch the signal, so a cancel landing in it would otherwise be
     // answered by opening the installer anyway.
     if (signal.aborted) throw cancelled();
+
+    // An AppImage is never opened. Handing this one to the OS would run it, and
+    // "the shell does not execute what it downloads" is the whole reason every
+    // other kind goes through the installer the user already recognises. What it
+    // does need is the executable bit, which a downloaded file does not carry
+    // and without which nothing will start it.
+    if (artifact.kind === "appimage") {
+      // A failure here leaves a file the user can chmod themselves, and the
+      // file manager is about to show them where it is, so it is not worth
+      // failing a launch over.
+      await chmod(file, 0o755).catch(() => {});
+      shell.showItemInFolder(file);
+      return { handedOff: true, detectable: false };
+    }
 
     const failure = await shell.openPath(file);
     // An archive has no handler on Windows 10, and revealing it is a better

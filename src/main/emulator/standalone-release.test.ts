@@ -14,6 +14,7 @@ import {
   pickDolphinArtifact,
   pickPcsx2Artifact,
   pickRpcs3Artifact,
+  rpcs3LatestBuild,
   unwrapRelease,
 } from "./standalone-release.ts";
 
@@ -201,16 +202,16 @@ test("an asset that is not PCSX2's own release is not offered", () => {
 test("RPCS3 publishes a portable build for every platform it has", () => {
   // Nothing the OS installs on its own: a .7z on Windows and macOS, an
   // AppImage on Linux. Still worth offering, but the caller has to say that
-  // detection will not find whatever the user extracts.
-  for (const [platform, arch, pattern] of [
-    ["win32", "x64", /_win64_msvc\.7z$/],
-    ["linux", "x64", /_linux64\.AppImage$/],
-    ["darwin", "arm64", /_macos\.7z$/],
-    ["darwin", "x64", /_macos\.7z$/],
-  ] as [NodeJS.Platform, string, RegExp][]) {
+  // detection will not find whatever the user ends up with.
+  for (const [platform, arch, pattern, kind] of [
+    ["win32", "x64", /_win64_msvc\.7z$/, "archive"],
+    ["linux", "x64", /_linux64\.AppImage$/, "appimage"],
+    ["darwin", "arm64", /_macos\.7z$/, "archive"],
+    ["darwin", "x64", /_macos\.7z$/, "archive"],
+  ] as [NodeJS.Platform, string, RegExp, string][]) {
     const found = pickRpcs3Artifact(RPCS3, platform, arch);
     assert.match(found?.fileName ?? "", pattern, platform);
-    assert.equal(found?.kind, "archive", platform);
+    assert.equal(found?.kind, kind, platform);
     assert.equal(installsWhereDetectionLooks(found!.kind), false);
   }
 });
@@ -235,10 +236,46 @@ test("RPCS3's status envelope is unwrapped before picking", () => {
   assert.ok(
     pickRpcs3Artifact(unwrapRelease("rpcs3", RPCS3_LATEST), "linux", "x64"),
   );
-  for (const junk of [null, {}, { latest_build: null }, { return_code: 1 }]) {
+  for (const junk of [null, {}, { latest_build: null }, { return_code: 0 }]) {
     assert.equal(
       pickRpcs3Artifact(unwrapRelease("rpcs3", junk), "linux", "x64"),
       null,
+    );
+  }
+});
+
+test("a build RPCS3's endpoint declined to stand behind is not offered", () => {
+  // Its own updater bails on a negative code: -2 is maintenance mode, -3 an
+  // illegal search, and -255 is what a response missing the code reads as. A
+  // build sitting beside one of those is not something to download.
+  const build = (RPCS3_LATEST as { latest_build: unknown }).latest_build;
+  for (const code of [-1, -2, -3, -255]) {
+    assert.equal(
+      rpcs3LatestBuild({ return_code: code, latest_build: build }),
+      null,
+      `${code}`,
+    );
+  }
+  // A code that is absent, or not a number at all, reads the same way.
+  assert.equal(rpcs3LatestBuild({ latest_build: build }), null);
+  assert.equal(
+    rpcs3LatestBuild({ return_code: "0", latest_build: build }),
+    null,
+  );
+  assert.equal(
+    rpcs3LatestBuild({ return_code: null, latest_build: build }),
+    null,
+  );
+
+  // Zero and above are both answers, and both carry the build to fetch: their
+  // client reads 0 as "already on it" and 1 as "there is a newer one". This
+  // shell sends no commit hash and is told 0, so demanding exactly 0 would
+  // break the offer the day that changes.
+  for (const code of [0, 1, 2]) {
+    assert.equal(
+      rpcs3LatestBuild({ return_code: code, latest_build: build }),
+      build,
+      `${code}`,
     );
   }
 });
@@ -324,7 +361,10 @@ test("Cemu gives Linux the AppImage, not the Ubuntu zip", () => {
   // AppImage is the build the project points people at.
   const found = pickCemuArtifact(CEMU, "linux", "x64");
   assert.match(found?.fileName ?? "", /-x86_64\.AppImage$/);
-  assert.equal(found?.kind, "archive");
+  // Its own kind, not an archive: there is nothing inside it to extract, and
+  // the offer has to make it executable rather than open it.
+  assert.equal(found?.kind, "appimage");
+  assert.equal(installsWhereDetectionLooks("appimage"), false);
   // No ARM Linux build exists, and the x86-64 AppImage would not run.
   assert.equal(pickCemuArtifact(CEMU, "linux", "arm64"), null);
   assert.equal(pickCemuArtifact(CEMU, "win32", "ia32"), null);

@@ -369,12 +369,19 @@ Dolphin publishes no Windows installer, PCSX2 no macOS disk image, and RPCS3
 nothing but archives anywhere, so those leave a portable build wherever you
 extract it. Detection cannot guess where that is, so the prompt says as much,
 the launch does not wait for something it will never see, and you point at the
-executable under `emulators` afterwards. A machine a project does not build for
--- 32-bit Windows in every case, ARM Linux for all but Dolphin, and an Apple
-silicon Mac gets RPCS3's Intel build to run under Rosetta -- is sent to the
-download page rather than handed a binary it cannot run. Asked at most once per
-emulator per run; declining just lets the launch carry on as it would have. Set
-`offerStandaloneInstall` to `false` to never ask.
+executable under `emulators` afterwards.
+
+An AppImage is neither an installer nor an archive: it is the emulator, as one
+file. Opening it would mean this shell running a binary it just downloaded, so
+instead it is made executable, shown in your file manager, and left for you to
+point at -- the same one extra step, for the same reason.
+
+A machine a project does not build for -- 32-bit Windows in every case, ARM
+Linux for all but Dolphin -- is sent to the download page rather than handed a
+binary it cannot run. Where a project ships only an x86-64 build for a platform
+it is offered and left to Rosetta, which is how an Apple silicon Mac gets RPCS3.
+Asked at most once per emulator per run; declining just lets the launch carry on
+as it would have. Set `offerStandaloneInstall` to `false` to never ask.
 
 Each version comes from the project's own release index: Dolphin's update
 channel, PCSX2's release API, the endpoint RPCS3's in-app updater calls, and for
