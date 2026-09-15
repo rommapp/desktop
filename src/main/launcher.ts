@@ -1,6 +1,7 @@
 import { type BrowserWindow, type Session } from "electron";
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
+import { toLaunchError } from "../shared/ipc.ts";
 import {
   type DesktopConfig,
   type LaunchRequest,
@@ -67,12 +68,6 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
     const timer = setTimeout(done, ms);
     signal.addEventListener("abort", done, { once: true });
   });
-}
-
-function toLaunchError(error: unknown): LaunchError {
-  if (error instanceof LaunchError) return error;
-  const message = error instanceof Error ? error.message : String(error);
-  return new LaunchError("launch-failed", message);
 }
 
 /** A launch that was cancelled should stop, not carry on to the emulator. */
@@ -355,9 +350,12 @@ export class Launcher {
         // A portable archive, or a download page: what happens next is the
         // user's to do, and where it lands is not something detection can
         // guess, so this is the one ending that has to ask them to come back.
+        // It says why first: read on its own, an instruction to go and edit
+        // settings is a chore, and the same sentence with the reason in front
+        // of it is the shell explaining what it cannot do for them.
         throw new LaunchError(
           "emulator-not-found",
-          `Point at ${label} under "emulators" in the settings, then press Play again.`,
+          `RomM Desktop cannot guess where ${label} ends up, so it has to be told. Point at it under "emulators" in the settings, then press Play again.`,
         );
       }
       await this.awaitEmulator(request, emulatorId, label, signal);

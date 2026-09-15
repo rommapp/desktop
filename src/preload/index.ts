@@ -1,4 +1,11 @@
+// This file cannot be split, and imports nothing but types. A sandboxed
+// preload's require() serves the electron module and a handful of Node
+// builtins; a relative path throws "module not found" and takes the whole
+// bridge with it. So the few lines that read a reply live here, and only the
+// shape they read comes from shared/ipc.ts.
+
 import { contextBridge, ipcRenderer } from "electron";
+import type { IpcReply } from "../shared/ipc.ts";
 import type {
   LaunchRequest,
   LaunchResult,
@@ -17,18 +24,36 @@ function shellVersion(): string {
 
 const LAUNCH_STATE_CHANNEL = "romm:launch-state";
 
+/**
+ * Invoke a channel and read its reply, so a failure rejects with the message
+ * the launcher actually wrote and none of Electron's remote-method plumbing in
+ * front of it. A page that prints what it caught gets the sentence the user is
+ * meant to read; a page that wants to branch on the failure reads `code`.
+ *
+ * The error is built here rather than imported: a class does not survive the
+ * context bridge either way, so what reaches the page is a copy carrying the
+ * message and the code.
+ */
+async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
+  const reply: IpcReply<T> = await ipcRenderer.invoke(channel, ...args);
+  if (reply.ok) return reply.value;
+  const error = new Error(reply.error.message);
+  error.name = "LaunchError";
+  Object.assign(error, { code: reply.error.code });
+  throw error;
+}
+
 const bridge: RommNativeBridge = {
   shellVersion: shellVersion(),
   os: process.platform as RommNativeBridge["os"],
 
   launch: (request: LaunchRequest): Promise<LaunchResult> =>
-    ipcRenderer.invoke("romm:launch", request),
+    invoke("romm:launch", request),
 
-  cancel: (romId: number): Promise<void> =>
-    ipcRenderer.invoke("romm:cancel", romId),
+  cancel: (romId: number): Promise<void> => invoke("romm:cancel", romId),
 
   getPlatformSupport: (query: PlatformSupportQuery): Promise<PlatformSupport> =>
-    ipcRenderer.invoke("romm:platform-support", query),
+    invoke("romm:platform-support", query),
 
   onLaunchState: (listener: (state: LaunchState) => void): (() => void) => {
     // The Electron event object never reaches the renderer: only the payload
@@ -38,7 +63,7 @@ const bridge: RommNativeBridge = {
     return () => ipcRenderer.off(LAUNCH_STATE_CHANNEL, handler);
   },
 
-  openSettings: (): Promise<void> => ipcRenderer.invoke("romm:open-settings"),
+  openSettings: (): Promise<void> => invoke("romm:open-settings"),
 };
 
 contextBridge.exposeInMainWorld("rommNative", bridge);
