@@ -458,11 +458,18 @@ RPCS3 cannot open one at all.
 So a ROM the server reports as two or more disc images is fetched as those
 individual files instead, one request each. Discs are ordered by the number in
 their name (`Disc 2`, `disk 2`, `CD2`), and where a sheet (`.cue`, `.gdi`,
-`.ccd`, `.mds`) is present the sheets are the discs, since a raw track is not
-loadable on its own. That is the rule RomM applies server-side, in
-`utils/m3u.py`, rather than a second one invented here. The tracks are still
-fetched, beside the sheet: it names them by relative name and cannot boot
-without them.
+`.ccd`, `.mds`) is present, the track formats it describes are not discs, since
+a raw track is not loadable on its own. That is the rule RomM applies
+server-side, in `utils/m3u.py`, rather than a second one invented here. The
+tracks are still fetched, beside the sheet: it names them by relative name and
+cannot boot without them.
+
+Only the track formats go, though, not everything that is not a sheet. A
+whole-disc image cannot be a sheet's track whatever it is named, so a `.chd`
+beside a `.gdi` is a disc of its own. The one ambiguous case is resolved in the
+tracks' favour: a bare `.bin` beside a `.cue` cannot be told from that cue's own
+track by name, so it reads as a track, single-disc sets being far more common
+than mixed ones.
 
 A set that ships its own `.m3u` is handed that instead of a generated one, the
 same way RomM defers to it, because a curated order is not something a filename
