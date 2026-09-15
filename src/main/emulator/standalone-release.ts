@@ -94,8 +94,20 @@ export function installsWhereDetectionLooks(kind: ArtifactKind): boolean {
  */
 export function mayAppearWhereDetectionLooks(
   artifact: ReleaseArtifact | null,
+  platform: NodeJS.Platform = process.platform,
 ): boolean {
-  return artifact === null || installsWhereDetectionLooks(artifact.kind);
+  if (artifact === null) return true;
+  if (installsWhereDetectionLooks(artifact.kind)) return true;
+  // A macOS archive is the exception, and it is not a small one: PCSX2's
+  // .tar.xz and RPCS3's .7z both hold a .app, and a .app goes to Applications
+  // -- which is the first place detection looks. No promise, since a .app runs
+  // perfectly well from Downloads, but the wait is free and it usually ends
+  // with the game starting rather than with a message about settings.
+  //
+  // Everywhere else an archive unpacks to a directory the user puts wherever
+  // they like, and detection only ever looks where an install goes, so waiting
+  // on one really would be waiting for nothing.
+  return platform === "darwin" && artifact.kind === "archive";
 }
 
 /** Archive formats the shell is willing to hand to a file manager. */

@@ -30,17 +30,15 @@ const LAUNCH_STATE_CHANNEL = "romm:launch-state";
  * front of it. A page that prints what it caught gets the sentence the user is
  * meant to read; a page that wants to branch on the failure reads `code`.
  *
- * The error is built here rather than imported: a class does not survive the
- * context bridge either way, so what reaches the page is a copy carrying the
- * message and the code.
+ * What is thrown is the main process's LaunchFailure as it arrived, and it is
+ * a plain object rather than an Error on purpose: the context bridge copies an
+ * Error's message and stack and drops everything else, so an Error built here
+ * would reach the page with its code missing.
  */
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   const reply: IpcReply<T> = await ipcRenderer.invoke(channel, ...args);
   if (reply.ok) return reply.value;
-  const error = new Error(reply.error.message);
-  error.name = "LaunchError";
-  Object.assign(error, { code: reply.error.code });
-  throw error;
+  throw reply.error;
 }
 
 const bridge: RommNativeBridge = {

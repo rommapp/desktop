@@ -33,6 +33,7 @@ import {
   RELEASE_SOURCES,
   type ReleaseArtifact,
   type ReleaseSource,
+  installsWhereDetectionLooks,
   mayAppearWhereDetectionLooks,
   unwrapRelease,
 } from "./standalone-release.ts";
@@ -100,7 +101,16 @@ function ask(
  * as a chore. An AppImage and a portable archive cannot promise that, and say
  * what they do need instead.
  */
-function whatHappensNext(artifact: ReleaseArtifact, label: string): string {
+function whatHappensNext(
+  artifact: ReleaseArtifact,
+  label: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  // A macOS archive holds a .app, so it ends the way a disk image does: drag it
+  // to Applications and the launch finds it there.
+  if (artifact.kind === "archive" && platform === "darwin") {
+    return `The archive will open in Finder. Drag ${label} into your Applications folder and your game starts by itself.`;
+  }
   switch (artifact.kind) {
     case "installer":
       return `${label}'s own installer will open. Run it and your game starts by itself.`;
@@ -224,17 +234,19 @@ async function runOffer(
       return { handedOff: true, mayAppear: false };
     }
 
-    const mayAppear = mayAppearWhereDetectionLooks(artifact);
     const failure = await shell.openPath(file);
     // An archive has no handler on Windows 10, and revealing it is a better
     // answer than silence. Worth doing for the portable case anyway, since the
-    // user has to go and find what it unpacked.
-    if (failure || !mayAppear) shell.showItemInFolder(file);
-    // A failed openPath does not change where an installer ends up. It was
-    // revealed instead of opened, so the user runs it from their file manager
-    // and it installs itself in the same place it would have -- which is a
-    // reason to keep waiting, not to give up on their behalf.
-    return { handedOff: true, mayAppear };
+    // user has to go and find what it unpacked -- which is what this asks, not
+    // whether the launch should wait afterwards.
+    if (failure || !installsWhereDetectionLooks(artifact.kind)) {
+      shell.showItemInFolder(file);
+    }
+    // Waiting is a separate question, and a failed openPath does not change its
+    // answer: an installer revealed rather than opened is one the user runs
+    // from their file manager, and it installs itself in the same place it
+    // would have -- a reason to keep waiting, not to give up on their behalf.
+    return { handedOff: true, mayAppear: mayAppearWhereDetectionLooks(artifact) };
   } catch (error) {
     clearTaskbarProgress(parent);
     // Neither of these handed anything over, and saying they did would have the

@@ -25,11 +25,15 @@ test("a failure crosses as data rather than as a rejection", async () => {
 
   assert.deepEqual(reply, {
     ok: false,
-    error: { code: "emulator-not-found", message },
+    error: { name: "LaunchError", code: "emulator-not-found", message },
   });
-  assert.ok(!reply.ok && reply.error.message === message);
-  assert.doesNotMatch(message, /Error invoking remote method/);
-  assert.doesNotMatch(message, /LaunchError/);
+
+  // Asserted against what came back, not against the constant above, which
+  // would pass no matter what the reply held.
+  assert.ok(!reply.ok);
+  assert.equal(reply.error.message, message);
+  assert.doesNotMatch(reply.error.message, /Error invoking remote method/);
+  assert.doesNotMatch(reply.error.message, /LaunchError:/);
 });
 
 test("an error that is not a LaunchError still arrives as one", async () => {
@@ -38,7 +42,11 @@ test("an error that is not a LaunchError still arrives as one", async () => {
   });
   assert.deepEqual(reply, {
     ok: false,
-    error: { code: "launch-failed", message: "spawn ENOENT" },
+    error: {
+      name: "LaunchError",
+      code: "launch-failed",
+      message: "spawn ENOENT",
+    },
   });
 });
 
@@ -48,7 +56,11 @@ test("a rejected promise is answered, not left to reject", async () => {
   );
   assert.deepEqual(reply, {
     ok: false,
-    error: { code: "download-failed", message: "Launch cancelled" },
+    error: {
+      name: "LaunchError",
+      code: "download-failed",
+      message: "Launch cancelled",
+    },
   });
 });
 

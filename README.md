@@ -300,13 +300,15 @@ Coverage is uneven, and not in a way this shell can fix:
 | RPCS3    | `.7z`                            | `.7z`                          | AppImage |
 | Cemu     | disk image                       | installer                      | AppImage |
 
-An archive leaves a portable build wherever you extract it. Detection cannot
-guess where that is, so the prompt says as much, the launch does not wait for
-something it will never see, and you point at the executable under `emulators`
-afterwards. An AppImage is neither installer nor archive -- it is the emulator,
-as one file -- and opening it would mean this shell running a binary it just
-downloaded, so it is made executable, shown in your file manager, and left for
-you to point at.
+A macOS archive holds a `.app`, and a `.app` goes to Applications, which is the
+first place detection looks -- so those wait like anything else: drag RPCS3 or
+PCSX2 there and your game starts on its own. On Windows and Linux an archive
+leaves a portable build wherever you extract it, detection cannot guess where
+that is, so the prompt says as much, the launch does not wait for something it
+will never see, and you point at the executable under `emulators` afterwards. An
+AppImage is neither installer nor archive -- it is the emulator, as one file --
+and opening it would mean this shell running a binary it just downloaded, so it
+is made executable, shown in your file manager, and left for you to point at.
 
 A machine a project does not build for -- 32-bit Windows in every case, ARM
 Linux for all but Dolphin -- is sent to the download page rather than handed a

@@ -9,15 +9,19 @@
 // with the channel name in front of it and the error's code gone, leaving a
 // frontend nothing to branch on and no way to print the message without the
 // plumbing around it. So a failure is returned as data instead, in the shape
-// the launch-state channel already reports one in, and the preload turns it
-// back into an error on the other side.
+// the launch-state channel already reports one in, and the preload throws it
+// on the other side.
+//
+// The failure is built here rather than in the preload so that what the page
+// catches is decided in one tested place, and so the preload -- which cannot
+// import this file, being sandboxed -- has nothing left to get wrong.
 
-import { LaunchError, type LaunchErrorCode } from "./types.ts";
+import { LaunchError, type LaunchFailure } from "./types.ts";
 
 /** Every ipcMain handler answers with one of these. */
 export type IpcReply<T> =
   | { ok: true; value: T }
-  | { ok: false; error: { code: LaunchErrorCode; message: string } };
+  | { ok: false; error: LaunchFailure };
 
 /** Coerce anything thrown into the error the contract names. */
 export function toLaunchError(error: unknown): LaunchError {
@@ -41,7 +45,11 @@ export async function replyWith<T>(
     const failure = toLaunchError(error);
     return {
       ok: false,
-      error: { code: failure.code, message: failure.message },
+      error: {
+        name: "LaunchError",
+        code: failure.code,
+        message: failure.message,
+      },
     };
   }
 }

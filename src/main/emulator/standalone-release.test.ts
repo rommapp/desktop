@@ -539,29 +539,64 @@ test("a malformed PCSX2 envelope unwraps to nothing rather than throwing", () =>
   }
 });
 
+/** A stand-in artifact, since only its kind decides these answers. */
+function artifactOf(kind: ArtifactKind): ReleaseArtifact {
+  return {
+    url: "https://example.invalid/x",
+    fileName: "x",
+    kind,
+    version: "1",
+  };
+}
+
 test("nothing to fetch is still worth waiting for", () => {
   // The case this exists for. A system with no artifact sends the user to the
   // download page, and what they do there -- a package manager, the project's
   // own installer -- lands where detection looks, so the launch waits and
   // their game starts by itself rather than failing in front of someone who is
   // installing the emulator it asked for.
-  assert.equal(mayAppearWhereDetectionLooks(null), true);
+  for (const platform of ["darwin", "win32", "linux"] as NodeJS.Platform[]) {
+    assert.equal(mayAppearWhereDetectionLooks(null, platform), true, platform);
+  }
 });
 
-test("only a file the user keeps is beyond waiting for", () => {
-  const artifact = (kind: ArtifactKind): ReleaseArtifact => ({
-    url: "https://example.invalid/x",
-    fileName: "x",
-    kind,
-    version: "1",
-  });
-
+test("anything that installs itself is worth waiting for, everywhere", () => {
   for (const kind of ["installer", "disk-image", "flatpak"] as ArtifactKind[]) {
-    assert.equal(mayAppearWhereDetectionLooks(artifact(kind)), true, kind);
+    for (const platform of ["darwin", "win32", "linux"] as NodeJS.Platform[]) {
+      assert.equal(
+        mayAppearWhereDetectionLooks(artifactOf(kind), platform),
+        true,
+        `${kind} on ${platform}`,
+      );
+    }
   }
-  // An AppImage is the emulator itself and an archive unpacks to one, both
-  // wherever the user puts them. No amount of polling finds either.
-  for (const kind of ["appimage", "archive"] as ArtifactKind[]) {
-    assert.equal(mayAppearWhereDetectionLooks(artifact(kind)), false, kind);
+});
+
+test("a macOS archive is worth waiting for, and no other archive is", () => {
+  // The case a real launch hit: RPCS3 on macOS is a .7z, it holds RPCS3.app,
+  // and a .app goes to Applications -- the first place detection looks. Giving
+  // up on it sent someone to edit settings for an emulator the shell would
+  // have found on its own.
+  assert.equal(mayAppearWhereDetectionLooks(artifactOf("archive"), "darwin"), true);
+  // Everywhere else an archive unpacks to a directory of the user's choosing,
+  // and detection only looks where an install goes.
+  for (const platform of ["win32", "linux"] as NodeJS.Platform[]) {
+    assert.equal(
+      mayAppearWhereDetectionLooks(artifactOf("archive"), platform),
+      false,
+      platform,
+    );
+  }
+});
+
+test("an AppImage is beyond waiting for on any platform", () => {
+  // It is the emulator as one file, kept wherever the user keeps it, and Linux
+  // detection only ever looks in bin directories and Flatpak exports.
+  for (const platform of ["darwin", "win32", "linux"] as NodeJS.Platform[]) {
+    assert.equal(
+      mayAppearWhereDetectionLooks(artifactOf("appimage"), platform),
+      false,
+      platform,
+    );
   }
 });
