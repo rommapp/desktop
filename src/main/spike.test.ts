@@ -64,6 +64,14 @@ test("the panel names the firmware it is fetching", () => {
   assert.match(script, /"Fetching firmware" \+ \(s\.firmware/);
 });
 
+test("the panel names the disc it is fetching, and its place in the set", () => {
+  // Four discs would otherwise read as one transfer restarting at zero four
+  // times, which is the whole reason the state carries these fields.
+  const script = spikeScript();
+  assert.match(script, /s\.file/);
+  assert.match(script, /s\.fileIndex \+ " of " \+ s\.fileCount/);
+});
+
 test("the panel explains an emulator install rather than showing a download", () => {
   // The stage covers two waits: fetching the file, and the user installing it.
   // Rendering the second as an indeterminate download would look like a stall

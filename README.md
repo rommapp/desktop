@@ -110,6 +110,10 @@ the boundary the auth window exists to keep narrow.
 The in-browser emulators (EmulatorJS, Ruffle, js-dos, PICO-8), file downloads
 and clipboard actions are untested in this shell and worth exercising.
 
+[Multi-disc games](#multi-disc-games) are covered by unit tests over disc
+selection, the playlist, and which emulators are handed one, but no real disc
+set has been launched through an emulator yet.
+
 ## Using a controller
 
 RomM's own interface handles controller navigation, so the shell adds none.
@@ -389,7 +393,9 @@ be findable.
 ```
 
 `platformSlug` uses RomM's own slugs (`snes`, `n64`, `ps2`). The `*` row is the
-fallback for any platform without an entry of its own.
+fallback for any platform without an entry of its own. An optional `playlist`
+says whether the emulator boots an `.m3u`, which only affects
+[multi-disc games](#multi-disc-games).
 
 #### Emulator base path
 
@@ -440,6 +446,82 @@ root, and anything resolving outside it is rejected rather than normalised.
 
 [Save data](#save-data) goes to its own directory either way, so launching in
 place does not leave saves in your library for RomM to scan.
+
+### Multi-disc games
+
+A PlayStation or Saturn game split across discs is one ROM with several files
+on the server, and asking for that ROM as a single download returns an archive.
+That archive is not something a multi-disc game boots out of: RetroArch cannot
+resolve a playlist's sibling references inside a zip, and PCSX2, Dolphin and
+RPCS3 cannot open one at all.
+
+So a ROM the server reports as two or more disc images is fetched as those
+individual files instead, one request each. Discs are ordered by the number in
+their name (`Disc 2`, `disk 2`, `CD2`), and where a sheet (`.cue`, `.gdi`,
+`.ccd`, `.mds`) is present the sheets are the discs, since a raw track is not
+loadable on its own. That is the rule RomM applies server-side, in
+`utils/m3u.py`, rather than a second one invented here. The tracks are still
+fetched, beside the sheet: it names them by relative name and cannot boot
+without them.
+
+A set that ships its own `.m3u` is handed that instead of a generated one, the
+same way RomM defers to it, because a curated order is not something a filename
+convention can convey.
+
+What the emulator is then handed depends on whether it reads an `.m3u`:
+
+|                                 | Handed         | Changing disc                                                   |
+| ------------------------------- | -------------- | --------------------------------------------------------------- |
+| RetroArch, Dolphin, DuckStation | `discs.m3u`    | the emulator's disc-control menu                                |
+| PCSX2, RPCS3, Cemu              | the first disc | the emulator's own "change disc", with the set in one directory |
+
+PCSX2 is the reason for the second row: [its M3U request was closed as not
+planned](https://github.com/PCSX2/pcsx2/issues/7640) and
+[automatic swapping is still open](https://github.com/PCSX2/pcsx2/issues/7278),
+so handing it a playlist would fail the launch outright. There, disc 2 is
+System > Change Disc from the menu bar, or Change Disc in the on-screen quick
+menu on a controller. The shell passes `-batch` and never `-nogui`, which would
+hide the menu bar that first route needs. Dolphin
+[gained it in 2019](https://github.com/dolphin-emu/dolphin/pull/7629), on the
+command line as well as in the GUI, and the playlist is written as UTF-8 with
+LF endings because that is all Dolphin accepts.
+
+A detected emulator carries its own answer. One configured by hand is assumed
+not to read a playlist, unless its arguments name `{core}` (RetroArch driving a
+libretro core) or RetroArch, Dolphin or DuckStation is named in the command or
+its arguments, which covers `flatpak run org.duckstation.DuckStation` as well
+as an executable path. Anything else says so for itself with `"playlist"`,
+which outranks both inferences:
+
+```json
+{
+  "emulators": [
+    {
+      "platformSlug": "psx",
+      "command": "/usr/bin/mednafen",
+      "args": ["{rom}"],
+      "playlist": true
+    }
+  ]
+}
+```
+
+A set already under `libraryPath` is launched in place rather than downloaded,
+all of it or none of it, and only when it sits in one directory: a sheet's
+tracks sit beside it by relative name, and an emulator with no playlist looks
+for the next disc beside the one it booted, so a set spread over two
+directories is one that cannot finish. A ROM's files can sit in subdirectories
+of its folder, so being under `libraryPath` is not by itself enough. Otherwise the whole
+set lands in the ROM cache, where the same size check applies to each file and
+the cache is brought back inside `cacheLimitBytes` once the set is whole. The
+playlist is always written to the cache, never into the library, so launching in
+place leaves nothing behind for RomM to scan.
+
+Nothing here can fail a launch that would otherwise have worked. A server that
+will not answer, a ROM whose files cannot be read, a set that turns out to hold
+one disc, and a transfer that is refused or interrupted all fall back to the
+ordinary single-payload download. Only cancelling stays fatal, that one being
+yours.
 
 ### Save data
 
@@ -730,6 +812,8 @@ src/
     rom-cache.ts    Download with the window's session cookies
     cache/          LRU eviction over the ROM cache
     saves/          Per-game save and state directories
+    discs/          Multi-disc sets: disc selection and the .m3u that boots
+                    them
     firmware/       Mirroring RomM's own BIOS library, per platform
     safety.ts       Validation of everything the renderer sends
     window.ts       Window creation and navigation policy

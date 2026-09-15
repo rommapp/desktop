@@ -81,6 +81,13 @@ export interface LaunchState {
    *  rather than borrowing `core`, so a frontend reading one never has to
    *  guess which stage it is in. */
   firmware?: string;
+  /** The file being fetched out of a multi-disc set, and its place in that
+   *  set: a frontend can name it and count it rather than watching one
+   *  transfer restart at 0% for every disc. Not every file is a disc of its
+   *  own, since a sheet's tracks are fetched with it. */
+  file?: string;
+  fileIndex?: number;
+  fileCount?: number;
   /** The emulator being set up, while stage is "emulator". Present for both
    *  halves of that stage, so a frontend can name what it is waiting for. */
   emulator?: string;
@@ -147,6 +154,10 @@ export interface EmulatorMapping {
   args: string[];
   /** Display name for the emulator, shown in the renderer. */
   label?: string;
+  /** Whether this emulator boots an .m3u playlist, for a multi-disc game.
+   *  Inferred from the arguments when unset: one naming "{core}" is RetroArch
+   *  driving a libretro core, which reads one. */
+  playlist?: boolean;
 }
 
 export interface DesktopConfig {

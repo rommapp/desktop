@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { type DesktopConfig, LaunchError } from "../../shared/types.ts";
 import { testConfig } from "../../test/config.ts";
+import { STANDALONE_EMULATORS, toEmulatorMappings } from "./standalone.ts";
 import {
   findPreferredCores,
   applyCorePreference,
@@ -12,6 +13,7 @@ import {
   coreFileName,
   emulatorIsPresent,
   emulatorLabel,
+  emulatorReadsPlaylist,
   hasPlatformSpecificEmulator,
   isSafeCoreName,
   requiresCore,
@@ -711,6 +713,76 @@ test("emulatorLabel names the mapping, or RetroArch when there is none", () => {
   assert.equal(emulatorLabel(config, "ps2"), "PCSX2");
   // No label, so the command stands in, the same way resolveLaunch reports it.
   assert.equal(emulatorLabel(config, "ps3"), "/usr/bin/rpcs3");
+});
+
+test("emulatorReadsPlaylist answers for the emulator a platform would use", () => {
+  // No mapping at all: the built-in RetroArch path, which boots an .m3u.
+  assert.ok(emulatorReadsPlaylist(testConfig(), "psx"));
+
+  const config = testConfig({
+    emulators: [
+      // RetroArch under another name. Nothing says so, but a mapping loading a
+      // libretro core is RetroArch driving one.
+      {
+        platformSlug: "pcecd",
+        command: "flatpak",
+        args: ["run", "org.libretro.RetroArch", "-L", "{core}", "{rom}"],
+      },
+      // A standalone emulator, which is assumed not to read one.
+      { platformSlug: "ps2", command: "/usr/bin/pcsx2-qt", args: ["{rom}"] },
+      // Recognised by name, which is how a hand-configured DuckStation keeps
+      // disc switching on the platform that needs it most.
+      {
+        platformSlug: "psx",
+        command: "/usr/bin/duckstation-qt",
+        args: ["-batch", "{rom}"],
+      },
+      // One nothing recognises, which says so itself.
+      {
+        platformSlug: "ngc",
+        command: "/opt/some-emu",
+        args: ["{rom}"],
+        playlist: true,
+      },
+      // A declaration outranks the inference, in both directions.
+      {
+        platformSlug: "saturn",
+        command: "/opt/thing",
+        args: ["-L", "{core}", "{rom}"],
+        playlist: false,
+      },
+    ],
+  });
+  assert.ok(emulatorReadsPlaylist(config, "pcecd"));
+  assert.equal(emulatorReadsPlaylist(config, "ps2"), false);
+  assert.ok(emulatorReadsPlaylist(config, "psx"));
+  assert.ok(emulatorReadsPlaylist(config, "ngc"));
+  assert.equal(emulatorReadsPlaylist(config, "saturn"), false);
+});
+
+test("a playlist-reading emulator is recognised behind flatpak", () => {
+  // The command is the sandbox, so the emulator is only named in the arguments.
+  const config = testConfig({
+    emulators: [
+      {
+        platformSlug: "psx",
+        command: "/usr/bin/flatpak",
+        args: ["run", "org.duckstation.DuckStation", "-batch", "{rom}"],
+      },
+    ],
+  });
+  assert.ok(emulatorReadsPlaylist(config, "psx"));
+});
+
+test("a detected emulator carries its own playlist answer", () => {
+  const detected = toEmulatorMappings(
+    STANDALONE_EMULATORS.filter((entry) =>
+      ["pcsx2", "dolphin"].includes(entry.id),
+    ).map((emulator) => ({ emulator, command: `/usr/bin/${emulator.id}` })),
+  );
+  const config = testConfig({ emulators: detected });
+  assert.equal(emulatorReadsPlaylist(config, "ps2"), false);
+  assert.ok(emulatorReadsPlaylist(config, "ngc"));
 });
 
 test("assumeMissingCoreInstalled resolves a core that is not there yet", () => {
