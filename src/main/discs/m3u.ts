@@ -71,24 +71,34 @@ export function discNumberOf(fileName: string): number | null {
 /**
  * The discs among a rom's files, in the order an .m3u should list them.
  *
- * Where a sheet is present it is the disc and the tracks are not, because a
+ * Where a sheet is present the tracks it describes are not discs, because a
  * raw track is not loadable on its own. Which files those are is not derivable
  * from their names: RomM's own fixtures pair `game.cue` with `track01.bin`, so
  * a sheet cannot be matched to its tracks without reading it.
  *
+ * Only the track formats go, though, not everything that is not a sheet. A
+ * whole-disc image cannot be a sheet's track whatever it is named, so a `.chd`
+ * beside a `.gdi` is a disc of its own and stays one. The ambiguous case is
+ * still resolved in the tracks' favour: a bare `.bin` beside a `.cue` reads as
+ * a track, since single-disc sets are far more common than mixed ones.
+ *
  * This is the rule RomM applies server-side in `utils/m3u.py::playlist_files`,
  * followed here rather than reinvented, so the shell and the server cannot
- * disagree about what a disc is. The one difference is the sheet list: RomM
- * counts only `.cue`, which lists a `.gdi`'s tracks as discs of their own.
+ * disagree about what a disc is.
  */
 export function selectDiscs(files: DiscFile[]): DiscFile[] {
   const discs = files.filter((file) =>
     DISC_EXTENSIONS.includes(extensionOf(file.fileName)),
   );
-  const sheets = discs.filter((file) =>
+  const hasSheet = discs.some((file) =>
     SHEET_EXTENSIONS.includes(extensionOf(file.fileName)),
   );
-  return inDiscOrder(sheets.length > 0 ? sheets : discs);
+  if (!hasSheet) return inDiscOrder(discs);
+  return inDiscOrder(
+    discs.filter(
+      (file) => !TRACK_EXTENSIONS.includes(extensionOf(file.fileName)),
+    ),
+  );
 }
 
 /** The playlist the rom itself ships, if it has one: a curated set names its
