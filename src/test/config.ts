@@ -23,6 +23,10 @@ export function testConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     emulatorsBasePath: null,
     emulators: [],
     cachePath: null,
+    // Off and unset by default: the mirror reaches the network and the
+    // filesystem, so a test that wants it says so.
+    biosPath: null,
+    useRommFirmware: false,
     saveDataPath: null,
     libraryPath: null,
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,

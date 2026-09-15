@@ -56,6 +56,14 @@ test("the panel reports speed and remaining time, not just a percentage", () => 
   assert.match(script, /if \(n === undefined \|\| n === null\) return ""/);
 });
 
+test("the panel names the firmware it is fetching", () => {
+  // A PS3 PUP is a couple of hundred megabytes, and "Downloading" with no
+  // subject reads as a stall on a launch the user expected to be instant.
+  const script = spikeScript();
+  assert.match(script, /s\.stage === "firmware"/);
+  assert.match(script, /"Fetching firmware" \+ \(s\.firmware/);
+});
+
 test("the panel explains an emulator install rather than showing a download", () => {
   // The stage covers two waits: fetching the file, and the user installing it.
   // Rendering the second as an indeterminate download would look like a stall

@@ -6,6 +6,7 @@ import {
   type EmulatorMapping,
   LaunchError,
 } from "../../shared/types.ts";
+import { type BiosPaths, resolveBiosPaths } from "../firmware/paths.ts";
 import { type SavePaths } from "../saves/paths.ts";
 import { detectedMappingFor } from "./standalone.ts";
 
@@ -58,9 +59,10 @@ export function applyTokens(
     rom: string;
     core: string | null;
     savePaths: SavePaths | null;
+    biosPaths?: BiosPaths | null;
   },
 ): string[] {
-  const { savePaths } = tokens;
+  const { savePaths, biosPaths } = tokens;
   const values: Record<string, string> = {
     rom: tokens.rom,
     core: tokens.core ?? "",
@@ -68,6 +70,11 @@ export function applyTokens(
     states: savePaths?.stateDir ?? "",
     savefile: savePaths?.saveFile ?? "",
     statefile: savePaths?.statePrefix ?? "",
+    bios: biosPaths?.directory ?? "",
+    // Only once the file is actually there. It exists whenever the mirror is
+    // on, so the empty case means the user switched the mirror off and left the
+    // token in their arguments.
+    biosconfig: generatedSystemConfig(biosPaths ?? null) ?? "",
   };
   // One pass with a replacer, never chained replaceAll calls with string
   // replacements: a path is inserted verbatim, and token-looking text inside
@@ -77,10 +84,44 @@ export function applyTokens(
   );
 }
 
-const TOKEN_PATTERN = /\{(rom|core|saves|states|savefile|statefile)\}/g;
+const TOKEN_PATTERN =
+  /\{(rom|core|saves|states|savefile|statefile|bios|biosconfig)\}/g;
 
 /** The tokens that only mean something once the shell owns the save data. */
 const SAVE_TOKENS = ["{saves}", "{states}", "{savefile}", "{statefile}"];
+
+/**
+ * The generated RetroArch config for this platform, if the mirror wrote one.
+ *
+ * Gated on the file existing, which is what makes this answerable without
+ * asking the server: the sync writes it whenever the mirror is on and deletes
+ * it when the mirror is switched off. What is inside decides whether anything
+ * is overridden -- a platform with no firmware gets a file of comments -- so
+ * its mere presence is safe to act on, for the launch and the support probe
+ * alike.
+ */
+function generatedSystemConfig(biosPaths: BiosPaths | null): string | null {
+  if (!biosPaths || !existsSync(biosPaths.appendConfig)) return null;
+  return biosPaths.appendConfig;
+}
+
+/**
+ * The extra arguments that point RetroArch at this platform's firmware.
+ *
+ * --appendconfig layers that config over the user's own for one run rather than
+ * editing their retroarch.cfg, so switching the mirror off switches this off
+ * with it and nothing of theirs is rewritten.
+ *
+ * Only for the built-in RetroArch path, because that is the only launch whose
+ * argument list the shell writes: a mapping's arguments are the user's, and the
+ * shell cannot know whether "flatpak run org.libretro.RetroArch" is RetroArch,
+ * nor where in someone else's argv a flag of its own would be safe to insert.
+ * A mapping asks for this with "{biosconfig}" instead.
+ */
+function systemDirectoryArgs(biosPaths: BiosPaths | null): string[] {
+  const generated = generatedSystemConfig(biosPaths);
+  return generated ? [`--appendconfig=${generated}`] : [];
+}
 
 function findMapping(
   config: DesktopConfig,
@@ -328,6 +369,11 @@ export function resolveLaunch({
    *  result names a core that is not on disk yet and must not be spawned. */
   assumeMissingCoreInstalled?: boolean;
 }): ResolvedLaunch {
+  // Derived rather than passed in, so the launch and the support probe agree
+  // without either of them having synced anything: the directory is a pure
+  // function of the config and the slug, and "{bios}" resolves to it whether or
+  // not the server turned out to have firmware to put there.
+  const biosPaths = resolveBiosPaths(config.biosPath, platformSlug);
   const mapping = findMapping(config, platformSlug);
   if (mapping) {
     const command = resolveEmulatorCommand(
@@ -368,6 +414,7 @@ export function resolveLaunch({
         rom: romPath,
         core: core?.path ?? null,
         savePaths,
+        biosPaths,
       }),
       label: mapping.label ?? mapping.command,
     };
@@ -413,7 +460,15 @@ export function resolveLaunch({
 
   return {
     command: config.retroarchPath,
-    args: ["-L", core.path, ...saveArgs, romPath],
+    // The system directory first: --appendconfig is read as RetroArch starts
+    // up, and the core and content that follow are what the run is about.
+    args: [
+      ...systemDirectoryArgs(biosPaths),
+      "-L",
+      core.path,
+      ...saveArgs,
+      romPath,
+    ],
     label: `RetroArch (${core.name})`,
   };
 }

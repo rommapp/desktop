@@ -126,14 +126,17 @@ export function spikeScript(): string {
         const left = eta((s.total - s.received) / s.bytesPerSecond);
         if (left) parts.push(left + " left");
       }
-      // A core install and an emulator install are both reported as downloads,
-      // and both are worth naming: the wait is otherwise unexplained. The
-      // emulator stage covers two different waits -- fetching the file, then
-      // the user installing it -- and the missing byte count is what tells them
-      // apart, because nothing here can see inside their installer.
+      // A core install, an emulator install and a firmware sync are all
+      // reported as downloads, and all are worth naming: the wait is otherwise
+      // unexplained. The emulator stage covers two different waits -- fetching
+      // the file, then the user installing it -- and the missing byte count is
+      // what tells them apart, because nothing here can see inside their
+      // installer.
       const named = s.emulator || "the emulator";
       const what = s.stage === "core"
         ? "Installing core" + (s.core ? " " + s.core : "")
+        : s.stage === "firmware"
+          ? "Fetching firmware" + (s.firmware ? " " + s.firmware : "")
         : s.stage === "emulator"
           ? (s.received === undefined
             ? "Waiting for " + named + " to be installed. Your game starts by itself"

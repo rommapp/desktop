@@ -414,6 +414,160 @@ test("applyTokens leaves token-looking text inside a path alone", () => {
   ]);
 });
 
+test("{biosconfig} is empty until the mirror has written one", () => {
+  // Nothing is generated when the mirror is off, and a row that still names the
+  // token gets an empty string rather than a path to a file that is not there.
+  const args = applyTokens(["--appendconfig={biosconfig}"], {
+    rom: "/cache/1/game.chd",
+    core: null,
+    savePaths: null,
+    biosPaths: {
+      directory: "/data/bios/psx",
+      appendConfig: join(mkdtempSync(join(tmpdir(), "romm-bios-")), "gone.cfg"),
+    },
+  });
+  assert.deepEqual(args, ["--appendconfig="]);
+});
+
+test("applyTokens substitutes the firmware directory", () => {
+  const args = applyTokens(["-bios", "{bios}", "{rom}"], {
+    rom: "/cache/1/game.chd",
+    core: null,
+    savePaths: null,
+    biosPaths: {
+      directory: "/data/bios/psx",
+      appendConfig: "/data/bios/.retroarch/psx.cfg",
+    },
+  });
+  assert.deepEqual(args, ["-bios", "/data/bios/psx", "/cache/1/game.chd"]);
+});
+
+test("a row naming {bios} with the mirror switched off gets an empty string", () => {
+  // Not a launch failure, unlike {core} and {saves}: an emulator pointed at an
+  // empty argument for a BIOS directory is the same as one pointed nowhere,
+  // and most platforms need no firmware at all.
+  const args = applyTokens(["-bios", "{bios}"], {
+    rom: "/cache/1/game.chd",
+    core: null,
+    savePaths: null,
+    biosPaths: null,
+  });
+  assert.deepEqual(args, ["-bios", ""]);
+});
+
+test("a RetroArch launch is pointed at the firmware only once there is some", () => {
+  // The generated config's presence on disk is the whole protocol: the sync
+  // writes it when the mirror has files and deletes it when the mirror empties,
+  // so one stat answers the question without asking the server.
+  const install = fakeInstall(["snes9x"]);
+  const biosRoot = mkdtempSync(join(tmpdir(), "romm-bios-"));
+  const config = testConfig({
+    retroarchPath: install.binary,
+    retroarchCoresPath: install.root,
+    biosPath: biosRoot,
+  });
+  const launch = () =>
+    resolveLaunch({
+      config,
+      platformSlug: "snes",
+      cores: ["snes9x"],
+      romPath: "/cache/1/game.sfc",
+      savePaths: null,
+    });
+
+  // Nothing synced yet, so nothing is appended and the launch is what it was.
+  assert.deepEqual(launch().args, [
+    "-L",
+    join(install.root, coreFileName("snes9x")),
+    "/cache/1/game.sfc",
+  ]);
+
+  const generated = join(biosRoot, ".retroarch", "snes.cfg");
+  mkdirSync(join(biosRoot, ".retroarch"), { recursive: true });
+  writeFileSync(generated, 'system_directory = "x"');
+  const args = launch().args;
+  // First, because --appendconfig is read as RetroArch starts up.
+  assert.equal(args[0], `--appendconfig=${generated}`);
+  assert.deepEqual(args.slice(1), [
+    "-L",
+    join(install.root, coreFileName("snes9x")),
+    "/cache/1/game.sfc",
+  ]);
+});
+
+test("a RetroArch mapping can ask for the system directory itself", () => {
+  // The automatic flag is only for the built-in RetroArch path, since a
+  // mapping's arguments are the user's and "flatpak run org.libretro.RetroArch"
+  // is not something the shell can recognise as RetroArch. So a row says where
+  // it wants the generated config, which is the case the README's own Flatpak
+  // wildcard row needs.
+  const install = fakeInstall(["mednafen_psx_hw"]);
+  const biosRoot = mkdtempSync(join(tmpdir(), "romm-bios-"));
+  const generated = join(biosRoot, ".retroarch", "psx.cfg");
+  mkdirSync(join(biosRoot, ".retroarch"), { recursive: true });
+  writeFileSync(generated, 'system_directory = "x"');
+  const config = testConfig({
+    retroarchCoresPath: install.root,
+    biosPath: biosRoot,
+    emulators: [
+      {
+        platformSlug: "*",
+        label: "RetroArch (Flatpak)",
+        command: install.binary,
+        args: [
+          "run",
+          "org.libretro.RetroArch",
+          "--appendconfig={biosconfig}",
+          "-L",
+          "{core}",
+          "{rom}",
+        ],
+      },
+    ],
+  });
+  const launch = resolveLaunch({
+    config,
+    platformSlug: "psx",
+    cores: ["mednafen_psx_hw"],
+    romPath: "/cache/1/game.chd",
+    savePaths: null,
+  });
+  assert.deepEqual(launch.args, [
+    "run",
+    "org.libretro.RetroArch",
+    `--appendconfig=${generated}`,
+    "-L",
+    join(install.root, coreFileName("mednafen_psx_hw")),
+    "/cache/1/game.chd",
+  ]);
+});
+
+test("a standalone mapping is never handed --appendconfig", () => {
+  // It is a RetroArch flag. A mapping that wants the directory says {bios}.
+  const install = fakeInstall([]);
+  const biosRoot = mkdtempSync(join(tmpdir(), "romm-bios-"));
+  mkdirSync(join(biosRoot, ".retroarch"), { recursive: true });
+  writeFileSync(join(biosRoot, ".retroarch", "ps2.cfg"), "");
+  const config = testConfig({
+    biosPath: biosRoot,
+    emulators: [
+      {
+        platformSlug: "ps2",
+        command: install.binary,
+        args: ["-batch", "{rom}"],
+      },
+    ],
+  });
+  const launch = resolveLaunch({
+    config,
+    platformSlug: "ps2",
+    cores: [],
+    romPath: "/cache/1/game.chd",
+    savePaths: null,
+  });
+  assert.deepEqual(launch.args, ["-batch", "/cache/1/game.chd"]);
+});
+
 test("applyTokens leaves an unknown token untouched", () => {
   const args = applyTokens(["{nonsense}", "{rom}"], {
     rom: "/cache/7/game.sfc",
