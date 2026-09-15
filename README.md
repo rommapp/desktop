@@ -309,12 +309,16 @@ is derived from its parent, so `retroarchCoresPath` is usually unnecessary.
 
 ### Detected standalone emulators
 
-RetroAchievements recognises the standalone PCSX2 and Dolphin but not their
-libretro cores, so for PS2 and GameCube/Wii there is no core that will ever
-unlock an achievement. Both have always been configurable under `emulators`;
-what nobody can reasonably guess is the executable name and argument template,
-which is the part people get stuck on -- RetroBat alone ships `pcsx2`,
-`pcsx2-16` and `pcsx2x6`, and the binary inside the first is `pcsx2-qt.exe`.
+Some platforms need an emulator that is not a libretro core. RetroAchievements
+recognises the standalone PCSX2 and Dolphin but not their cores, so for PS2 and
+GameCube/Wii there is no core that will ever unlock an achievement. PS3 and
+Wii U are simpler still: libretro has no core for either, so RetroArch cannot
+play them at all and RPCS3 and Cemu are the only way those games launch.
+
+All four have always been configurable under `emulators`; what nobody can
+reasonably guess is the executable name and argument template, which is the
+part people get stuck on -- RetroBat alone ships `pcsx2`, `pcsx2-16` and
+`pcsx2x6`, and the binary inside the first is `pcsx2-qt.exe`.
 
 So the shell looks for them where they land, the same way it already looks for
 RetroArch, and launches what it finds:
@@ -322,7 +326,13 @@ RetroArch, and launches what it finds:
 | Emulator | Platforms    | Looked for in                                                                    |
 | -------- | ------------ | -------------------------------------------------------------------------------- |
 | PCSX2    | `ps2`        | `/Applications`, Program Files, the per-user Programs directory, scoop, RetroBat |
-| Dolphin  | `ngc`, `wii` | the same, plus `/usr/bin` and `/usr/games` and each one's Flatpak on Linux       |
+| Dolphin  | `ngc`, `wii` | the same, plus `/usr/bin` and `/usr/games` and its Flatpak on Linux              |
+| RPCS3    | `ps3`        | the same, plus `/usr/bin` and `/usr/local/bin` and its Flatpak on Linux          |
+| Cemu     | `wiiu`       | the same, plus `%LOCALAPPDATA%\Cemu`, which is where its own installer puts it   |
+
+The executable names are the reason this is worth doing: `pcsx2-qt.exe`, not
+`pcsx2.exe`; `RPCS3.app` with a lowercase `rpcs3` inside it; `Cemu` with a
+capital C on Linux.
 
 Nothing is written to your config, and an emulator installed by any means is
 found the same way, a frontend's own tree included, so someone already running
@@ -348,21 +358,37 @@ and so does closing the window.
 
 Coverage is uneven, and not in a way this shell can fix:
 
-| Emulator | macOS                            | Windows                        | Linux   |
-| -------- | -------------------------------- | ------------------------------ | ------- |
-| PCSX2    | `.tar.xz`, opens Archive Utility | installer                      | Flatpak |
-| Dolphin  | disk image                       | `.7z`, opens in Explorer on 11 | Flatpak |
+| Emulator | macOS                            | Windows                        | Linux    |
+| -------- | -------------------------------- | ------------------------------ | -------- |
+| PCSX2    | `.tar.xz`, opens Archive Utility | installer                      | Flatpak  |
+| Dolphin  | disk image                       | `.7z`, opens in Explorer on 11 | Flatpak  |
+| RPCS3    | `.7z`                            | `.7z`                          | AppImage |
+| Cemu     | disk image                       | installer                      | AppImage |
 
-Dolphin publishes no Windows installer and PCSX2 no macOS disk image, so those
-two leave a portable build wherever you extract it. Detection cannot guess where
-that is, so the prompt says as much, the launch does not wait for something it
-will never see, and you point at the executable under `emulators` afterwards.
-A machine neither project builds for -- 32-bit Windows either way, ARM Linux for
-PCSX2 -- is sent to the download page rather than handed a binary it cannot run. Asked at most once per emulator per run; declining just
-lets the launch carry on as it would have. Set `offerStandaloneInstall` to
-`false` to never ask.
+Dolphin publishes no Windows installer, PCSX2 no macOS disk image, and RPCS3
+nothing but archives anywhere, so those leave a portable build wherever you
+extract it. Detection cannot guess where that is, so the prompt says as much,
+the launch does not wait for something it will never see, and you point at the
+executable under `emulators` afterwards.
 
-A row you wrote yourself always wins, so configuring either of these overrides
+An AppImage is neither an installer nor an archive: it is the emulator, as one
+file. Opening it would mean this shell running a binary it just downloaded, so
+instead it is made executable, shown in your file manager, and left for you to
+point at -- the same one extra step, for the same reason.
+
+A machine a project does not build for -- 32-bit Windows in every case, ARM
+Linux for all but Dolphin -- is sent to the download page rather than handed a
+binary it cannot run. Where a project ships only an x86-64 build for a platform
+it is offered and left to Rosetta, which is how an Apple silicon Mac gets RPCS3.
+Asked at most once per emulator per run; declining just lets the launch carry on
+as it would have. Set `offerStandaloneInstall` to `false` to never ask.
+
+Each version comes from the project's own release index: Dolphin's update
+channel, PCSX2's release API, the endpoint RPCS3's in-app updater calls, and for
+Cemu -- which publishes no index -- the GitHub release its download page points
+at, pinned to its own repository.
+
+A row you wrote yourself always wins, so configuring any of these overrides
 the detection entirely. A detected emulator does beat a `*` wildcard row,
 though: a catch-all should not claim a platform that has a real emulator
 installed for it. Set `useDetectedEmulators` to `false` to switch the whole
@@ -381,6 +407,14 @@ change that. Write an `emulators` row instead.
 Two things RetroAchievements asks of Dolphin that the shell cannot do for you:
 it wants version 2407-68 or newer for GameCube (2603a for Wii), and "Enable Dual
 Core (speedup)" switched off. Both live in Dolphin's own settings.
+
+One thing to know about PS3: RPCS3 boots a single file it is handed -- an
+`EBOOT.BIN`, a `.self` -- and a title kept in RomM as a folder of many files is
+downloaded as an archive, which is not something RPCS3 can boot. That is a
+limit of the launch path rather than of this row, and it applies to any
+multi-file game; keep such titles somewhere RPCS3 can already see them, or
+launch them from RPCS3 itself. Cemu is unaffected: `.wua`, `.wud` and `.wux`
+are each one file.
 
 ### Standalone emulators
 
@@ -669,7 +703,7 @@ src/
       install.ts    Fetching and unpacking one
       locations.ts  Where RetroArch and its cores live, per platform
       resolve.ts    Choosing the emulator and core for a platform
-      standalone.ts Finding an installed PCSX2 or Dolphin
+      standalone.ts Finding an installed PCSX2, Dolphin, RPCS3 or Cemu
       standalone-install.ts  Offering to fetch one that is missing
       standalone-release.ts  Reading each project's release index
       retroarch.ts  Which RetroArch installer suits this machine

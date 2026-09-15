@@ -128,6 +128,100 @@ test("looks for Dolphin where each platform puts it", () => {
   assert.ok(linux.includes("/usr/games/dolphin-emu"));
 });
 
+test("looks for RPCS3 where each platform puts it", () => {
+  // The bundle is RPCS3.app and the binary inside it is lowercase, which is
+  // exactly the kind of thing detection exists to stop people guessing at.
+  const readDir = listing({ "/Applications": ["RPCS3.app"] });
+  assert.deepEqual(pathsFor("rpcs3", "darwin", "/Users/sam", readDir), [
+    "/Applications/RPCS3.app/Contents/MacOS/rpcs3",
+  ]);
+  const windows = pathsFor("rpcs3", "win32", "C:\\Users\\sam");
+  assert.ok(windows.includes("C:\\Program Files\\RPCS3\\rpcs3.exe"));
+  for (const path of windows) assert.match(path, /rpcs3\.exe$/);
+  const linux = pathsFor("rpcs3", "linux", "/home/sam");
+  assert.ok(linux.includes("/usr/bin/rpcs3"));
+  assert.ok(
+    linux.some(
+      (path) => path.includes("flatpak") && path.endsWith("net.rpcs3.RPCS3"),
+    ),
+  );
+});
+
+test("looks for Cemu where each platform puts it", () => {
+  const readDir = listing({ "/Applications": ["Cemu.app"] });
+  assert.deepEqual(pathsFor("cemu", "darwin", "/Users/sam", readDir), [
+    "/Applications/Cemu.app/Contents/MacOS/Cemu",
+  ]);
+  // Cemu's own installer defaults to LOCALAPPDATA\Cemu rather than the
+  // Programs directory the others use, so that is the first place to look.
+  const windows = pathsFor("cemu", "win32", "C:\\Users\\sam");
+  assert.equal(windows[0], "C:\\Users\\sam\\AppData\\Local\\Cemu\\Cemu.exe");
+  for (const path of windows) assert.match(path, /Cemu\.exe$/);
+  const linux = pathsFor("cemu", "linux", "/home/sam");
+  // Capitalised: cemu is not what its build installs, and a case-insensitive
+  // filesystem is not something to count on.
+  assert.ok(linux.includes("/usr/bin/Cemu"));
+  assert.ok(
+    linux.some(
+      (path) => path.includes("flatpak") && path.endsWith("info.cemu.Cemu"),
+    ),
+  );
+});
+
+test("the platforms RetroArch cannot play at all have a row each", () => {
+  // PS2 and GameCube/Wii are here because RetroAchievements recognises no
+  // libretro core for them; PS3 and Wii U because libretro has no core at all,
+  // so without these two rows the platforms simply do not launch.
+  const found = toEmulatorMappings(
+    detect(
+      "linux",
+      "/home/sam",
+      "/usr/bin/rpcs3",
+      "/var/lib/flatpak/exports/bin/info.cemu.Cemu",
+    ),
+  );
+  assert.deepEqual(found, [
+    {
+      platformSlug: "ps3",
+      command: "/usr/bin/rpcs3",
+      // --no-gui so it quits when the game stops.
+      args: ["--no-gui", "{rom}"],
+      label: "RPCS3",
+    },
+    {
+      platformSlug: "wiiu",
+      command: "/var/lib/flatpak/exports/bin/info.cemu.Cemu",
+      args: ["-g", "{rom}"],
+      label: "Cemu",
+    },
+  ]);
+});
+
+test("every emulator in the table names its platforms and arguments", () => {
+  // A row that named no platform would be detected and never used, and one
+  // without {rom} would launch the emulator with no game in it.
+  const slugs = new Set<string>();
+  for (const emulator of STANDALONE_EMULATORS) {
+    assert.ok(emulator.platformSlugs.length > 0, emulator.id);
+    assert.ok(
+      emulator.args.some((arg) => arg.includes("{rom}")),
+      emulator.id,
+    );
+    // No {core}: a standalone emulator that asked for one would trigger a core
+    // download it would never load.
+    for (const arg of emulator.args) {
+      assert.doesNotMatch(arg, /\{core\}/, emulator.id);
+    }
+    for (const slug of emulator.platformSlugs) {
+      assert.equal(slug, slug.toLowerCase(), emulator.id);
+      // Two emulators claiming one platform would make the table's order
+      // decide which one plays it.
+      assert.equal(slugs.has(slug), false, slug);
+      slugs.add(slug);
+    }
+  }
+});
+
 test("finds an emulator inside a frontend's own tree", () => {
   // Someone running RetroBat already has these; asking them to configure what
   // they installed would be the wrong request.
@@ -281,23 +375,34 @@ test("finding one emulator does not stop the other being looked for", () => {
 });
 
 test("a hit costs one stat per call, not another scan", () => {
-  // Both found, so nothing is left to look for and every later call should be
-  // the liveness check and nothing else: no directory scan, and one stat each
-  // to confirm the remembered paths are still there.
+  // Every emulator found, so nothing is left to look for and every later call
+  // should be the liveness check and nothing else: no directory scan, and one
+  // stat each to confirm the remembered paths are still there. All of them
+  // have to be installed for that to hold -- one missing emulator is one the
+  // next call has to go looking for again, which is the point of the memo
+  // being per emulator rather than a single "something was found".
   resetStandaloneDetection();
   let probes = 0;
   let scans = 0;
+  const bundles = ["PCSX2.app", "Dolphin.app", "RPCS3.app", "Cemu.app"];
   const paths = new Set([
     "/Applications/PCSX2.app/Contents/MacOS/PCSX2",
     "/Applications/Dolphin.app/Contents/MacOS/Dolphin",
+    "/Applications/RPCS3.app/Contents/MacOS/rpcs3",
+    "/Applications/Cemu.app/Contents/MacOS/Cemu",
   ]);
+  assert.equal(
+    paths.size,
+    STANDALONE_EMULATORS.length,
+    "every emulator in the table needs a bundle here, or the memo has one left to look for",
+  );
   const exists = (candidate: string) => {
     probes += 1;
     return paths.has(candidate);
   };
   const readDir = (dir: string) => {
     scans += 1;
-    return dir === "/Applications" ? ["PCSX2.app", "Dolphin.app"] : [];
+    return dir === "/Applications" ? bundles : [];
   };
 
   detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists, readDir);
@@ -308,7 +413,11 @@ test("a hit costs one stat per call, not another scan", () => {
     detectedMappingFor("ps2", "darwin", "/Users/sam", {}, exists, readDir);
   }
   assert.equal(scans, 0, "a remembered emulator is not scanned for again");
-  assert.equal(probes, 10, "one stat per remembered emulator per call");
+  assert.equal(
+    probes,
+    STANDALONE_EMULATORS.length * 5,
+    "one stat per remembered emulator per call",
+  );
   resetStandaloneDetection();
 });
 
@@ -352,6 +461,8 @@ test("each platform maps to the emulator that serves it", () => {
   assert.equal(emulatorForPlatform("ngc"), "dolphin");
   assert.equal(emulatorForPlatform("wii"), "dolphin");
   assert.equal(emulatorForPlatform("NGC"), "dolphin");
+  assert.equal(emulatorForPlatform("ps3"), "rpcs3");
+  assert.equal(emulatorForPlatform("wiiu"), "cemu");
 });
 
 test("a platform a core can handle maps to no standalone", () => {

@@ -139,10 +139,11 @@ export interface DesktopConfig {
    *  so, and the offer stops once they have an emulator or decline for good. */
   offerRetroArchInstall: boolean;
   /** Use a standalone emulator found in its usual install location when no
-   *  `emulators` row covers the platform. Only PS2 and GameCube/Wii have one
-   *  today, because RetroAchievements recognises no libretro core for either.
-   *  Nothing is downloaded and no config is written; an explicit row always
-   *  wins, so this only ever fills a gap. */
+   *  `emulators` row covers the platform. PS2 and GameCube/Wii have one because
+   *  RetroAchievements recognises no libretro core for either; PS3 and Wii U
+   *  because libretro has no core for them at all. Nothing is downloaded and no
+   *  config is written; an explicit row always wins, so this only ever fills a
+   *  gap. */
   useDetectedEmulators: boolean;
   /** When a game needs a standalone emulator that is not installed, offer to
    *  fetch it from the project rather than failing the launch. Asked at most
