@@ -457,8 +457,10 @@ RPCS3 cannot open one at all.
 
 So a ROM the server reports as two or more disc images is fetched as those
 individual files instead, one request each. Discs are ordered by the number in
-their name (`Disc 2`, `disk 2`, `CD2`), and a `.cue` or `.gdi` is preferred
-over the `.bin` or `.img` it describes.
+their name (`Disc 2`, `disk 2`, `CD2`), and a `.cue` or `.gdi` is what counts
+as the disc rather than the `.bin` or `.img` it describes. The tracks it
+describes are still fetched, beside it: a sheet names them by relative name and
+cannot boot without them.
 
 What the emulator is then handed depends on whether it reads an `.m3u`:
 
@@ -498,17 +500,20 @@ which outranks both inferences:
 }
 ```
 
-A disc already under `libraryPath` is launched in place rather than downloaded.
-With a playlist that is decided per disc, since the playlist names absolute
-paths and so spans the library and the cache alike; without one it is all or
-nothing, because an emulator looking beside the disc it booted cannot finish a
-set split across two directories. The playlist itself is always written to the
-ROM cache, never into the library, so launching in place leaves nothing behind
-for RomM to scan.
+A set already under `libraryPath` is launched in place rather than downloaded,
+all of it or none of it: a sheet's tracks sit beside it by relative name, and an
+emulator with no playlist looks for the next disc beside the one it booted, so a
+set split across two directories is one that cannot finish. Otherwise the whole
+set lands in the ROM cache, where the same size check applies to each file and
+the cache is brought back inside `cacheLimitBytes` once the set is whole. The
+playlist is always written to the cache, never into the library, so launching in
+place leaves nothing behind for RomM to scan.
 
 Nothing here can fail a launch that would otherwise have worked. A server that
-will not answer, a ROM whose files cannot be read, and a set that turns out to
-hold one disc all fall back to the ordinary single-payload download.
+will not answer, a ROM whose files cannot be read, a set that turns out to hold
+one disc, and a transfer that is refused or interrupted all fall back to the
+ordinary single-payload download. Only cancelling stays fatal, that one being
+yours.
 
 ### Save data
 

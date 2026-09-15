@@ -6,6 +6,7 @@ import {
   readRomFiles,
   renderM3u,
   selectDiscs,
+  selectStagedFiles,
 } from "./m3u.ts";
 
 function file(fileName: string, id = 1): DiscFile {
@@ -81,6 +82,54 @@ test("selectDiscs falls back to name order when nothing is numbered", () => {
   );
 });
 
+test("selectStagedFiles keeps the tracks a sheet cannot boot without", () => {
+  // The .cue names its .bin by relative name, so leaving the data out of the
+  // download would fetch a sheet pointing at a file nobody has.
+  const staged = selectStagedFiles([
+    file("Game (Disc 1).cue", 1),
+    file("Game (Disc 1).bin", 2),
+    file("Game (Disc 2).cue", 3),
+    file("Game (Disc 2).bin", 4),
+    file("Game.txt", 5),
+    file("cover.png", 6),
+  ]);
+  assert.deepEqual(
+    staged.map((f) => f.fileName),
+    [
+      "Game (Disc 1).bin",
+      "Game (Disc 1).cue",
+      "Game (Disc 2).bin",
+      "Game (Disc 2).cue",
+    ],
+  );
+  // The playlist still names the sheets alone.
+  assert.deepEqual(
+    selectDiscs([
+      file("Game (Disc 1).cue", 1),
+      file("Game (Disc 1).bin", 2),
+      file("Game (Disc 2).cue", 3),
+      file("Game (Disc 2).bin", 4),
+    ]).map((f) => f.fileName),
+    ["Game (Disc 1).cue", "Game (Disc 2).cue"],
+  );
+});
+
+test("selectStagedFiles keeps a sheet's audio tracks too", () => {
+  const staged = selectStagedFiles([
+    file("Game (Disc 1).cue", 1),
+    file("Game (Disc 1) (Track 1).bin", 2),
+    file("Game (Disc 1) (Track 2).wav", 3),
+    file("Game (Disc 2).cue", 4),
+    file("readme.nfo", 5),
+  ]);
+  assert.deepEqual(staged.map((f) => f.fileName).sort(), [
+    "Game (Disc 1) (Track 1).bin",
+    "Game (Disc 1) (Track 2).wav",
+    "Game (Disc 1).cue",
+    "Game (Disc 2).cue",
+  ]);
+});
+
 test("renderM3u lists one disc per line, in the order given", () => {
   const text = renderM3u([
     "/cache/7/Game (Disc 1).chd",
@@ -130,12 +179,29 @@ test("readRomFiles drops a row missing anything it needs", () => {
     { ...row, full_path: null },
     { ...row, file_size_bytes: "700" },
     { ...row, file_size_bytes: -1 },
+    // An id that is not a whole positive number is not one the content
+    // endpoint can be asked for: file_ids=-1 fails the request outright.
+    { ...row, id: -1 },
+    { ...row, id: 0 },
+    { ...row, id: 1.5 },
+    { ...row, file_size_bytes: 1.5 },
     null,
     "nope",
   ];
   assert.deepEqual(readRomFiles({ files: bad }), []);
   // And keeps the good rows beside the bad ones.
   assert.equal(readRomFiles({ files: [...bad, row] }).length, 1);
+});
+
+test("readRomFiles keeps the first of two rows naming one file", () => {
+  // Both would land on the same path, and the playlist would name it twice.
+  const files = readRomFiles({
+    files: [row, { ...row, id: 9, file_name: "game (disc 1).CHD" }],
+  });
+  assert.deepEqual(
+    files.map((f) => f.id),
+    [4],
+  );
 });
 
 test("readRomFiles refuses a name that would not stay put", () => {

@@ -16,7 +16,7 @@ export interface DiscFile {
   sizeBytes: number;
 }
 
-/** Extensions a libretro core or a standalone emulator will boot from an .m3u.
+/** Extensions that name a disc: what a playlist lists and an emulator boots.
  *  Anything else in a folder rom is a manual, a scan, a save, or box art. */
 const DISC_EXTENSIONS = [
   ".chd",
@@ -30,6 +30,22 @@ const DISC_EXTENSIONS = [
   ".pbp",
   ".bin",
 ];
+
+/** A sheet describes its tracks by name and cannot boot without them beside
+ *  it, so these are staged with the discs while never being listed as one. */
+const TRACK_EXTENSIONS = [
+  ".bin",
+  ".img",
+  ".raw",
+  ".sub",
+  ".wav",
+  ".ogg",
+  ".flac",
+  ".mp3",
+];
+
+/** Extensions that describe a disc rather than hold it. */
+const SHEET_EXTENSIONS = [".cue", ".gdi", ".ccd", ".mds"];
 
 /** A disc number, when the name carries one: "(Disc 2)", "Disc 2", "CD2". */
 const DISC_NUMBER = /\b(?:disc|disk|cd)\s*([0-9]+)\b/i;
@@ -61,19 +77,38 @@ export function selectDiscs(files: DiscFile[]): DiscFile[] {
   const discs = files.filter((file) =>
     DISC_EXTENSIONS.includes(extensionOf(file.fileName)),
   );
-  const sheets = discs.filter((file) =>
-    [".cue", ".gdi", ".ccd", ".mds"].includes(extensionOf(file.fileName)),
+  const hasSheet = discs.some((file) =>
+    SHEET_EXTENSIONS.includes(extensionOf(file.fileName)),
   );
-  const listed =
-    sheets.length > 0
-      ? discs.filter(
-          (file) =>
-            extensionOf(file.fileName) !== ".bin" &&
-            extensionOf(file.fileName) !== ".img",
-        )
-      : discs;
+  const listed = hasSheet
+    ? discs.filter(
+        (file) => !TRACK_EXTENSIONS.includes(extensionOf(file.fileName)),
+      )
+    : discs;
+  return inDiscOrder(listed);
+}
 
-  return [...listed].sort((a, b) => {
+/**
+ * Every file that has to be on disk for those discs to boot.
+ *
+ * A sheet is not playable alone: dropping the tracks it names from the playlist
+ * is right, dropping them from the download is a `.cue` pointing at files that
+ * were never fetched.
+ */
+export function selectStagedFiles(files: DiscFile[]): DiscFile[] {
+  return inDiscOrder(
+    files.filter((file) => {
+      const extension = extensionOf(file.fileName);
+      return (
+        DISC_EXTENSIONS.includes(extension) ||
+        TRACK_EXTENSIONS.includes(extension)
+      );
+    }),
+  );
+}
+
+function inDiscOrder(files: DiscFile[]): DiscFile[] {
+  return [...files].sort((a, b) => {
     const left = discNumberOf(a.fileName);
     const right = discNumberOf(b.fileName);
     if (left !== null && right !== null && left !== right) return left - right;
@@ -100,6 +135,7 @@ export function readRomFiles(body: unknown): DiscFile[] {
   if (!Array.isArray(files)) return [];
 
   const out: DiscFile[] = [];
+  const seen = new Set<string>();
   for (const entry of files) {
     if (typeof entry !== "object" || entry === null) continue;
     const row = entry as Record<string, unknown>;
@@ -107,12 +143,14 @@ export function readRomFiles(body: unknown): DiscFile[] {
     const fileName = row.file_name;
     const fullPath = row.full_path;
     const sizeBytes = row.file_size_bytes;
+    // The id is interpolated into a file_ids selector, so a fraction or a
+    // negative is not a row to download from: it is a request that fails.
+    if (typeof id !== "number" || !Number.isInteger(id) || id <= 0) continue;
+    if (typeof fileName !== "string" || fileName.length === 0) continue;
+    if (typeof fullPath !== "string") continue;
     if (
-      typeof id !== "number" ||
-      typeof fileName !== "string" ||
-      fileName.length === 0 ||
-      typeof fullPath !== "string" ||
       typeof sizeBytes !== "number" ||
+      !Number.isInteger(sizeBytes) ||
       sizeBytes < 0
     ) {
       continue;
@@ -120,6 +158,11 @@ export function readRomFiles(body: unknown): DiscFile[] {
     // The name becomes a path inside the rom's own directory, so it is
     // sanitised the way every other name the server supplies is.
     if (safeFileName(fileName) !== fileName) continue;
+    // Two rows naming one file would fight over the same path on disk, and the
+    // playlist would name it twice. First wins, as the firmware mirror does.
+    const key = fileName.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
     out.push({ id, fileName, fullPath, sizeBytes });
   }
   return out;

@@ -519,8 +519,12 @@ export class Launcher {
       // not something any emulator can boot a multi-disc game out of. Returns
       // null for everything else, including a server that would not answer, and
       // the ordinary download below runs.
-      const shouldReportDisc = createProgressGate();
-      const discRateOf = createRateMeter();
+      // One gate and one meter per file, not per set: both read the byte count
+      // of the transfer in front of them, and the next file starting over at
+      // zero would otherwise measure as a transfer running backwards.
+      let staging = 0;
+      let shouldReportFile = createProgressGate();
+      let fileRateOf = createRateMeter();
       const discs = await syncDiscSet({
         config,
         session,
@@ -528,21 +532,26 @@ export class Launcher {
         signal: controller.signal,
         playlist: emulatorReadsPlaylist(config, request.platformSlug),
         onProgress: (fileName, received, total, index, count) => {
+          if (index !== staging) {
+            staging = index;
+            shouldReportFile = createProgressGate();
+            fileRateOf = createRateMeter();
+          }
           const progress = total ? received / total : undefined;
-          if (!shouldReportDisc(progress)) return;
+          if (!shouldReportFile(progress)) return;
           this.emit({
             romId: request.romId,
             status: "downloading",
             stage: "rom",
             // Named, and placed in the set, so four discs read as four
             // transfers rather than one that keeps restarting at zero.
-            disc: fileName,
-            discIndex: index,
-            discCount: count,
+            file: fileName,
+            fileIndex: index,
+            fileCount: count,
             progress,
             received,
             total: total ?? undefined,
-            bytesPerSecond: discRateOf(received),
+            bytesPerSecond: fileRateOf(received),
           });
         },
       });
