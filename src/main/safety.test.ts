@@ -446,6 +446,20 @@ test("validatePlatformQueries rejects a batch with one bad entry", () => {
   );
 });
 
+test("validatePlatformQueries rejects a batch with a hole in it", () => {
+  // Array.prototype.map skips holes, so a sparse array once passed validation
+  // and reached the launcher with an unvalidated undefined in it.
+  const sparse = new Array(1);
+  assert.throws(() => validatePlatformQueries(sparse), {
+    code: "invalid-request",
+  });
+  const mixed = [{ platformSlug: "snes", cores: [] }];
+  mixed.length = 2;
+  assert.throws(() => validatePlatformQueries(mixed), {
+    code: "invalid-request",
+  });
+});
+
 test("validatePlatformQueries rejects a non-array and an oversized batch", () => {
   assert.throws(() => validatePlatformQueries({ platformSlug: "snes" }), {
     code: "invalid-request",

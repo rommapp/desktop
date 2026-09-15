@@ -299,7 +299,9 @@ export function validatePlatformQueries(
       `Too many queries: ${value.length} exceeds the limit of ${MAX_PLATFORM_QUERIES}.`,
     );
   }
-  return value.map(validatePlatformQuery);
+  // Array.from rather than map, which skips holes: a sparse array would reach
+  // the launcher with an unvalidated undefined in it.
+  return Array.from(value, (query) => validatePlatformQuery(query));
 }
 
 /**

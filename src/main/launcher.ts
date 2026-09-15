@@ -166,7 +166,12 @@ export class Launcher {
     queries: PlatformSupportQuery[],
   ): Promise<Record<string, PlatformSupport>> {
     const config = await loadConfig();
-    const answers: Record<string, PlatformSupport> = {};
+    // Null prototype: a slug of "constructor" or "toString" would otherwise
+    // find an inherited property here, and ??= would skip the one platform it
+    // was asked about.
+    const answers: Record<string, PlatformSupport> = Object.create(
+      null,
+    ) as Record<string, PlatformSupport>;
     for (const query of queries) {
       answers[query.platformSlug] ??= this.supportFor(config, query);
     }

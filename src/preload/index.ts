@@ -6,15 +6,35 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 import type { IpcReply } from "../shared/ipc.ts";
-import {
-  type LaunchRequest,
-  type LaunchResult,
-  type LaunchState,
-  type PlatformSupport,
-  type PlatformSupportQuery,
-  type RommNativeBridge,
-  SHELL_CAPABILITIES,
+import type {
+  LaunchRequest,
+  LaunchResult,
+  LaunchState,
+  PlatformSupport,
+  PlatformSupportQuery,
+  RommNativeBridge,
+  ShellCapability,
 } from "../shared/types.ts";
+
+/**
+ * What this shell declares to the page, listed here because this is the only
+ * file that ships them and a sandboxed preload cannot import a value.
+ *
+ * A record rather than an array so the compiler rejects a capability declared
+ * in ShellCapability and forgotten here: an unlisted one is undetectable, and
+ * a frontend cannot tell that from a shell too old to have it.
+ */
+const ALL_CAPABILITIES = {
+  "launch-stage": true,
+  "library-passthrough": true,
+  "platform-support-all": true,
+  "firmware-mirror": true,
+  "multi-disc": true,
+} satisfies Record<ShellCapability, true>;
+
+// Object.keys loses the key type, and the satisfies above is what makes this
+// narrowing sound: the record's keys are exactly ShellCapability.
+const CAPABILITIES = Object.keys(ALL_CAPABILITIES) as ShellCapability[];
 
 const VERSION_FLAG = "--romm-shell-version=";
 
@@ -45,7 +65,7 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 const bridge: RommNativeBridge = {
   shellVersion: shellVersion(),
   os: process.platform as RommNativeBridge["os"],
-  capabilities: SHELL_CAPABILITIES,
+  capabilities: CAPABILITIES,
 
   launch: (request: LaunchRequest): Promise<LaunchResult> =>
     invoke("romm:launch", request),
