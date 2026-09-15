@@ -6,6 +6,7 @@ import {
   type EmulatorMapping,
   LaunchError,
 } from "../../shared/types.ts";
+import { type BiosPaths, resolveBiosPaths } from "../firmware/paths.ts";
 import { type SavePaths } from "../saves/paths.ts";
 import { detectedMappingFor } from "./standalone.ts";
 
@@ -58,9 +59,10 @@ export function applyTokens(
     rom: string;
     core: string | null;
     savePaths: SavePaths | null;
+    biosPaths?: BiosPaths | null;
   },
 ): string[] {
-  const { savePaths } = tokens;
+  const { savePaths, biosPaths } = tokens;
   const values: Record<string, string> = {
     rom: tokens.rom,
     core: tokens.core ?? "",
@@ -68,6 +70,7 @@ export function applyTokens(
     states: savePaths?.stateDir ?? "",
     savefile: savePaths?.saveFile ?? "",
     statefile: savePaths?.statePrefix ?? "",
+    bios: biosPaths?.directory ?? "",
   };
   // One pass with a replacer, never chained replaceAll calls with string
   // replacements: a path is inserted verbatim, and token-looking text inside
@@ -77,10 +80,27 @@ export function applyTokens(
   );
 }
 
-const TOKEN_PATTERN = /\{(rom|core|saves|states|savefile|statefile)\}/g;
+const TOKEN_PATTERN = /\{(rom|core|saves|states|savefile|statefile|bios)\}/g;
 
 /** The tokens that only mean something once the shell owns the save data. */
 const SAVE_TOKENS = ["{saves}", "{states}", "{savefile}", "{statefile}"];
+
+/**
+ * The extra arguments that point RetroArch at this platform's firmware.
+ *
+ * --appendconfig layers a generated config over the user's own for one run,
+ * rather than editing their retroarch.cfg: switching the mirror off switches
+ * this off with it, and nothing of theirs is rewritten.
+ *
+ * Gated on the file existing, which is the whole protocol. The sync writes it
+ * only when the mirror has firmware in it and deletes it when the mirror
+ * empties, so one stat answers "is there anything to point at" for the launch
+ * and the support probe alike, with neither needing to have asked the server.
+ */
+function systemDirectoryArgs(biosPaths: BiosPaths | null): string[] {
+  if (!biosPaths || !existsSync(biosPaths.appendConfig)) return [];
+  return [`--appendconfig=${biosPaths.appendConfig}`];
+}
 
 function findMapping(
   config: DesktopConfig,
@@ -328,6 +348,11 @@ export function resolveLaunch({
    *  result names a core that is not on disk yet and must not be spawned. */
   assumeMissingCoreInstalled?: boolean;
 }): ResolvedLaunch {
+  // Derived rather than passed in, so the launch and the support probe agree
+  // without either of them having synced anything: the directory is a pure
+  // function of the config and the slug, and "{bios}" resolves to it whether or
+  // not the server turned out to have firmware to put there.
+  const biosPaths = resolveBiosPaths(config.biosPath, platformSlug);
   const mapping = findMapping(config, platformSlug);
   if (mapping) {
     const command = resolveEmulatorCommand(
@@ -368,6 +393,7 @@ export function resolveLaunch({
         rom: romPath,
         core: core?.path ?? null,
         savePaths,
+        biosPaths,
       }),
       label: mapping.label ?? mapping.command,
     };
@@ -413,7 +439,15 @@ export function resolveLaunch({
 
   return {
     command: config.retroarchPath,
-    args: ["-L", core.path, ...saveArgs, romPath],
+    // The system directory first: --appendconfig is read as RetroArch starts
+    // up, and the core and content that follow are what the run is about.
+    args: [
+      ...systemDirectoryArgs(biosPaths),
+      "-L",
+      core.path,
+      ...saveArgs,
+      romPath,
+    ],
     label: `RetroArch (${core.name})`,
   };
 }

@@ -489,6 +489,78 @@ Should `saveDataPath` ever be empty, a mapping naming one of these tokens fails
 with an explanation rather than handing the emulator a blank argument, the same
 way `{core}` does.
 
+### Firmware from RomM
+
+RomM has a firmware library of its own: BIOS files uploaded per platform, served
+from `/api/firmware`. Nothing on this side used it, so a `scph5501.bin` already
+sitting in RomM still had to be copied into RetroArch's system directory by
+hand, and then again on the next machine.
+
+It is now fetched the way a ROM is -- same server, same session cookies, skipped
+when what is on disk already matches the size the server reports, written to a
+`.part` file that is renamed on success -- into one directory per platform:
+
+```
+<biosPath>/<platformSlug>/<file name>
+```
+
+Per platform rather than per game, because the _emulator_ is what has to find
+these, under the name it expects: a core looking for `scph5501.bin` will not take
+`<romId>/scph5501.bin`. And never evicted, unlike the [ROM cache](#rom-cache):
+these are a few megabytes a launch depends on. The directory is kept as a mirror
+instead, so firmware deleted in RomM goes from here on the next launch.
+
+Nothing about it can fail a launch. Most platforms need no firmware, a user may
+not have RomM's firmware read scope, and a server older than the endpoint
+answers 404 -- all three end as "no firmware", which is the launch this shell
+performed before any of it existed. Defaults to on; set `useRommFirmware` to
+`false` to switch it off, or `biosPath` to put the mirror elsewhere:
+
+```json
+{
+  "useRommFirmware": true,
+  "biosPath": "/home/you/romm-bios"
+}
+```
+
+`biosPath` has to sit outside `cachePath` and `saveDataPath`, and the shell
+refuses a launch when any two of the three contain each other: the mirror
+deletes what the server no longer lists and cache eviction deletes a ROM
+directory whole, so an overlap means one of them deleting files the other owns.
+
+RetroArch is pointed at it for you. The shell writes a config naming
+`system_directory` and passes `--appendconfig`, which layers over your own
+settings for that one run rather than editing your `retroarch.cfg` -- so
+switching the mirror off switches this off with it. Those generated files live in
+`<biosPath>/.retroarch/`, are rewritten on every launch that syncs, and are not
+worth editing.
+
+A configured emulator has to be told, the same way save data works. `{bios}`
+expands to that platform's directory:
+
+```json
+{
+  "emulators": [
+    {
+      "platformSlug": "psx",
+      "label": "DuckStation",
+      "command": "/usr/bin/duckstation-qt",
+      "args": ["-bios-path", "{bios}", "-batch", "{rom}"]
+    }
+  ]
+}
+```
+
+Two things this cannot do for you. PCSX2, Dolphin, RPCS3 and Cemu take no BIOS
+directory on the command line at all, each reading its own, so for those the
+mirror is a staging directory you point the emulator at once in its own settings
+-- PCSX2's Settings, BIOS, or RPCS3's Install Firmware for a `PS3UPDAT.PUP`
+sitting there. And the mirror is flat, because a RomM firmware row carries a
+filename and nothing else, while a few libretro cores want a subdirectory of the
+system directory (Flycast looks for `dc/dc_boot.bin`). Put those where the core
+wants them, outside `<biosPath>`, since anything inside a platform's directory
+that RomM does not list is treated as firmware it no longer has.
+
 ### Fullscreen
 
 Set `fullscreen` to open the main window with no title bar, for a TV or
@@ -548,8 +620,13 @@ from third-party metadata providers, so the renderer is treated as untrusted:
   system, so Gatekeeper and SmartScreen see it as they would a browser download
   -- and a transfer that stops short of the declared length is deleted rather
   than opened.
-- ROM download URLs must resolve to the configured server origin and an `/api/`
-  route, and processes are spawned with an argument array, never a shell string.
+- ROM and firmware download URLs must resolve to the configured server origin
+  and an `/api/` route, and processes are spawned with an argument array, never
+  a shell string.
+- A firmware filename from the server is used verbatim, because that is the name
+  an emulator looks for, so one that is not already a plain filename is refused
+  rather than rewritten into a safe one. Nothing the server says can name a path
+  outside the platform's own directory.
 - Self-signed certificates, common on a LAN, prompt once and are then
   remembered by fingerprint.
 
@@ -600,6 +677,7 @@ src/
     rom-cache.ts    Download with the window's session cookies
     cache/          LRU eviction over the ROM cache
     saves/          Per-game save and state directories
+    firmware/       Mirroring RomM's own BIOS library, per platform
     safety.ts       Validation of everything the renderer sends
     window.ts       Window creation and navigation policy
     index.ts        App lifecycle, single-instance lock, initial window

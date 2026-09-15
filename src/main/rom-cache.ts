@@ -29,7 +29,15 @@ export interface CachedRom {
  */
 const WRITE_BUFFER_BYTES = 4 * 1024 * 1024;
 
-function download({
+/**
+ * Fetch a file from the bound RomM server onto local disk.
+ *
+ * Shared with the firmware mirror, which pulls from the same server over the
+ * same session and wants the same backpressure, the same cancellation and the
+ * same refusal to treat a non-2xx body as a file. The only thing either caller
+ * decides is where the bytes land.
+ */
+export function downloadFromServer({
   url,
   session,
   destination,
@@ -157,7 +165,13 @@ export async function ensureRom({
   // transfer never leaves a truncated ROM that looks cached.
   const temp = `${target}.part`;
   try {
-    await download({ url, session, destination: temp, onProgress, signal });
+    await downloadFromServer({
+      url,
+      session,
+      destination: temp,
+      onProgress,
+      signal,
+    });
     await rename(temp, target);
   } catch (error) {
     await rm(temp, { force: true });

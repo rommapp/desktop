@@ -53,8 +53,9 @@ export interface LaunchState {
    *  so a frontend that predates core installation reads a core download as an
    *  ordinary one rather than as an unknown status it has to handle.
    *  "emulator" covers both fetching a standalone emulator and the wait while
-   *  the user installs what was fetched, which has no progress to report. */
-  stage?: "rom" | "core" | "emulator";
+   *  the user installs what was fetched, which has no progress to report.
+   *  "firmware" is the RomM firmware mirror, which usually has nothing to do. */
+  stage?: "rom" | "core" | "emulator" | "firmware";
   /** The core being installed, while stage is "core". */
   core?: string;
   /** The emulator being set up, while stage is "emulator". Present for both
@@ -114,8 +115,9 @@ export interface EmulatorMapping {
   command: string;
   /** Argument template: "{rom}" becomes the cached ROM path, "{core}" the
    *  resolved core path, "{saves}" / "{states}" this game's save data
-   *  directories, and "{savefile}" / "{statefile}" the files inside them, for
-   *  an emulator that wants one. Substituted per argv entry, so no shell is
+   *  directories, "{savefile}" / "{statefile}" the files inside them for an
+   *  emulator that wants one, and "{bios}" the directory this platform's RomM
+   *  firmware was mirrored into. Substituted per argv entry, so no shell is
    *  involved. */
   args: string[];
   /** Display name for the emulator, shown in the renderer. */
@@ -164,6 +166,15 @@ export interface DesktopConfig {
   emulators: EmulatorMapping[];
   /** Where downloaded ROMs are cached. Defaults to userData/rom-cache. */
   cachePath: string | null;
+  /** Root for the per-platform directories RomM's firmware is mirrored into,
+   *  one per platform slug. Never evicted, unlike the ROM cache, because a
+   *  launch depends on what is in it. Defaults to userData/bios. */
+  biosPath: string | null;
+  /** Mirror the firmware already uploaded to RomM, so an emulator finds the
+   *  BIOS a platform needs without it being copied there by hand. Read-only as
+   *  far as the server is concerned, and a failure never fails a launch: most
+   *  platforms need no firmware at all. */
+  useRommFirmware: boolean;
   /** Root for the per-game directories an emulator is pointed at for save data.
    *  Keeping saves out of the cache protects them from its eviction, and out of
    *  the library from being scanned. Defaults to userData/save-data. */

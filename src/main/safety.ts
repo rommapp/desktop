@@ -148,22 +148,37 @@ function canonical(path: string): string {
 }
 
 /**
- * Refuse a cache and a save-data tree that contain one another. Eviction
- * removes a ROM directory whole, so an overlapping save tree would be deleted
- * along with the game it belongs to.
+ * Refuse any two of the shell's own roots that contain one another.
+ *
+ * Two of the three delete things. Cache eviction removes a ROM directory
+ * whole, so a save tree or a firmware mirror underneath it would go with the
+ * game it sat beside. The firmware mirror deletes whatever the server no longer
+ * lists, so a cache or a save tree underneath *it* would be deleted for not
+ * being firmware. Save data is the one that only ever gets written, and it is
+ * also the one nothing can replace, which is why it is worth this check rather
+ * than a recovery path.
  */
 export function assertSeparateRoots(config: DesktopConfig): void {
-  const { cachePath, saveDataPath } = config;
-  if (!cachePath || !saveDataPath) return;
-  // Compared canonically: a saveDataPath symlinked at the cache is the same
-  // directory under a different name, and eviction would not care which.
-  const cache = canonical(cachePath);
-  const saves = canonical(saveDataPath);
-  if (isWithin(cache, saves) || isWithin(saves, cache)) {
-    throw new LaunchError(
-      "invalid-request",
-      `saveDataPath (${saveDataPath}) and cachePath (${cachePath}) overlap. Cache eviction would delete save data, so set them to separate directories.`,
-    );
+  const roots: [string, string][] = [
+    ["cachePath", config.cachePath],
+    ["saveDataPath", config.saveDataPath],
+    ["biosPath", config.biosPath],
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+
+  for (let i = 0; i < roots.length; i += 1) {
+    for (let j = i + 1; j < roots.length; j += 1) {
+      const [oneName, onePath] = roots[i]!;
+      const [otherName, otherPath] = roots[j]!;
+      // Compared canonically: a saveDataPath symlinked at the cache is the same
+      // directory under a different name, and eviction would not care which.
+      const one = canonical(onePath);
+      const other = canonical(otherPath);
+      if (!isWithin(one, other) && !isWithin(other, one)) continue;
+      throw new LaunchError(
+        "invalid-request",
+        `${otherName} (${otherPath}) and ${oneName} (${onePath}) overlap. One of them deletes files the other owns, so set them to separate directories.`,
+      );
+    }
   }
 }
 
