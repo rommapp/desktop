@@ -12,9 +12,9 @@ is already serving, so each of those is whatever RomM shipped and stays current
 when you update the server. The shell adds exactly one thing to that page: a
 bridge that hands a game to a real emulator.
 
-> **Early work in progress.** Two known regressions are documented under
-> [Known issues](#known-issues), and the launch path has not been tested against
-> a real RetroArch install on macOS or Windows.
+> **Early work in progress.** The launch path has not been tested against a
+> real RetroArch install on macOS or Windows, and the surfaces listed under
+> [Untested](#untested) have not been exercised at all.
 
 ## How this compares
 
@@ -112,16 +112,31 @@ It is throwaway. Once those are answered, delete `src/main/spike.ts`,
 `src/main/spike.test.ts`, and the `installSpike` wiring in
 `src/main/window.ts`.
 
-## Known issues
+## Signing in
 
-| Issue                  | Cause                                                                                                                                                                                                                      | Fix                                                                                                                     |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| OIDC / SSO login fails | RomM's login redirects to your identity provider, which is off-origin. `confineToServer` in `src/main/window.ts` blocks the navigation and hands it to the system browser, so the session cookie lands in the wrong place. | Run the auth flow in a child window that permits off-origin navigation and closes once it returns to the server origin. |
-| Barcode scanning fails | RomM scans physical-game barcodes with `getUserMedia`. The permission handler in `src/main/window.ts` allows only `fullscreen` and `pointerLock`.                                                                          | Allow `media` for requests originating from the configured server origin.                                               |
+A username and password work in the window as they do in a browser. OIDC and
+SSO take a detour, because the identity provider is off-origin by definition
+and the window the app runs in is confined to your server: RomM's login opens
+`/api/login/openid`, which redirects to your provider, and the provider
+eventually redirects back.
 
-Beyond those two, the in-browser emulators (EmulatorJS, Ruffle, js-dos,
-PICO-8), file downloads, and clipboard actions are all untested in this shell
-and worth exercising.
+That flow is given a window of its own, which permits the excursion and shares
+the session with the main window, so the cookie your provider establishes is
+the one the app then holds. It closes as soon as the flow lands back on your
+server, and a provider that still has a session of its own answers so quickly
+that it never appears at all.
+
+Logging out is the one part still handed to your browser. RomM clears its own
+session before returning your provider's end-session URL, so you are signed out
+of RomM either way; whether your provider's own session ends depends on the
+browser that URL opens in. An off-origin address arriving from a page is
+indistinguishable from any other external link, and treating a class of them as
+auth would widen exactly the boundary the auth window exists to keep narrow.
+
+## Untested
+
+The in-browser emulators (EmulatorJS, Ruffle, js-dos, PICO-8), file downloads,
+and clipboard actions are all untested in this shell and worth exercising.
 
 ## Using a controller
 
@@ -573,8 +588,17 @@ The window loads a remote origin and renders artwork and descriptions pulled
 from third-party metadata providers, so the renderer is treated as untrusted:
 
 - `contextIsolation`, `sandbox`, and `nodeIntegration: false` are all enforced.
-- In-window navigation is restricted to your server's origin; every other link
-  is handed to your real browser. This is also what breaks OIDC login, above.
+- In-window navigation is restricted to your server's origin -- including
+  redirects, so a response cannot walk the window off-origin where a link
+  cannot -- and every other link is handed to your real browser. The one
+  address that leaves is the OIDC endpoint, which opens the separate auth
+  window described under [Signing in](#signing-in); that window carries no
+  preload, so `window.rommNative` is reachable only from your server's own
+  page.
+- The camera is granted only to your server's own origin, only to the top-level
+  frame, and only for video, so RomM's barcode scanner works while an embedded
+  piece of third-party metadata cannot reach it. Every other permission is
+  refused.
 - The renderer never supplies an executable or arguments. It names a game and
   the libretro cores its platform supports; the command comes only from your
   own config.

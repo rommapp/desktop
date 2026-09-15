@@ -3,40 +3,120 @@ import { join } from "node:path";
 import { type DesktopConfig } from "../shared/types.ts";
 import { loadConfig, updateConfig } from "./config.ts";
 import { isSpikeMode, spikeScript } from "./spike.ts";
+import {
+  classifyNavigation,
+  isAuthFlowComplete,
+  shouldGrantPermission,
+} from "./window-policy.ts";
 
 const SETUP_PAGE = join(__dirname, "../../resources/setup.html");
 
-/** Schemes we are willing to hand to the user's browser or shell. */
-const EXTERNAL_SCHEMES = new Set(["https:", "http:", "mailto:"]);
+/** What will-navigate and will-redirect have in common. Both carry the frame
+ *  the navigation belongs to, and only the main one is confined. */
+type NavigationEvent = {
+  url: string;
+  isMainFrame: boolean;
+  preventDefault: () => void;
+};
 
-function sameOrigin(url: string, serverUrl: string): boolean {
-  try {
-    return new URL(url).origin === new URL(serverUrl).origin;
-  } catch {
-    return false;
-  }
-}
+/**
+ * Contents belonging to an auth window, or to a popup one opened.
+ *
+ * The permission handler below is set on the session, and the auth window
+ * shares that session deliberately -- the shared cookie jar is the point of it.
+ * So the handler sees an identity provider's requests too, and would have
+ * answered them with the rules written for RomM's own page. A login page needs
+ * no permissions, so these contents are refused before those rules are
+ * consulted. Weakly held, so a closed window is not kept alive by this.
+ */
+const authContents = new WeakSet<Electron.WebContents>();
+
+/** No preload and no Node, the same as the main window, for pages that are
+ *  more foreign still: an identity provider we have not bound ourselves to. */
+const AUTH_WEB_PREFERENCES = {
+  contextIsolation: true,
+  nodeIntegration: false,
+  sandbox: true,
+  webviewTag: false,
+  webSecurity: true,
+  spellcheck: false,
+} as const;
 
 /** Confine a window to its RomM server. The renderer paints metadata from ten
  *  third-party providers, so only same-origin navigation stays in-window. */
 function confineToServer(window: BrowserWindow, serverUrl: string): void {
+  let authWindow: BrowserWindow | null = null;
+
+  const openAuthWindow = (url: string): void => {
+    if (authWindow && !authWindow.isDestroyed()) {
+      // A second attempt while one is open restarts the flow in the window
+      // already there, rather than stacking another over it.
+      void authWindow.loadURL(url);
+      authWindow.focus();
+      return;
+    }
+    authWindow = createAuthWindow(window, serverUrl, url, (returnUrl) => {
+      // The auth window is a child, so quitting mid-login closes it and this
+      // arrives with nothing left to load.
+      if (!window.isDestroyed()) void window.loadURL(returnUrl);
+    });
+    authWindow.on("closed", () => {
+      authWindow = null;
+    });
+  };
+
   const openExternally = (url: string): void => {
-    try {
-      if (EXTERNAL_SCHEMES.has(new URL(url).protocol))
-        void shell.openExternal(url);
-    } catch {
-      // A malformed URL is simply not opened.
+    // classifyNavigation has already established this is a scheme we open.
+    void shell.openExternal(url);
+  };
+
+  const route = (details: NavigationEvent): void => {
+    // Only the top-level document is confined. will-redirect fires for a
+    // subframe too, and a subframe is not what the confinement is about: an
+    // iframe of third-party metadata following its own redirect would
+    // otherwise be cancelled and opened in the user's browser, which is both
+    // a surprise and a way for embedded content to reach out of the page.
+    if (!details.isMainFrame) return;
+    const { url } = details;
+    switch (classifyNavigation(url, serverUrl)) {
+      case "in-window":
+        return;
+      case "auth-window":
+        details.preventDefault();
+        openAuthWindow(url);
+        return;
+      case "external":
+        details.preventDefault();
+        openExternally(url);
+        return;
+      case "blocked":
+        details.preventDefault();
+        return;
     }
   };
 
-  window.webContents.on("will-navigate", (event, url) => {
-    if (sameOrigin(url, serverUrl)) return;
-    event.preventDefault();
-    openExternally(url);
-  });
+  window.webContents.on("will-navigate", route);
+
+  // A same-origin request that answers with an off-origin redirect never
+  // reaches will-navigate, so without this the confinement has a gap the
+  // server itself can walk the window through.
+  window.webContents.on("will-redirect", route);
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    openExternally(url);
+    // RomM opens the OIDC endpoint with window.open, so this path has to reach
+    // the auth window too. Nothing else is given a window of its own: a link
+    // asking for one still goes to the user's browser, as it did before.
+    switch (classifyNavigation(url, serverUrl)) {
+      case "auth-window":
+        openAuthWindow(url);
+        break;
+      case "in-window":
+      case "external":
+        openExternally(url);
+        break;
+      case "blocked":
+        break;
+    }
     return { action: "deny" };
   });
 
@@ -46,12 +126,96 @@ function confineToServer(window: BrowserWindow, serverUrl: string): void {
   );
 
   window.webContents.session.setPermissionRequestHandler(
-    (_contents, permission, callback) => {
-      // Gamepad and fullscreen are what the player needs; nothing else is
-      // granted silently to a page rendering third-party metadata.
-      callback(permission === "fullscreen" || permission === "pointerLock");
+    (contents, permission, callback, details) => {
+      // Fullscreen and pointer lock are granted to RomM's page without asking
+      // the origin, which is right for a player and wrong for a provider: both
+      // can be used to misrepresent what the user is looking at, and neither is
+      // something a login page needs. Handing the flow to the system browser
+      // never granted them either.
+      if (authContents.has(contents)) {
+        callback(false);
+        return;
+      }
+      callback(shouldGrantPermission(permission, details, serverUrl));
     },
   );
+}
+
+/**
+ * A window for an authentication flow that has to leave the server's origin.
+ *
+ * Confining the main window is what makes it safe to point a renderer at a
+ * remote page, and an OIDC login is the one thing RomM does that cannot live
+ * inside that rule: the identity provider is off-origin by definition. So the
+ * excursion gets a window of its own that permits it. That window shares the
+ * default session, and therefore the cookie jar, so the session the provider
+ * establishes is the one the main window goes on to use -- which is exactly
+ * what handing the flow to the system browser could never do.
+ *
+ * It carries no preload, so `window.rommNative` stays reachable only from the
+ * server's own page and never from a provider's.
+ */
+function createAuthWindow(
+  parent: BrowserWindow,
+  serverUrl: string,
+  startUrl: string,
+  onComplete: (url: string) => void,
+): BrowserWindow {
+  const authWindow = new BrowserWindow({
+    parent,
+    width: 520,
+    height: 720,
+    minWidth: 380,
+    minHeight: 480,
+    backgroundColor: "#000000",
+    autoHideMenuBar: true,
+    title: "Sign in",
+    // Shown once the provider's page is ready to paint rather than now. A
+    // provider that still has a session of its own answers immediately and the
+    // flow finishes below without this window ever appearing, so the common
+    // case is no window at all instead of one that flashes open and shut.
+    show: false,
+    webPreferences: AUTH_WEB_PREFERENCES,
+  });
+
+  authContents.add(authWindow.webContents);
+  // A popup the provider opens shares the session too, so it is one of these
+  // as well.
+  authWindow.webContents.on("did-create-window", (popup) => {
+    authContents.add(popup.webContents);
+  });
+
+  authWindow.once("ready-to-show", () => {
+    if (!authWindow.isDestroyed()) authWindow.show();
+  });
+
+  const finish = (details: NavigationEvent): void => {
+    // The flow is done when the document itself is back on the server, not
+    // when something the provider embedded happens to point there.
+    if (!details.isMainFrame) return;
+    const { url } = details;
+    if (!isAuthFlowComplete(url, serverUrl)) return;
+    // Stopping a hop short of loading this page: the session was established by
+    // the response that asked for this redirect, so the main window can go
+    // there itself and this one has nothing left to show.
+    details.preventDefault();
+    onComplete(url);
+    authWindow.close();
+  };
+
+  authWindow.webContents.on("will-navigate", finish);
+  authWindow.webContents.on("will-redirect", finish);
+
+  // A provider that runs part of the flow in a popup -- a passkey prompt, a
+  // second factor -- needs it to open, and to keep its opener. Denying it here
+  // would strand the same flow this window exists to allow.
+  authWindow.webContents.setWindowOpenHandler(() => ({
+    action: "allow",
+    overrideBrowserWindowOptions: { webPreferences: AUTH_WEB_PREFERENCES },
+  }));
+
+  void authWindow.loadURL(startUrl);
+  return authWindow;
 }
 
 function createWindow(preload: string, fullscreen = false): BrowserWindow {
