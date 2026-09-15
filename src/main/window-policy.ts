@@ -138,11 +138,12 @@ export interface PermissionDetails {
  *   the same thing, so it stands in should the first ever be absent.
  * - The top-level frame is asking, so a nested one cannot reach the camera
  *   even on an origin that could.
- * - Only video is wanted. The scanner asks for
- *   `{ video: { facingMode: "environment" } }` and nothing in RomM wants the
- *   microphone, so a request that also asks for audio is not the one this
- *   exists for, and a request whose devices Electron does not name is denied
- *   rather than guessed at.
+ * - Video is the only thing wanted, and the only thing named. The scanner asks
+ *   for `{ video: { facingMode: "environment" } }`, so anything else in the
+ *   list -- the microphone, or a device type a later Electron introduces --
+ *   makes this a request other than the one this exists for. Matched exactly
+ *   rather than by excluding audio, so a device nobody here has heard of is
+ *   refused by default instead of riding along with video.
  */
 export function shouldGrantPermission(
   permission: string,
@@ -159,6 +160,5 @@ export function shouldGrantPermission(
     return false;
 
   const devices = details.mediaTypes;
-  if (devices === undefined || devices.length === 0) return false;
-  return devices.includes("video") && !devices.includes("audio");
+  return devices !== undefined && devices.length === 1 && devices[0] === "video";
 }

@@ -11,6 +11,14 @@ import {
 
 const SETUP_PAGE = join(__dirname, "../../resources/setup.html");
 
+/** What will-navigate and will-redirect have in common. Both carry the frame
+ *  the navigation belongs to, and only the main one is confined. */
+type NavigationEvent = {
+  url: string;
+  isMainFrame: boolean;
+  preventDefault: () => void;
+};
+
 /** No preload and no Node, the same as the main window, for pages that are
  *  more foreign still: an identity provider we have not bound ourselves to. */
 const AUTH_WEB_PREFERENCES = {
@@ -50,20 +58,27 @@ function confineToServer(window: BrowserWindow, serverUrl: string): void {
     void shell.openExternal(url);
   };
 
-  const route = (event: Electron.Event, url: string): void => {
+  const route = (details: NavigationEvent): void => {
+    // Only the top-level document is confined. will-redirect fires for a
+    // subframe too, and a subframe is not what the confinement is about: an
+    // iframe of third-party metadata following its own redirect would
+    // otherwise be cancelled and opened in the user's browser, which is both
+    // a surprise and a way for embedded content to reach out of the page.
+    if (!details.isMainFrame) return;
+    const { url } = details;
     switch (classifyNavigation(url, serverUrl)) {
       case "in-window":
         return;
       case "auth-window":
-        event.preventDefault();
+        details.preventDefault();
         openAuthWindow(url);
         return;
       case "external":
-        event.preventDefault();
+        details.preventDefault();
         openExternally(url);
         return;
       case "blocked":
-        event.preventDefault();
+        details.preventDefault();
         return;
     }
   };
@@ -146,12 +161,16 @@ function createAuthWindow(
     if (!authWindow.isDestroyed()) authWindow.show();
   });
 
-  const finish = (event: Electron.Event, url: string): void => {
+  const finish = (details: NavigationEvent): void => {
+    // The flow is done when the document itself is back on the server, not
+    // when something the provider embedded happens to point there.
+    if (!details.isMainFrame) return;
+    const { url } = details;
     if (!isAuthFlowComplete(url, serverUrl)) return;
     // Stopping a hop short of loading this page: the session was established by
     // the response that asked for this redirect, so the main window can go
     // there itself and this one has nothing left to show.
-    event.preventDefault();
+    details.preventDefault();
     onComplete(url);
     authWindow.close();
   };

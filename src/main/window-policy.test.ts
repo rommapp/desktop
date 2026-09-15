@@ -189,6 +189,27 @@ test("shouldGrantPermission refuses the microphone", () => {
   );
 });
 
+test("shouldGrantPermission refuses a device it does not recognise", () => {
+  // Matched exactly rather than by excluding audio, so a type a later Electron
+  // introduces cannot ride along with video.
+  assert.equal(
+    shouldGrantPermission(
+      "media",
+      cameraRequest({ mediaTypes: ["video", "something-new"] }),
+      SERVER,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldGrantPermission(
+      "media",
+      cameraRequest({ mediaTypes: ["something-new"] }),
+      SERVER,
+    ),
+    false,
+  );
+});
+
 test("shouldGrantPermission refuses a media request it cannot inspect", () => {
   assert.equal(
     shouldGrantPermission("media", cameraRequest({ mediaTypes: undefined }), SERVER),
