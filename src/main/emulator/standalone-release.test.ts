@@ -8,8 +8,11 @@ import {
   RPCS3_LATEST,
 } from "../../test/release-fixtures.ts";
 import {
+  type ArtifactKind,
   RELEASE_SOURCES,
+  type ReleaseArtifact,
   installsWhereDetectionLooks,
+  mayAppearWhereDetectionLooks,
   pickCemuArtifact,
   pickDolphinArtifact,
   pickPcsx2Artifact,
@@ -103,6 +106,19 @@ test("PCSX2 publishes only an archive for macOS", () => {
   const found = pickPcsx2Artifact(PCSX2, "darwin", "arm64");
   assert.match(found?.fileName ?? "", /\.tar\.xz$/);
   assert.equal(installsWhereDetectionLooks(found!.kind), false);
+});
+
+test("PCSX2 publishes one macOS build, so neither arch is choosing", () => {
+  // Worth pinning rather than assuming. Unlike Cemu, which builds a disk image
+  // per architecture, the MacOS key here holds a single asset whose name says
+  // nothing about an architecture -- so an Apple silicon Mac and an Intel one
+  // are handed the same file because that is the only file there is, not
+  // because the wrong one was picked for it.
+  const arm = pickPcsx2Artifact(PCSX2, "darwin", "arm64");
+  const intel = pickPcsx2Artifact(PCSX2, "darwin", "x64");
+  assert.ok(arm);
+  assert.deepEqual(arm, intel);
+  assert.doesNotMatch(arm.fileName, /arm64|aarch64|x86_64|universal/i);
 });
 
 test("32-bit Windows is offered no PCSX2 at all", () => {
@@ -206,8 +222,8 @@ test("RPCS3 publishes a portable build for every platform it has", () => {
   for (const [platform, arch, pattern, kind] of [
     ["win32", "x64", /_win64_msvc\.7z$/, "archive"],
     ["linux", "x64", /_linux64\.AppImage$/, "appimage"],
-    ["darwin", "arm64", /_macos\.7z$/, "archive"],
     ["darwin", "x64", /_macos\.7z$/, "archive"],
+    ["darwin", "arm64", /_macos_aarch64\.7z$/, "archive"],
   ] as [NodeJS.Platform, string, RegExp, string][]) {
     const found = pickRpcs3Artifact(RPCS3, platform, arch);
     assert.match(found?.fileName ?? "", pattern, platform);
@@ -230,6 +246,92 @@ test("a machine RPCS3 does not build for is offered nothing", () => {
   assert.equal(pickRpcs3Artifact(RPCS3, "linux", "arm64"), null);
   assert.equal(pickRpcs3Artifact(RPCS3, "win32", "ia32"), null);
   assert.equal(pickRpcs3Artifact(RPCS3, "freebsd", "x64"), null);
+});
+
+test("an Apple silicon Mac gets its own build, not the Intel one", () => {
+  // The endpoint names one macOS build and it is x86-64, so a Mac would
+  // otherwise be handed a PS3 emulator to run under translation without ever
+  // being told. The native build is the same release from a repository of its
+  // own, named the same way with _aarch64 before the suffix.
+  const arm = pickRpcs3Artifact(RPCS3, "darwin", "arm64");
+  assert.equal(arm?.fileName, "rpcs3-v0.0.42-20004-0646d367_macos_aarch64.7z");
+  assert.equal(
+    arm?.url,
+    "https://github.com/RPCS3/rpcs3-binaries-mac-arm64/releases/download/build-0646d36708cee4ea33690a6b8c4ec5a94e634914/rpcs3-v0.0.42-20004-0646d367_macos_aarch64.7z",
+  );
+  // Same release, same kind: only the architecture changed.
+  const intel = pickRpcs3Artifact(RPCS3, "darwin", "x64");
+  assert.equal(arm?.version, intel?.version);
+  assert.equal(arm?.kind, "archive");
+  assert.equal(intel?.fileName, "rpcs3-v0.0.42-20004-0646d367_macos.7z");
+});
+
+test("a query on the macOS URL cannot smuggle the Intel asset through", () => {
+  // fileNameOf drops a query before anything sees the name, so a URL ending
+  // "_macos.7z?token=abc" passes a check on the name while the last characters
+  // of the URL itself are the query's, not the suffix's. Renaming the string as
+  // a whole took the end off the token and left the Intel file being asked for
+  // -- from the arm64 repository, which the allowlist checks by path prefix and
+  // would have allowed.
+  const withQuery = {
+    version: "0.0.42-20004",
+    mac: {
+      download:
+        "https://github.com/RPCS3/rpcs3-binaries-mac/releases/download/build-x/rpcs3_macos.7z?token=abc",
+    },
+  };
+  const arm = pickRpcs3Artifact(withQuery, "darwin", "arm64");
+  const url = new URL(arm?.url ?? "https://example.invalid");
+  assert.ok(url.pathname.endsWith("_macos_aarch64.7z"), url.pathname);
+  assert.doesNotMatch(url.pathname, /_macos\.7z$/);
+  assert.equal(arm?.fileName, "rpcs3_macos_aarch64.7z");
+  // The query is left as it arrived rather than being eaten by the rename.
+  assert.equal(url.search, "?token=abc");
+});
+
+test("a repository name that only appears mid-URL is not a match", () => {
+  // The prefix has to be the real one. A host or path that merely contains
+  // RPCS3's repository name is not RPCS3's repository.
+  const lookalike = {
+    version: "0.0.42-20004",
+    mac: {
+      download:
+        "https://github.com/evil/x/releases/download/b/RPCS3/rpcs3-binaries-mac/rpcs3_macos.7z",
+    },
+  };
+  assert.equal(pickRpcs3Artifact(lookalike, "darwin", "arm64"), null);
+});
+
+test("a derived Apple silicon URL that lands anywhere else is refused", () => {
+  // The derivation only ever renames what the endpoint gave, so the check that
+  // it ended up in RPCS3's own arm64 repository is what stops a redirected or
+  // reshaped index from sending the download elsewhere. Falling back to the
+  // Intel build here would defeat the point, so the answer is nothing, and the
+  // offer opens the download page.
+  const elsewhere = {
+    version: "0.0.42-20004",
+    mac: {
+      download:
+        "https://github.com/someone/else/releases/download/build-1/rpcs3_macos.7z",
+    },
+  };
+  assert.equal(pickRpcs3Artifact(elsewhere, "darwin", "arm64"), null);
+
+  // A macOS asset that is not named the way every build so far has been is not
+  // something to guess a second URL from.
+  const renamed = {
+    version: "0.0.42-20004",
+    mac: {
+      download:
+        "https://github.com/RPCS3/rpcs3-binaries-mac/releases/download/build-1/rpcs3-macos-universal.7z",
+    },
+  };
+  assert.equal(pickRpcs3Artifact(renamed, "darwin", "arm64"), null);
+  // The Intel Mac is unaffected: that build is exactly what it wanted.
+  assert.match(
+    pickRpcs3Artifact(renamed, "darwin", "x64")?.fileName ?? "",
+    /universal\.7z$/,
+  );
 });
 
 test("RPCS3's status envelope is unwrapped before picking", () => {
@@ -532,6 +634,68 @@ test("a malformed PCSX2 envelope unwraps to nothing rather than throwing", () =>
     assert.equal(
       pickPcsx2Artifact(unwrapRelease("pcsx2", junk), "win32", "x64"),
       null,
+    );
+  }
+});
+
+/** A stand-in artifact, since only its kind decides these answers. */
+function artifactOf(kind: ArtifactKind): ReleaseArtifact {
+  return {
+    url: "https://example.invalid/x",
+    fileName: "x",
+    kind,
+    version: "1",
+  };
+}
+
+test("nothing to fetch is still worth waiting for", () => {
+  // The case this exists for. A system with no artifact sends the user to the
+  // download page, and what they do there -- a package manager, the project's
+  // own installer -- lands where detection looks, so the launch waits and
+  // their game starts by itself rather than failing in front of someone who is
+  // installing the emulator it asked for.
+  for (const platform of ["darwin", "win32", "linux"] as NodeJS.Platform[]) {
+    assert.equal(mayAppearWhereDetectionLooks(null, platform), true, platform);
+  }
+});
+
+test("anything that installs itself is worth waiting for, everywhere", () => {
+  for (const kind of ["installer", "disk-image", "flatpak"] as ArtifactKind[]) {
+    for (const platform of ["darwin", "win32", "linux"] as NodeJS.Platform[]) {
+      assert.equal(
+        mayAppearWhereDetectionLooks(artifactOf(kind), platform),
+        true,
+        `${kind} on ${platform}`,
+      );
+    }
+  }
+});
+
+test("a macOS archive is worth waiting for, and no other archive is", () => {
+  // The case a real launch hit: RPCS3 on macOS is a .7z, it holds RPCS3.app,
+  // and a .app goes to Applications -- the first place detection looks. Giving
+  // up on it sent someone to edit settings for an emulator the shell would
+  // have found on its own.
+  assert.equal(mayAppearWhereDetectionLooks(artifactOf("archive"), "darwin"), true);
+  // Everywhere else an archive unpacks to a directory of the user's choosing,
+  // and detection only looks where an install goes.
+  for (const platform of ["win32", "linux"] as NodeJS.Platform[]) {
+    assert.equal(
+      mayAppearWhereDetectionLooks(artifactOf("archive"), platform),
+      false,
+      platform,
+    );
+  }
+});
+
+test("an AppImage is beyond waiting for on any platform", () => {
+  // It is the emulator as one file, kept wherever the user keeps it, and Linux
+  // detection only ever looks in bin directories and Flatpak exports.
+  for (const platform of ["darwin", "win32", "linux"] as NodeJS.Platform[]) {
+    assert.equal(
+      mayAppearWhereDetectionLooks(artifactOf("appimage"), platform),
+      false,
+      platform,
     );
   }
 });
