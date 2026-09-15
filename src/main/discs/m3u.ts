@@ -85,8 +85,9 @@ export function selectDiscs(files: DiscFile[]): DiscFile[] {
  * The .m3u an emulator is handed for a multi-disc game.
  *
  * One absolute path per line, so a set that is part in the shell's cache and
- * part in the user's own library still reads as one playlist. LF endings even
- * on Windows, because Dolphin refuses a playlist with CRLF in it.
+ * part in the user's own library still reads as one playlist, and so a relative
+ * entry is never resolved against whatever the emulator's working directory
+ * happens to be. UTF-8 with LF endings, because that is all Dolphin accepts.
  */
 export function renderM3u(discPaths: string[]): string {
   return discPaths.join("\n") + "\n";

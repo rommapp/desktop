@@ -724,17 +724,24 @@ test("emulatorReadsPlaylist answers for the emulator a platform would use", () =
       // RetroArch under another name. Nothing says so, but a mapping loading a
       // libretro core is RetroArch driving one.
       {
-        platformSlug: "psx",
+        platformSlug: "pcecd",
         command: "flatpak",
         args: ["run", "org.libretro.RetroArch", "-L", "{core}", "{rom}"],
       },
       // A standalone emulator, which is assumed not to read one.
       { platformSlug: "ps2", command: "/usr/bin/pcsx2-qt", args: ["{rom}"] },
-      // Unless it says it does.
+      // Recognised by name, which is how a hand-configured DuckStation keeps
+      // disc switching on the platform that needs it most.
+      {
+        platformSlug: "psx",
+        command: "/usr/bin/duckstation-qt",
+        args: ["-batch", "{rom}"],
+      },
+      // One nothing recognises, which says so itself.
       {
         platformSlug: "ngc",
-        command: "/usr/bin/dolphin-emu",
-        args: ["-b", "-e", "{rom}"],
+        command: "/opt/some-emu",
+        args: ["{rom}"],
         playlist: true,
       },
       // A declaration outranks the inference, in both directions.
@@ -746,10 +753,25 @@ test("emulatorReadsPlaylist answers for the emulator a platform would use", () =
       },
     ],
   });
-  assert.ok(emulatorReadsPlaylist(config, "psx"));
+  assert.ok(emulatorReadsPlaylist(config, "pcecd"));
   assert.equal(emulatorReadsPlaylist(config, "ps2"), false);
+  assert.ok(emulatorReadsPlaylist(config, "psx"));
   assert.ok(emulatorReadsPlaylist(config, "ngc"));
   assert.equal(emulatorReadsPlaylist(config, "saturn"), false);
+});
+
+test("a playlist-reading emulator is recognised behind flatpak", () => {
+  // The command is the sandbox, so the emulator is only named in the arguments.
+  const config = testConfig({
+    emulators: [
+      {
+        platformSlug: "psx",
+        command: "/usr/bin/flatpak",
+        args: ["run", "org.duckstation.DuckStation", "-batch", "{rom}"],
+      },
+    ],
+  });
+  assert.ok(emulatorReadsPlaylist(config, "psx"));
 });
 
 test("a detected emulator carries its own playlist answer", () => {

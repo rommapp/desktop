@@ -462,24 +462,32 @@ over the `.bin` or `.img` it describes.
 
 What the emulator is then handed depends on whether it reads an `.m3u`:
 
-|                    | Handed         | Changing disc                                                   |
-| ------------------ | -------------- | --------------------------------------------------------------- |
-| RetroArch, Dolphin | `discs.m3u`    | the emulator's disc-control menu                                |
-| PCSX2, RPCS3, Cemu | the first disc | the emulator's own "change disc", with the set in one directory |
+|                                 | Handed         | Changing disc                                                   |
+| ------------------------------- | -------------- | --------------------------------------------------------------- |
+| RetroArch, Dolphin, DuckStation | `discs.m3u`    | the emulator's disc-control menu                                |
+| PCSX2, RPCS3, Cemu              | the first disc | the emulator's own "change disc", with the set in one directory |
 
 PCSX2 is the reason for the second row: [its M3U request was closed as not
 planned](https://github.com/PCSX2/pcsx2/issues/7640), so handing it a playlist
-would fail the launch outright. An emulator configured by hand is assumed not
-to read one unless its arguments name `{core}`, which means RetroArch driving
-a libretro core. Say so explicitly with `"playlist": true` on the mapping:
+would fail the launch outright. Dolphin
+[gained it in 2019](https://github.com/dolphin-emu/dolphin/pull/7629), on the
+command line as well as in the GUI, and the playlist is written as UTF-8 with
+LF endings because that is all Dolphin accepts.
+
+A detected emulator carries its own answer. One configured by hand is assumed
+not to read a playlist, unless its arguments name `{core}` (RetroArch driving a
+libretro core) or RetroArch, Dolphin or DuckStation is named in the command or
+its arguments, which covers `flatpak run org.duckstation.DuckStation` as well
+as an executable path. Anything else says so for itself with `"playlist"`,
+which outranks both inferences:
 
 ```json
 {
   "emulators": [
     {
       "platformSlug": "psx",
-      "command": "flatpak",
-      "args": ["run", "org.libretro.RetroArch", "-L", "{core}", "{rom}"],
+      "command": "/usr/bin/mednafen",
+      "args": ["{rom}"],
       "playlist": true
     }
   ]

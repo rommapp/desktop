@@ -173,16 +173,22 @@ export function hasPlatformSpecificEmulator(
   return detectedMappingFor(platformSlug, undefined, homedir()) !== null;
 }
 
+/** Emulators known to boot an .m3u, for a mapping that does not say. Matched
+ *  against the command and its arguments together, so "flatpak run
+ *  org.duckstation.DuckStation" counts the same as an executable name. */
+const PLAYLIST_EMULATORS = ["retroarch", "duckstation", "dolphin"];
+
 /**
  * Whether the emulator this platform would use boots an .m3u playlist.
  *
  * It decides what a multi-disc game is handed: the playlist, or the first disc
  * with the rest of the set beside it for the emulator's own disc menu. PCSX2
- * and RPCS3 read no playlist, and handing one over would fail the launch.
+ * reads no playlist, and handing one over would fail the launch.
  *
- * A mapping written by hand says so itself, or is inferred from its arguments:
- * one naming "{core}" is RetroArch driving a libretro core. Anything else is
- * assumed not to, because a disc that boots beats a playlist that might not.
+ * A mapping written by hand says so itself, or is inferred: arguments naming
+ * "{core}" are RetroArch driving a libretro core, and the emulators above are
+ * recognised where they are named. Anything else is assumed not to, since a
+ * disc that boots beats a playlist that might not.
  */
 export function emulatorReadsPlaylist(
   config: DesktopConfig,
@@ -191,7 +197,9 @@ export function emulatorReadsPlaylist(
   const mapping = findMapping(config, platformSlug);
   if (!mapping) return true; // The RetroArch default path.
   if (mapping.playlist !== undefined) return mapping.playlist;
-  return mapping.args.some((arg) => arg.includes("{core}"));
+  if (mapping.args.some((arg) => arg.includes("{core}"))) return true;
+  const named = [mapping.command, ...mapping.args].join(" ").toLowerCase();
+  return PLAYLIST_EMULATORS.some((emulator) => named.includes(emulator));
 }
 
 /** What to call the emulator this platform would use, before a launch has
