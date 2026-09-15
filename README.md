@@ -457,12 +457,16 @@ RPCS3 cannot open one at all.
 
 So a ROM the server reports as two or more disc images is fetched as those
 individual files instead, one request each. Discs are ordered by the number in
-their name (`Disc 2`, `disk 2`, `CD2`), and a `.cue`, `.gdi` or `.mds` is what
-counts as the disc rather than the `.bin`, `.img` or `.mdf` it describes. The
-tracks it describes are still fetched, beside it: a sheet names them by relative
-name and cannot boot without them. A sheet only accounts for the tracks whose
-names it matches, so a disc that arrived as a bare `.bin` is still a disc even
-when its sibling came as a pair.
+their name (`Disc 2`, `disk 2`, `CD2`), and where a sheet (`.cue`, `.gdi`,
+`.ccd`, `.mds`) is present the sheets are the discs, since a raw track is not
+loadable on its own. That is the rule RomM applies server-side, in
+`utils/m3u.py`, rather than a second one invented here. The tracks are still
+fetched, beside the sheet: it names them by relative name and cannot boot
+without them.
+
+A set that ships its own `.m3u` is handed that instead of a generated one, the
+same way RomM defers to it, because a curated order is not something a filename
+convention can convey.
 
 What the emulator is then handed depends on whether it reads an `.m3u`:
 

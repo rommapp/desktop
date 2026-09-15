@@ -14,7 +14,7 @@
 // the user's own.
 
 import { type Session } from "electron";
-import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type DesktopConfig } from "../../shared/types.ts";
 import { evictToLimit } from "../cache/evict.ts";
@@ -22,6 +22,7 @@ import { downloadFromServer } from "../rom-cache.ts";
 import { resolveDownloadUrl, resolveLibraryRom } from "../safety.ts";
 import {
   type DiscFile,
+  ownPlaylist,
   readRomFiles,
   renderM3u,
   selectDiscs,
@@ -126,6 +127,12 @@ export async function syncDiscSet({
   }
 
   if (!playlist) return bootPaths[0] as string;
+
+  // A set that ships its own playlist has an order nobody should be guessing
+  // at, and it was staged with the discs, so its relative entries resolve.
+  const own = ownPlaylist(staged);
+  const ownPath = own && paths.get(own.id);
+  if (ownPath) return ownPath;
 
   // Written to the cache even when every disc came from the library, because
   // the library is the user's and a playlist left in it is one more file for
@@ -240,7 +247,13 @@ async function stageFile({
 }): Promise<string | null> {
   const target = join(romDir, file.fileName);
   const existing = await stat(target).catch(() => null);
-  if (existing?.isFile() && existing.size === file.sizeBytes) return target;
+  if (existing?.isFile() && existing.size === file.sizeBytes) {
+    // Touched so eviction ranks a replayed set by when it was last played
+    // rather than when it was first fetched, as ensureRom does on a hit.
+    const now = new Date();
+    await utimes(target, now, now).catch(() => {});
+    return target;
+  }
 
   // One file at a time, by id: the content endpoint serves a single requested
   // file directly rather than zipping it, which is the whole point of asking

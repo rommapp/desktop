@@ -4,6 +4,7 @@ import {
   type DiscFile,
   discNumberOf,
   readRomFiles,
+  ownPlaylist,
   renderM3u,
   selectDiscs,
   selectStagedFiles,
@@ -114,9 +115,26 @@ test("selectStagedFiles keeps the tracks a sheet cannot boot without", () => {
   );
 });
 
-test("selectDiscs keeps a bare disc beside a sibling that came as a pair", () => {
-  // One sheet in the set does not make every bin someone else's data. Dropping
-  // this one would leave a single disc, and a single disc is not a disc set.
+test("selectDiscs reads a sheet set the way RomM's own fixtures are named", () => {
+  // RomM pairs game.cue with track01.bin in utils/m3u.py's own tests, so a
+  // sheet cannot be tied to its tracks by name. Counting those tracks as discs
+  // would read this single-disc game as a three-disc set.
+  const discs = selectDiscs([
+    file("track01.bin", 1),
+    file("track02.bin", 2),
+    file("game.cue", 3),
+  ]);
+  assert.deepEqual(
+    discs.map((f) => f.fileName),
+    ["game.cue"],
+  );
+});
+
+test("selectDiscs leaves a bare disc out of a set that also has a sheet", () => {
+  // The cost of the rule above, and the cheaper of the two mistakes: a set
+  // mixing a .cue pair with a bare .bin reads as one disc and falls back to
+  // the ordinary download, which is what it does today. Guessing the other way
+  // breaks ordinary single-disc sets, which are far more common.
   const discs = selectDiscs([
     file("Game (Disc 1).cue", 1),
     file("Game (Disc 1).bin", 2),
@@ -124,7 +142,44 @@ test("selectDiscs keeps a bare disc beside a sibling that came as a pair", () =>
   ]);
   assert.deepEqual(
     discs.map((f) => f.fileName),
-    ["Game (Disc 1).cue", "Game (Disc 2).bin"],
+    ["Game (Disc 1).cue"],
+  );
+});
+
+test("selectDiscs boots a set of single-file images that needs no sheet", () => {
+  // .cdi and the Dolphin formats are whole discs in one file, so a set of them
+  // has no sheet to prefer and every file is a disc.
+  for (const extension of [".cdi", ".rvz", ".gcm", ".ciso", ".wbfs"]) {
+    const discs = selectDiscs([
+      file(`Game (Disc 1)${extension}`, 1),
+      file(`Game (Disc 2)${extension}`, 2),
+    ]);
+    assert.deepEqual(
+      discs.map((f) => f.fileName),
+      [`Game (Disc 1)${extension}`, `Game (Disc 2)${extension}`],
+      extension,
+    );
+  }
+});
+
+test("ownPlaylist finds the playlist a set ships, and nothing else", () => {
+  assert.equal(
+    ownPlaylist([file("Game.m3u", 1), file("Game (Disc 1).chd", 2)])?.fileName,
+    "Game.m3u",
+  );
+  assert.equal(ownPlaylist([file("Game (Disc 1).chd", 2)]), null);
+  // And it is staged, so its relative entries resolve beside the discs.
+  assert.ok(
+    selectStagedFiles([file("Game.m3u", 1), file("Game (Disc 1).chd", 2)]).some(
+      (f) => f.fileName === "Game.m3u",
+    ),
+  );
+  // But it is never a disc of its own.
+  assert.deepEqual(
+    selectDiscs([file("Game.m3u", 1), file("Game (Disc 1).chd", 2)]).map(
+      (f) => f.fileName,
+    ),
+    ["Game (Disc 1).chd"],
   );
 });
 

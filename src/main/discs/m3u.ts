@@ -24,10 +24,15 @@ const DISC_EXTENSIONS = [
   ".iso",
   ".img",
   ".ccd",
+  ".cdi",
+  ".ciso",
+  ".gcm",
   ".mds",
   ".nrg",
   ".gdi",
   ".pbp",
+  ".rvz",
+  ".wbfs",
   ".bin",
 ];
 
@@ -66,39 +71,31 @@ export function discNumberOf(fileName: string): number | null {
 /**
  * The discs among a rom's files, in the order an .m3u should list them.
  *
- * A `.cue` or `.gdi` wins over the `.bin` it describes, because the sheet is
- * what an emulator is meant to be handed and the bin is its data. Dropped by
- * name rather than by the mere presence of a sheet somewhere in the set: a
- * disc that is a bare `.bin` alongside a sibling that came as a `.cue` pair is
- * still a disc, and a set losing one is a set that will not launch.
+ * Where a sheet is present it is the disc and the tracks are not, because a
+ * raw track is not loadable on its own. Which files those are is not derivable
+ * from their names: RomM's own fixtures pair `game.cue` with `track01.bin`, so
+ * a sheet cannot be matched to its tracks without reading it.
+ *
+ * This is the rule RomM applies server-side in `utils/m3u.py::playlist_files`,
+ * followed here rather than reinvented, so the shell and the server cannot
+ * disagree about what a disc is. The one difference is the sheet list: RomM
+ * counts only `.cue`, which lists a `.gdi`'s tracks as discs of their own.
  */
 export function selectDiscs(files: DiscFile[]): DiscFile[] {
   const discs = files.filter((file) =>
     DISC_EXTENSIONS.includes(extensionOf(file.fileName)),
   );
-  const sheets = discs
-    .filter((file) => SHEET_EXTENSIONS.includes(extensionOf(file.fileName)))
-    .map((file) => baseNameOf(file.fileName).toLowerCase());
-  return inDiscOrder(
-    discs.filter(
-      (file) =>
-        !TRACK_EXTENSIONS.includes(extensionOf(file.fileName)) ||
-        !describedBy(sheets, file.fileName),
-    ),
+  const sheets = discs.filter((file) =>
+    SHEET_EXTENSIONS.includes(extensionOf(file.fileName)),
   );
+  return inDiscOrder(sheets.length > 0 ? sheets : discs);
 }
 
-/** Whether one of these sheets names this track, by the convention every disc
- *  set follows: "Game (Disc 1).cue" describes "Game (Disc 1) (Track 02).bin"
- *  and "Game (Disc 1).bin", and nothing else. */
-function describedBy(sheetBaseNames: string[], fileName: string): boolean {
-  const base = baseNameOf(fileName).toLowerCase();
-  return sheetBaseNames.some((sheet) => base.startsWith(sheet));
-}
-
-function baseNameOf(fileName: string): string {
-  const dot = fileName.lastIndexOf(".");
-  return dot < 0 ? fileName : fileName.slice(0, dot);
+/** The playlist the rom itself ships, if it has one: a curated set names its
+ *  discs in an order no filename convention can convey, and RomM defers to it
+ *  the same way (`Rom.has_m3u_file`). */
+export function ownPlaylist(files: DiscFile[]): DiscFile | null {
+  return files.find((file) => extensionOf(file.fileName) === ".m3u") ?? null;
 }
 
 /**
@@ -106,13 +103,14 @@ function baseNameOf(fileName: string): string {
  *
  * A sheet is not playable alone: dropping the tracks it names from the playlist
  * is right, dropping them from the download is a `.cue` pointing at files that
- * were never fetched.
+ * were never fetched. The rom's own playlist comes along for the same reason.
  */
 export function selectStagedFiles(files: DiscFile[]): DiscFile[] {
   return inDiscOrder(
     files.filter((file) => {
       const extension = extensionOf(file.fileName);
       return (
+        extension === ".m3u" ||
         DISC_EXTENSIONS.includes(extension) ||
         TRACK_EXTENSIONS.includes(extension)
       );
