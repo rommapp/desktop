@@ -146,11 +146,11 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
     id: "pcsx2",
     label: "PCSX2",
     platformSlugs: ["ps2"],
-    // PCSX2 reads no playlist: the request for one was closed as not
-    // planned, so a disc set starts on disc 1 and changes disc from its menu.
+    // PCSX2 reads no playlist: the request for one was closed as not planned
+    // and automatic swapping is still open, so changing disc is by hand.
     playlist: false,
-    // -batch skips the GUI and exits when the game stops, which is what the
-    // shell wants: the window comes back rather than a launcher being left open.
+    // -batch exits when the game stops, so the shell's window comes back. Never
+    // -nogui, which hides the menu bar a multi-disc game changes disc from.
     args: ["-batch", "{rom}"],
     paths(platform, home, env, readDir) {
       switch (platform) {

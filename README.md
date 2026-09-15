@@ -468,8 +468,12 @@ What the emulator is then handed depends on whether it reads an `.m3u`:
 | PCSX2, RPCS3, Cemu              | the first disc | the emulator's own "change disc", with the set in one directory |
 
 PCSX2 is the reason for the second row: [its M3U request was closed as not
-planned](https://github.com/PCSX2/pcsx2/issues/7640), so handing it a playlist
-would fail the launch outright. Dolphin
+planned](https://github.com/PCSX2/pcsx2/issues/7640) and
+[automatic swapping is still open](https://github.com/PCSX2/pcsx2/issues/7278),
+so handing it a playlist would fail the launch outright. There, disc 2 is
+System > Change Disc from the menu bar, or Change Disc in the on-screen quick
+menu on a controller. The shell passes `-batch` and never `-nogui`, which would
+hide the menu bar that first route needs. Dolphin
 [gained it in 2019](https://github.com/dolphin-emu/dolphin/pull/7629), on the
 command line as well as in the GUI, and the playlist is written as UTF-8 with
 LF endings because that is all Dolphin accepts.
