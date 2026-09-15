@@ -110,6 +110,10 @@ the boundary the auth window exists to keep narrow.
 The in-browser emulators (EmulatorJS, Ruffle, js-dos, PICO-8), file downloads
 and clipboard actions are untested in this shell and worth exercising.
 
+[Multi-disc games](#multi-disc-games) are covered by unit tests over disc
+selection and the playlist, but no real disc set has been launched through an
+emulator yet.
+
 ## Using a controller
 
 RomM's own interface handles controller navigation, so the shell adds none.
@@ -441,6 +445,30 @@ root, and anything resolving outside it is rejected rather than normalised.
 [Save data](#save-data) goes to its own directory either way, so launching in
 place does not leave saves in your library for RomM to scan.
 
+### Multi-disc games
+
+A PlayStation or Saturn game split across discs is one ROM with several files
+on the server, and asking for that ROM as a single download returns an archive.
+That archive is not something a multi-disc game boots out of: RetroArch cannot
+resolve a playlist's sibling references inside a zip, and PCSX2, Dolphin and
+RPCS3 cannot open one at all.
+
+So a ROM the server reports as two or more disc images is fetched as those
+individual files instead, one request each, and a `discs.m3u` naming them is
+written beside them. The playlist is what the emulator is handed, so disc
+changes happen in its own disc menu rather than by relaunching. Discs are
+ordered by the number in their name (`Disc 2`, `disk 2`, `CD2`), and a `.cue`
+or `.gdi` is preferred over the `.bin` or `.img` it describes. An emulator that
+does not read `.m3u` is handed the playlist anyway, and will not start.
+
+When every disc resolves under `libraryPath` the playlist is written beside
+them and nothing is downloaded. Otherwise the discs land in the ROM cache like
+any other download, and the same size check applies to each one.
+
+Nothing here can fail a launch that would otherwise have worked. A server that
+will not answer, a ROM whose files cannot be read, and a set that turns out to
+hold one disc all fall back to the ordinary single-payload download.
+
 ### Save data
 
 Left to itself an emulator writes save data next to the ROM, and neither place
@@ -730,6 +758,8 @@ src/
     rom-cache.ts    Download with the window's session cookies
     cache/          LRU eviction over the ROM cache
     saves/          Per-game save and state directories
+    discs/          Multi-disc sets: disc selection and the .m3u that boots
+                    them
     firmware/       Mirroring RomM's own BIOS library, per platform
     safety.ts       Validation of everything the renderer sends
     window.ts       Window creation and navigation policy

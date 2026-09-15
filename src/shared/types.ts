@@ -81,6 +81,12 @@ export interface LaunchState {
    *  rather than borrowing `core`, so a frontend reading one never has to
    *  guess which stage it is in. */
   firmware?: string;
+  /** The disc being fetched, while a multi-disc set is coming down. Its own
+   *  field for the same reason, and the count says how long the set is so a
+   *  frontend can say "disc 2 of 4" rather than restarting at 0% four times. */
+  disc?: string;
+  discIndex?: number;
+  discCount?: number;
   /** The emulator being set up, while stage is "emulator". Present for both
    *  halves of that stage, so a frontend can name what it is waiting for. */
   emulator?: string;
