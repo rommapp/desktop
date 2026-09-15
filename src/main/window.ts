@@ -19,6 +19,18 @@ type NavigationEvent = {
   preventDefault: () => void;
 };
 
+/**
+ * Contents belonging to an auth window, or to a popup one opened.
+ *
+ * The permission handler below is set on the session, and the auth window
+ * shares that session deliberately -- the shared cookie jar is the point of it.
+ * So the handler sees an identity provider's requests too, and would have
+ * answered them with the rules written for RomM's own page. A login page needs
+ * no permissions, so these contents are refused before those rules are
+ * consulted. Weakly held, so a closed window is not kept alive by this.
+ */
+const authContents = new WeakSet<Electron.WebContents>();
+
 /** No preload and no Node, the same as the main window, for pages that are
  *  more foreign still: an identity provider we have not bound ourselves to. */
 const AUTH_WEB_PREFERENCES = {
@@ -114,7 +126,16 @@ function confineToServer(window: BrowserWindow, serverUrl: string): void {
   );
 
   window.webContents.session.setPermissionRequestHandler(
-    (_contents, permission, callback, details) => {
+    (contents, permission, callback, details) => {
+      // Fullscreen and pointer lock are granted to RomM's page without asking
+      // the origin, which is right for a player and wrong for a provider: both
+      // can be used to misrepresent what the user is looking at, and neither is
+      // something a login page needs. Handing the flow to the system browser
+      // never granted them either.
+      if (authContents.has(contents)) {
+        callback(false);
+        return;
+      }
       callback(shouldGrantPermission(permission, details, serverUrl));
     },
   );
@@ -155,6 +176,13 @@ function createAuthWindow(
     // case is no window at all instead of one that flashes open and shut.
     show: false,
     webPreferences: AUTH_WEB_PREFERENCES,
+  });
+
+  authContents.add(authWindow.webContents);
+  // A popup the provider opens shares the session too, so it is one of these
+  // as well.
+  authWindow.webContents.on("did-create-window", (popup) => {
+    authContents.add(popup.webContents);
   });
 
   authWindow.once("ready-to-show", () => {
