@@ -251,14 +251,33 @@ export type ShellCapability =
   | "platform-support-all"
   /** The RomM firmware library is mirrored beside the game, reported as the
    *  "firmware" launch stage with the file named in `firmware`. */
-  | "firmware-mirror";
+  | "firmware-mirror"
+  /** A rom of two or more discs is fetched as those files and booted from a
+   *  playlist or its first disc, with each transfer reported by `file`,
+   *  `fileIndex` and `fileCount` rather than as one restarting download. */
+  | "multi-disc";
 
-export const SHELL_CAPABILITIES: readonly ShellCapability[] = [
-  "launch-stage",
-  "library-passthrough",
-  "platform-support-all",
-  "firmware-mirror",
-];
+/**
+ * Every capability, as a record rather than an array so that a union member
+ * missing from it fails to compile.
+ *
+ * Omitting one is not a small mistake: a frontend cannot tell an unlisted
+ * capability from a shell too old to have it, so a behaviour left out here is
+ * undetectable on every shell that ships without it, for good.
+ */
+const ALL_CAPABILITIES = {
+  "launch-stage": true,
+  "library-passthrough": true,
+  "platform-support-all": true,
+  "firmware-mirror": true,
+  "multi-disc": true,
+} satisfies Record<ShellCapability, true>;
+
+// Object.keys loses the key type, and the satisfies above is what makes this
+// narrowing sound: the record's keys are exactly ShellCapability.
+export const SHELL_CAPABILITIES: readonly ShellCapability[] = Object.keys(
+  ALL_CAPABILITIES,
+) as ShellCapability[];
 
 /** The API the preload bridge exposes to the renderer as window.rommNative. */
 export interface RommNativeBridge {
