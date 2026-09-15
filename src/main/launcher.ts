@@ -155,7 +155,30 @@ export class Launcher {
   async getPlatformSupport(
     query: PlatformSupportQuery,
   ): Promise<PlatformSupport> {
+    return this.supportFor(await loadConfig(), query);
+  }
+
+  /**
+   * getPlatformSupport for a whole library, keyed by platform slug. The config
+   * is read once for the batch, which is the difference that matters: a
+   * renderer marking every tile it shows would otherwise reload it per
+   * platform. Repeated slugs collapse onto one answer.
+   */
+  async getPlatformSupportAll(
+    queries: PlatformSupportQuery[],
+  ): Promise<Record<string, PlatformSupport>> {
     const config = await loadConfig();
+    const answers: Record<string, PlatformSupport> = {};
+    for (const query of queries) {
+      answers[query.platformSlug] ??= this.supportFor(config, query);
+    }
+    return answers;
+  }
+
+  private supportFor(
+    config: DesktopConfig,
+    query: PlatformSupportQuery,
+  ): PlatformSupport {
     // The user's preference is applied once, here, so the probe and the launch
     // never disagree about which core they are talking about.
     const cores = applyCorePreference(config, query.platformSlug, query.cores);

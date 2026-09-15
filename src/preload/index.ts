@@ -1,11 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type {
-  LaunchRequest,
-  LaunchResult,
-  LaunchState,
-  PlatformSupport,
-  PlatformSupportQuery,
-  RommNativeBridge,
+import {
+  type LaunchRequest,
+  type LaunchResult,
+  type LaunchState,
+  type PlatformSupport,
+  type PlatformSupportQuery,
+  type RommNativeBridge,
+  SHELL_CAPABILITIES,
 } from "../shared/types.ts";
 
 const VERSION_FLAG = "--romm-shell-version=";
@@ -20,6 +21,7 @@ const LAUNCH_STATE_CHANNEL = "romm:launch-state";
 const bridge: RommNativeBridge = {
   shellVersion: shellVersion(),
   os: process.platform as RommNativeBridge["os"],
+  capabilities: SHELL_CAPABILITIES,
 
   launch: (request: LaunchRequest): Promise<LaunchResult> =>
     ipcRenderer.invoke("romm:launch", request),
@@ -29,6 +31,11 @@ const bridge: RommNativeBridge = {
 
   getPlatformSupport: (query: PlatformSupportQuery): Promise<PlatformSupport> =>
     ipcRenderer.invoke("romm:platform-support", query),
+
+  getPlatformSupportAll: (
+    queries: PlatformSupportQuery[],
+  ): Promise<Record<string, PlatformSupport>> =>
+    ipcRenderer.invoke("romm:platform-support-all", queries),
 
   onLaunchState: (listener: (state: LaunchState) => void): (() => void) => {
     // The Electron event object never reaches the renderer: only the payload

@@ -1,32 +1,13 @@
 import { BrowserWindow, ipcMain, shell } from "electron";
-import { LaunchError } from "../shared/types.ts";
 import { configPath, loadConfig, saveConfig } from "./config.ts";
 import { type Launcher } from "./launcher.ts";
-import { validateLaunchRequest } from "./safety.ts";
+import {
+  validateLaunchRequest,
+  validatePlatformQueries,
+  validatePlatformQuery,
+} from "./safety.ts";
 
 const LAUNCH_STATE_CHANNEL = "romm:launch-state";
-
-function asPlatformQuery(value: unknown): {
-  platformSlug: string;
-  cores: string[];
-} {
-  if (typeof value !== "object" || value === null) {
-    throw new LaunchError("invalid-request", "Query must be an object.");
-  }
-  const candidate = value as Record<string, unknown>;
-  const cores = candidate.cores;
-  if (
-    typeof candidate.platformSlug !== "string" ||
-    !Array.isArray(cores) ||
-    cores.some((core) => typeof core !== "string")
-  ) {
-    throw new LaunchError(
-      "invalid-request",
-      "Query must name a platform and its cores.",
-    );
-  }
-  return { platformSlug: candidate.platformSlug, cores: cores as string[] };
-}
 
 export function registerIpc(launcher: Launcher): void {
   ipcMain.handle("romm:launch", async (event, raw: unknown) => {
@@ -49,7 +30,11 @@ export function registerIpc(launcher: Launcher): void {
   });
 
   ipcMain.handle("romm:platform-support", (_event, raw: unknown) =>
-    launcher.getPlatformSupport(asPlatformQuery(raw)),
+    launcher.getPlatformSupport(validatePlatformQuery(raw)),
+  );
+
+  ipcMain.handle("romm:platform-support-all", (_event, raw: unknown) =>
+    launcher.getPlatformSupportAll(validatePlatformQueries(raw)),
   );
 
   ipcMain.handle("romm:open-settings", async () => {
