@@ -22,6 +22,25 @@ export class LaunchError extends Error {
   }
 }
 
+/**
+ * What a bridge call rejects with, which is deliberately not an Error.
+ *
+ * Electron's context bridge copies a thrown Error into the page's world with
+ * its message and stack and nothing else: "any custom properties on the Error
+ * object will be lost". A LaunchError crossing it would arrive as its message
+ * alone, and the code -- the whole reason LaunchErrorCode exists -- would be
+ * dropped silently on the way.
+ *
+ * A plain object is copied whole, so this carries both. It is what the page
+ * catches, and `name` is there so a caught failure still prints as something
+ * recognisable.
+ */
+export interface LaunchFailure {
+  name: "LaunchError";
+  code: LaunchErrorCode;
+  message: string;
+}
+
 /** A launch as the renderer asks for it: it names the game and its candidate
  *  cores, never an executable. The main process resolves the emulator. */
 export interface LaunchRequest {

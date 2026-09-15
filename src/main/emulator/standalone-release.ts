@@ -78,6 +78,38 @@ export function installsWhereDetectionLooks(kind: ArtifactKind): boolean {
   return kind !== "archive" && kind !== "appimage";
 }
 
+/**
+ * Whether waiting for this to turn up is worth doing.
+ *
+ * Not the same question as the one above, and the difference is the whole
+ * reason both exist. That one asks what *this file* will do when opened; this
+ * one asks whether the emulator has any chance of appearing where detection
+ * looks once the user is finished -- and a user who was handed nothing still
+ * usually installs the thing, through a package manager or the project's own
+ * installer, both of which land exactly there.
+ *
+ * So the only answer of no is the one where the emulator is a file the user
+ * keeps somewhere of their own choosing. Waiting on that would be half an hour
+ * of pretending; waiting on the others ends with the game starting by itself.
+ */
+export function mayAppearWhereDetectionLooks(
+  artifact: ReleaseArtifact | null,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (artifact === null) return true;
+  if (installsWhereDetectionLooks(artifact.kind)) return true;
+  // A macOS archive is the exception, and it is not a small one: PCSX2's
+  // .tar.xz and RPCS3's .7z both hold a .app, and a .app goes to Applications
+  // -- which is the first place detection looks. No promise, since a .app runs
+  // perfectly well from Downloads, but the wait is free and it usually ends
+  // with the game starting rather than with a message about settings.
+  //
+  // Everywhere else an archive unpacks to a directory the user puts wherever
+  // they like, and detection only ever looks where an install goes, so waiting
+  // on one really would be waiting for nothing.
+  return platform === "darwin" && artifact.kind === "archive";
+}
+
 /** Archive formats the shell is willing to hand to a file manager. */
 const ARCHIVE_SUFFIXES = [
   ".7z",
@@ -304,21 +336,75 @@ export function pickPcsx2Artifact(
 }
 
 /**
+ * The Apple silicon build of the same release.
+ *
+ * RPCS3's update endpoint names one macOS build and it is the Intel one, so
+ * Apple silicon would otherwise be handed a PS3 emulator to run under
+ * translation -- the one kind of program least able to spare it, chosen on the
+ * user's behalf and invisibly, since what arrives is simply "RPCS3".
+ *
+ * The native build is published from a repository of its own, from the same
+ * build tag, under the same name with `_aarch64` before the suffix. That makes
+ * it nameable rather than guessable: every part comes from the URL the endpoint
+ * just gave, and the result is checked against the binary repositories like any
+ * other artifact.
+ *
+ * A build that ever stops following this naming, or a commit whose arm64 build
+ * did not publish, ends at a 404 the offer already handles by sending the user
+ * to the download page -- where the native build is listed, which is where they
+ * would have been sent anyway.
+ */
+function appleSiliconBuild(intel: ReleaseArtifact): ReleaseArtifact | null {
+  const INTEL_SUFFIX = "_macos.7z";
+  const ARM_SUFFIX = "_macos_aarch64.7z";
+  const INTEL_PATH = "/RPCS3/rpcs3-binaries-mac/";
+  const ARM_PATH = "/RPCS3/rpcs3-binaries-mac-arm64/";
+
+  let url: URL;
+  try {
+    url = new URL(intel.url);
+  } catch {
+    return null;
+  }
+
+  // Renamed on the path and nothing else. A query or fragment is no part of an
+  // asset's name -- fileNameOf drops both before anything here sees the name --
+  // so treating the URL as one string and slicing its tail would take the end
+  // off whatever followed the filename instead, leaving the Intel asset still
+  // being asked for with the rename hanging off the query. The repository
+  // prefix has to be the real one too, not merely present somewhere in the
+  // string.
+  if (!url.pathname.startsWith(INTEL_PATH)) return null;
+  if (!url.pathname.endsWith(INTEL_SUFFIX)) return null;
+  url.pathname =
+    ARM_PATH +
+    url.pathname.slice(INTEL_PATH.length, -INTEL_SUFFIX.length) +
+    ARM_SUFFIX;
+
+  // Checked against the allowlist afterwards like any other artifact, so a URL
+  // of some shape this was not written for ends here rather than in a download.
+  if (!onGithubRelease(url.href, ["RPCS3/rpcs3-binaries-mac-arm64"])) {
+    return null;
+  }
+  const fileName = fileNameOf(url.href);
+  if (!fileName.endsWith(ARM_SUFFIX)) return null;
+  return { ...intel, url: url.href, fileName };
+}
+
+/**
  * The RPCS3 `latest_build` key this machine matches.
  *
  * The index carries exactly three builds, which is what the project's own
- * updater offers: a 64-bit Windows build, an x86-64 AppImage, and one macOS
- * archive. Anything outside that -- 32-bit Windows, an ARM Linux box -- gets no
- * key and is sent to the download page rather than handed a build it cannot
- * run.
+ * updater offers: a 64-bit Windows build, an x86-64 AppImage, and one x86-64
+ * macOS archive. Anything outside that gets no key and is sent to the download
+ * page rather than handed a build that is wrong for it.
  */
 function rpcs3Key(platform: NodeJS.Platform, arch: string): string | null {
   switch (platform) {
     case "darwin":
-      // The index publishes one macOS build, an x86-64 one, which is what
-      // Apple silicon runs under Rosetta. RPCS3 does ship a native arm64
-      // archive, but not through this endpoint, so it is not something to
-      // construct a URL for here.
+      // The only macOS build here is x86-64. Apple silicon takes it as the
+      // starting point and is handed its own build instead -- see
+      // appleSiliconBuild.
       return "mac";
     case "win32":
       // arm64 Windows emulates x64, as it does for RetroArch. 32-bit cannot.
@@ -336,6 +422,9 @@ const RPCS3_BINARY_REPOSITORIES = [
   "RPCS3/rpcs3-binaries-win",
   "RPCS3/rpcs3-binaries-linux",
   "RPCS3/rpcs3-binaries-mac",
+  // The Apple silicon build, which the update endpoint does not mention. Named
+  // here so a derived URL is checked against an allowlist like any other.
+  "RPCS3/rpcs3-binaries-mac-arm64",
 ];
 
 /**
@@ -364,12 +453,19 @@ export function pickRpcs3Artifact(
   if (!fileName) return null;
   const kind = kindOf(fileName);
   if (!kind) return null;
-  return {
+  const artifact: ReleaseArtifact = {
     url: download,
     fileName,
     kind,
     version: typeof version === "string" ? version : "latest",
   };
+  // Apple silicon gets its own build of this same release, or nothing: falling
+  // back to what the endpoint named would be handing it the Intel one, which is
+  // the thing this exists to stop.
+  if (platform === "darwin" && arch === "arm64") {
+    return appleSiliconBuild(artifact);
+  }
+  return artifact;
 }
 
 /**

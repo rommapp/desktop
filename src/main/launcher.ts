@@ -1,6 +1,7 @@
 import { type BrowserWindow, type Session } from "electron";
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
+import { toLaunchError } from "../shared/ipc.ts";
 import {
   type DesktopConfig,
   type LaunchRequest,
@@ -67,12 +68,6 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
     const timer = setTimeout(done, ms);
     signal.addEventListener("abort", done, { once: true });
   });
-}
-
-function toLaunchError(error: unknown): LaunchError {
-  if (error instanceof LaunchError) return error;
-  const message = error instanceof Error ? error.message : String(error);
-  return new LaunchError("launch-failed", message);
 }
 
 /** A launch that was cancelled should stop, not carry on to the emulator. */
@@ -296,6 +291,12 @@ export class Launcher {
    * emulator to appear rather than ending the launch. Telling someone who just
    * installed PCSX2 to go and press Play again is a worse ending than simply
    * starting their game.
+   *
+   * That wait is the answer for every hand-off the emulator could come back
+   * from, including the one where nothing could be fetched and the user was
+   * sent to a download page: they still come back with PCSX2 installed where
+   * everyone installs it. Only an emulator that is a file they keep somewhere
+   * of their own choosing is beyond it.
    */
   private async offerMissingEmulator(
     config: DesktopConfig,
@@ -355,7 +356,7 @@ export class Launcher {
     entry.installing = label;
     try {
       const shouldReport = createProgressGate();
-      const { handedOff, detectable } = await offerStandaloneInstall({
+      const { handedOff, mayAppear } = await offerStandaloneInstall({
         emulatorId,
         parent,
         signal,
@@ -374,13 +375,19 @@ export class Launcher {
         },
       });
       if (!handedOff) return;
-      if (!detectable) {
-        // A portable archive, or a download page: what happens next is the
-        // user's to do, and where it lands is not something detection can
-        // guess, so this is the one ending that has to ask them to come back.
+      if (!mayAppear) {
+        // An AppImage or a portable archive: the emulator is a file the user
+        // keeps where they like, and detection only ever looks in the places an
+        // install puts one. Waiting would be half an hour of pretending, so
+        // this is the one ending that has to ask them to come back.
+        //
+        // It says why first. Read on its own, at the end of a download someone
+        // just sat through, an instruction to go and edit settings is a chore;
+        // the same sentence with the reason in front of it is the shell saying
+        // what it cannot do for them.
         throw new LaunchError(
           "emulator-not-found",
-          `Point at ${label} under "emulators" in the settings, then press Play again.`,
+          `RomM Desktop cannot guess where ${label} ends up, so it has to be told. Point at it under "emulators" in the settings, then press Play again.`,
         );
       }
       await this.awaitEmulator(request, emulatorId, label, signal);
@@ -419,9 +426,14 @@ export class Launcher {
       // installing anything.
       if (stillHappening && !stillHappening()) return;
       if (Date.now() >= deadline) {
+        // Half an hour of looking, so "not yet" is no longer the likely story:
+        // either the install was never finished or it went somewhere detection
+        // does not look. Both are worth saying, because a message that only
+        // offers the first leaves the user who did install it pressing Play
+        // forever with nothing else to try.
         throw new LaunchError(
           "emulator-not-found",
-          `${label} has not appeared yet. Finish installing it, then press Play again.`,
+          `${label} has not turned up where RomM Desktop looks for it. Finish installing it and press Play again, or if it went somewhere unusual, point at it under "emulators" in the settings.`,
         );
       }
       // No progress and no byte counts: the install is the user's, and how far
