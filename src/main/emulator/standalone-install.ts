@@ -1,10 +1,10 @@
 // Offering to fetch a standalone emulator at the moment someone needs it.
 //
-// RetroAchievements recognises no libretro core for PS2 or GameCube/Wii, so
-// those two platforms need PCSX2 or Dolphin themselves. Detection finds one
-// already installed; this covers the case where there is nothing to find, at
-// the only moment the user has shown they care -- pressing Play on a game of
-// that platform.
+// RetroAchievements recognises no libretro core for PS2 or GameCube/Wii, and
+// libretro has no core at all for PS3 or Wii U, so those platforms need PCSX2,
+// Dolphin, RPCS3 or Cemu themselves. Detection finds one already installed;
+// this covers the case where there is nothing to find, at the only moment the
+// user has shown they care -- pressing Play on a game of that platform.
 //
 // Nothing is extracted. The file is handed to the operating system exactly as
 // the RetroArch offer does: an installer runs, a disk image mounts, a Flatpak

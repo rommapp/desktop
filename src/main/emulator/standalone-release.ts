@@ -1,10 +1,13 @@
 // Picking the right download for a standalone emulator.
 //
-// Both projects publish a JSON index of their releases, which is a good deal
+// Each project publishes a JSON index of its releases, which is a good deal
 // steadier than scraping a directory listing: Dolphin at
-// dolphin-emu.org/update/latest/<channel>, PCSX2 at api.pcsx2.net. This reads
-// those two shapes and answers one question -- what should this machine
-// download, and can the operating system install it unaided?
+// dolphin-emu.org/update/latest/<channel>, PCSX2 at api.pcsx2.net, RPCS3 at
+// update.rpcs3.net -- the endpoint its own in-app updater calls. Cemu publishes
+// none of its own, so its GitHub release feed stands in, pinned to its own
+// repository. This reads those four shapes and answers one question -- what
+// should this machine download, and can the operating system install it
+// unaided?
 //
 // The shell never extracts anything. As with RetroArch, the file is handed to
 // the OS and the user completes the install through the flow they already know.
@@ -57,9 +60,10 @@ export interface ReleaseArtifact {
  * Utility -- but the user has to be told the extra step, because nothing will
  * detect a folder we cannot guess.
  *
- * Not a reason to withhold the download. Dolphin publishes no Windows installer
- * and PCSX2 no macOS disk image, and an archive someone can extract beats
- * sending them away to find it themselves.
+ * Not a reason to withhold the download. Dolphin publishes no Windows
+ * installer, PCSX2 no macOS disk image, and RPCS3 nothing but archives on every
+ * platform it builds for -- an archive someone can extract beats sending them
+ * away to find it themselves.
  */
 export function installsWhereDetectionLooks(kind: ArtifactKind): boolean {
   return kind !== "archive";
@@ -192,28 +196,37 @@ function pcsx2Key(platform: NodeJS.Platform, arch: string): string | null {
 }
 
 /**
- * Where PCSX2 publishes its assets.
+ * Whether a URL is a release asset of one of the named GitHub repositories.
  *
- * The origin policy has to allow all of github.com and its asset CDN, because
- * a release download redirects to a host whose name has changed before. That
- * is wide enough to cover any repository on GitHub, so the entry the index
- * hands over is pinned to PCSX2's own release path as well -- otherwise an
- * index that named someone else's release would have it downloaded and, for an
- * installer, run. Compared after parsing, so a path with .. segments in it is
- * normalised before it is judged rather than after.
+ * Three of these projects publish through GitHub, so the origin policy has to
+ * allow all of github.com and its asset CDN -- a release download redirects to
+ * a host whose name has changed before. That is wide enough to cover any
+ * repository on GitHub, so the entry the index hands over is pinned to the
+ * project's own release path as well: otherwise an index that named someone
+ * else's release would have it downloaded and, for an installer, run. Compared
+ * after parsing, so a path with .. segments in it is normalised before it is
+ * judged rather than after.
  */
-function onPcsx2Releases(url: string): boolean {
+function onGithubRelease(url: string, repositories: string[]): boolean {
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
     return false;
   }
-  return (
-    parsed.origin === "https://github.com" &&
-    parsed.pathname.startsWith("/PCSX2/pcsx2/releases/download/")
+  if (parsed.origin !== "https://github.com") return false;
+  return repositories.some((repository) =>
+    parsed.pathname.startsWith(`/${repository}/releases/download/`),
   );
 }
+
+/** Origins for a project whose assets are GitHub release downloads. The suffix
+ *  is what is pinned rather than today's spelling of the asset host, whose name
+ *  has changed before. */
+const GITHUB_ASSET_POLICY: OriginPolicy = {
+  origins: ["https://github.com"],
+  hostSuffixes: ["githubusercontent.com"],
+};
 
 interface Pcsx2Asset {
   url?: unknown;
@@ -248,7 +261,7 @@ export function pickPcsx2Artifact(
   const candidates: ReleaseArtifact[] = [];
   for (const entry of group as Pcsx2Asset[]) {
     if (typeof entry?.url !== "string") continue;
-    if (!onPcsx2Releases(entry.url)) continue;
+    if (!onGithubRelease(entry.url, ["PCSX2/pcsx2"])) continue;
     const tags = Array.isArray(entry.additionalTags)
       ? entry.additionalTags.filter(
           (tag): tag is string => typeof tag === "string",
@@ -278,6 +291,164 @@ export function pickPcsx2Artifact(
   );
 }
 
+/**
+ * The RPCS3 `latest_build` key this machine matches.
+ *
+ * The index carries exactly three builds, which is what the project's own
+ * updater offers: a 64-bit Windows build, an x86-64 AppImage, and one macOS
+ * archive. Anything outside that -- 32-bit Windows, an ARM Linux box -- gets no
+ * key and is sent to the download page rather than handed a build it cannot
+ * run.
+ */
+function rpcs3Key(platform: NodeJS.Platform, arch: string): string | null {
+  switch (platform) {
+    case "darwin":
+      // The index publishes one macOS build, an x86-64 one, which is what
+      // Apple silicon runs under Rosetta. RPCS3 does ship a native arm64
+      // archive, but not through this endpoint, so it is not something to
+      // construct a URL for here.
+      return "mac";
+    case "win32":
+      // arm64 Windows emulates x64, as it does for RetroArch. 32-bit cannot.
+      return arch === "ia32" ? null : "windows";
+    case "linux":
+      return arch === "x64" ? "linux" : null;
+    default:
+      return null;
+  }
+}
+
+/** The repositories RPCS3 publishes its builds from -- one per platform,
+ *  separate from the source repository. */
+const RPCS3_BINARY_REPOSITORIES = [
+  "RPCS3/rpcs3-binaries-win",
+  "RPCS3/rpcs3-binaries-linux",
+  "RPCS3/rpcs3-binaries-mac",
+];
+
+/**
+ * Read RPCS3's update index.
+ *
+ * One build per platform, each an object with its own download URL, so there is
+ * nothing to choose between: the platform key either has a usable asset or it
+ * does not. A `return_code` other than 0 means the endpoint declined to answer,
+ * which arrives here as a missing or empty build and is handled by the same
+ * shape checks as any other malformed response.
+ */
+export function pickRpcs3Artifact(
+  release: unknown,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): ReleaseArtifact | null {
+  if (typeof release !== "object" || release === null) return null;
+  const { version } = release as { version?: unknown };
+  const key = rpcs3Key(platform, arch);
+  if (!key) return null;
+  const build: unknown = (release as Record<string, unknown>)[key];
+  if (typeof build !== "object" || build === null) return null;
+  const { download } = build as { download?: unknown };
+  if (typeof download !== "string") return null;
+  if (!onGithubRelease(download, RPCS3_BINARY_REPOSITORIES)) return null;
+  const fileName = fileNameOf(download);
+  if (!fileName) return null;
+  const kind = kindOf(fileName);
+  if (!kind) return null;
+  return {
+    url: download,
+    fileName,
+    kind,
+    version: typeof version === "string" ? version : "latest",
+  };
+}
+
+/**
+ * The Cemu release assets this machine can use, best first.
+ *
+ * Matched on the name, because a GitHub release lists assets and nothing else:
+ * there are no tags to read, and the platform is only ever spelled out in the
+ * file name. Anchored at the end, so a checksum or symbols file published
+ * beside a build cannot be mistaken for one.
+ */
+function cemuAssetPatterns(
+  platform: NodeJS.Platform,
+  arch: string,
+): RegExp[] | null {
+  switch (platform) {
+    case "darwin":
+      // Built per architecture. An x86-64 build runs on Apple silicon under
+      // Rosetta, so it is a fallback rather than something to refuse.
+      return arch === "arm64"
+        ? [/macos-.*-arm64\.dmg$/i, /macos-.*-x86_64\.dmg$/i]
+        : [/macos-.*-x86_64\.dmg$/i];
+    case "win32":
+      // arm64 Windows emulates x64. 32-bit cannot.
+      if (arch === "ia32") return null;
+      // The installer first: it lands in LOCALAPPDATA\Cemu, which is exactly
+      // where detection looks. The portable zip is the fallback, and someone
+      // who extracts it has to point at it themselves.
+      return [/windows-x64-installer\.exe$/i, /windows-x64\.zip$/i];
+    case "linux":
+      // The AppImage is the only Linux build published, and only for x86-64.
+      // The Ubuntu zip beside it is a bare binary against that release's system
+      // libraries, which is not something to hand someone unasked.
+      return arch === "x64" ? [/-x86_64\.AppImage$/] : null;
+    default:
+      return null;
+  }
+}
+
+interface GithubReleaseAsset {
+  name?: unknown;
+  browser_download_url?: unknown;
+}
+
+/**
+ * Read Cemu's GitHub release feed.
+ *
+ * Cemu publishes no index of its own, so this is the release its download page
+ * links to, read from GitHub's API. /releases/latest excludes drafts and
+ * prereleases, so the answer is the same build the project is offering.
+ */
+export function pickCemuArtifact(
+  release: unknown,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): ReleaseArtifact | null {
+  if (typeof release !== "object" || release === null) return null;
+  const { tag_name: tag, assets } = release as {
+    tag_name?: unknown;
+    assets?: unknown;
+  };
+  if (!Array.isArray(assets)) return null;
+  const patterns = cemuAssetPatterns(platform, arch);
+  if (!patterns) return null;
+
+  // Preference order is the pattern order, so the loop is over patterns rather
+  // than over assets: whichever asset the release happens to list first should
+  // not decide between an installer and a portable zip.
+  for (const pattern of patterns) {
+    for (const entry of assets as GithubReleaseAsset[]) {
+      const url = entry?.browser_download_url;
+      if (typeof entry?.name !== "string" || typeof url !== "string") continue;
+      if (!pattern.test(entry.name)) continue;
+      if (!onGithubRelease(url, ["cemu-project/Cemu"])) continue;
+      // The name is what was matched, but the file on disk is named after the
+      // URL, so that is what has to be classifiable.
+      const fileName = fileNameOf(url);
+      if (!fileName) continue;
+      const kind = kindOf(fileName);
+      if (!kind) continue;
+      return {
+        url,
+        fileName,
+        kind,
+        version: typeof tag === "string" ? tag : "latest",
+      };
+    }
+  }
+  return null;
+}
+
 export const RELEASE_SOURCES: Record<string, ReleaseSource> = {
   dolphin: {
     id: "dolphin",
@@ -297,14 +468,31 @@ export const RELEASE_SOURCES: Record<string, ReleaseSource> = {
     indexUrl: "https://api.pcsx2.net/v1/latestReleasesAndPullRequests",
     downloadPage: "https://pcsx2.net/downloads/",
     indexPolicy: { origins: ["https://api.pcsx2.net"] },
-    // Release assets live on GitHub and redirect to its asset host, whose name
-    // has changed before, so the suffix is what is pinned rather than today's
-    // spelling of it.
-    artifactPolicy: {
-      origins: ["https://github.com"],
-      hostSuffixes: ["githubusercontent.com"],
-    },
+    artifactPolicy: GITHUB_ASSET_POLICY,
     pick: pickPcsx2Artifact,
+  },
+  rpcs3: {
+    id: "rpcs3",
+    label: "RPCS3",
+    // The endpoint RPCS3's own updater calls. api=v2 is what returns the
+    // per-platform objects below; without it the answer is the older shape.
+    indexUrl: "https://update.rpcs3.net/?api=v2",
+    downloadPage: "https://rpcs3.net/download",
+    indexPolicy: { origins: ["https://update.rpcs3.net"] },
+    artifactPolicy: GITHUB_ASSET_POLICY,
+    pick: pickRpcs3Artifact,
+  },
+  cemu: {
+    id: "cemu",
+    label: "Cemu",
+    // Cemu has no release index of its own, so this is the GitHub release its
+    // download page points at. Pinned to the repository in the path, and the
+    // assets are pinned again in pickCemuArtifact.
+    indexUrl: "https://api.github.com/repos/cemu-project/Cemu/releases/latest",
+    downloadPage: "https://cemu.info/",
+    indexPolicy: { origins: ["https://api.github.com"] },
+    artifactPolicy: GITHUB_ASSET_POLICY,
+    pick: pickCemuArtifact,
   },
 };
 
@@ -318,7 +506,21 @@ export function pcsx2LatestStable(index: unknown): unknown {
   return data[0] ?? null;
 }
 
+/** RPCS3 answers with a status code and the build beside it. */
+export function rpcs3LatestBuild(index: unknown): unknown {
+  if (typeof index !== "object" || index === null) return null;
+  return (index as { latest_build?: unknown }).latest_build ?? null;
+}
+
 /** The shape each source's index arrives in, reduced to the release itself. */
 export function unwrapRelease(sourceId: string, index: unknown): unknown {
-  return sourceId === "pcsx2" ? pcsx2LatestStable(index) : index;
+  switch (sourceId) {
+    case "pcsx2":
+      return pcsx2LatestStable(index);
+    case "rpcs3":
+      return rpcs3LatestBuild(index);
+    default:
+      // Dolphin and Cemu both answer with the release itself.
+      return index;
+  }
 }

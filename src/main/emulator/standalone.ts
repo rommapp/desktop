@@ -1,10 +1,14 @@
 // Standalone emulators the shell can find on its own.
 //
-// RetroAchievements only recognises the standalone PCSX2 and Dolphin, not their
-// libretro cores, so for PS2 and GameCube/Wii there is no core that will ever
-// unlock an achievement. The emulators config has always been able to point at
-// them; what nobody can reasonably do is guess the executable name and argument
-// template, which is the part that keeps people stuck.
+// Two reasons a platform ends up here. RetroAchievements only recognises the
+// standalone PCSX2 and Dolphin, not their libretro cores, so for PS2 and
+// GameCube/Wii there is no core that will ever unlock an achievement. PS3 and
+// Wii U are simpler still: libretro has no core for either, so RetroArch cannot
+// play them at all and RPCS3 and Cemu are the only way they launch.
+//
+// The emulators config has always been able to point at all four; what nobody
+// can reasonably do is guess the executable name and argument template, which
+// is the part that keeps people stuck.
 //
 // So this is the same idea as detecting RetroArch, extended: probe the usual
 // locations, and launch what is there. It carries no downloading and no
@@ -121,6 +125,20 @@ function flatpak(home: string, appId: string): string[] {
   ];
 }
 
+/**
+ * The two Windows roots an installer picks between, with their defaults.
+ *
+ * Both are read from the environment rather than assumed, because a machine
+ * with Windows on a drive other than C: has neither where this would guess --
+ * and every emulator here needs the same pair.
+ */
+function windowsRoots(home: string, env: NodeJS.ProcessEnv) {
+  return {
+    programFiles: env.ProgramFiles ?? "C:\\Program Files",
+    localAppData: env.LOCALAPPDATA ?? win32.join(home, "AppData\\Local"),
+  };
+}
+
 export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
   {
     id: "pcsx2",
@@ -134,9 +152,7 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
         case "darwin":
           return macApp(home, "PCSX2", "PCSX2", readDir);
         case "win32": {
-          const programFiles = env.ProgramFiles ?? "C:\\Program Files";
-          const localAppData =
-            env.LOCALAPPDATA ?? win32.join(home, "AppData\\Local");
+          const { programFiles, localAppData } = windowsRoots(home, env);
           return [
             win32.join(programFiles, "PCSX2\\pcsx2-qt.exe"),
             win32.join(localAppData, "Programs\\PCSX2\\pcsx2-qt.exe"),
@@ -168,9 +184,7 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
         case "darwin":
           return macApp(home, "Dolphin", "Dolphin", readDir);
         case "win32": {
-          const programFiles = env.ProgramFiles ?? "C:\\Program Files";
-          const localAppData =
-            env.LOCALAPPDATA ?? win32.join(home, "AppData\\Local");
+          const { programFiles, localAppData } = windowsRoots(home, env);
           return [
             win32.join(programFiles, "Dolphin\\Dolphin.exe"),
             win32.join(localAppData, "Programs\\Dolphin\\Dolphin.exe"),
@@ -184,6 +198,71 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
             "/usr/games/dolphin-emu",
             "/usr/local/bin/dolphin-emu",
             ...flatpak(home, "org.DolphinEmu.dolphin-emu"),
+          ];
+      }
+    },
+  },
+  {
+    id: "rpcs3",
+    label: "RPCS3",
+    platformSlugs: ["ps3"],
+    // --no-gui boots what it is handed and quits when the game stops, so the
+    // shell's window comes back instead of a game list being left behind.
+    args: ["--no-gui", "{rom}"],
+    paths(platform, home, env, readDir) {
+      switch (platform) {
+        case "darwin":
+          // The bundle is RPCS3.app but the binary inside it is lowercase.
+          return macApp(home, "RPCS3", "rpcs3", readDir);
+        case "win32": {
+          const { programFiles, localAppData } = windowsRoots(home, env);
+          return [
+            win32.join(programFiles, "RPCS3\\rpcs3.exe"),
+            win32.join(localAppData, "Programs\\RPCS3\\rpcs3.exe"),
+            win32.join(home, "scoop\\apps\\rpcs3\\current\\rpcs3.exe"),
+            "C:\\RetroBat\\emulators\\rpcs3\\rpcs3.exe",
+          ];
+        }
+        default:
+          return [
+            "/usr/bin/rpcs3",
+            "/usr/local/bin/rpcs3",
+            ...flatpak(home, "net.rpcs3.RPCS3"),
+          ];
+      }
+    },
+  },
+  {
+    id: "cemu",
+    label: "Cemu",
+    platformSlugs: ["wiiu"],
+    // -g names the game to launch. Cemu has no flag that closes it when the
+    // game stops, so unlike the other three its window stays until the user
+    // closes it -- the launch is still tracked the same way, by the process.
+    args: ["-g", "{rom}"],
+    paths(platform, home, env, readDir) {
+      switch (platform) {
+        case "darwin":
+          return macApp(home, "Cemu", "Cemu", readDir);
+        case "win32": {
+          const { programFiles, localAppData } = windowsRoots(home, env);
+          return [
+            // Cemu's own installer defaults to LOCALAPPDATA\Cemu, not the
+            // Programs directory the others use, so that one comes first.
+            win32.join(localAppData, "Cemu\\Cemu.exe"),
+            win32.join(programFiles, "Cemu\\Cemu.exe"),
+            win32.join(localAppData, "Programs\\Cemu\\Cemu.exe"),
+            win32.join(home, "scoop\\apps\\cemu\\current\\Cemu.exe"),
+            "C:\\RetroBat\\emulators\\cemu\\Cemu.exe",
+          ];
+        }
+        default:
+          // Capitalised, which is what Cemu's own build installs: cemu is not
+          // it, and a case-insensitive filesystem is not something to count on.
+          return [
+            "/usr/bin/Cemu",
+            "/usr/local/bin/Cemu",
+            ...flatpak(home, "info.cemu.Cemu"),
           ];
       }
     },
@@ -311,9 +390,9 @@ export function detectedMappingFor(
   readDir: ReadDir = readDirSafe,
 ): EmulatorMapping | null {
   // findMapping asks this for every platform, and detection is a directory scan
-  // plus a dozen stats. Nothing that is not PS2, GameCube or Wii can ever match,
-  // so answering from the table costs nothing and keeps the scan off the main
-  // process for every SNES game in a library.
+  // plus a dozen stats per emulator. Only the handful of platforms in the table
+  // above can ever match, so answering from it costs nothing and keeps the scan
+  // off the main process for every SNES game in a library.
   if (!emulatorForPlatform(platformSlug)) return null;
   const wanted = platformSlug.toLowerCase();
   return (
