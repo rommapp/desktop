@@ -414,6 +414,21 @@ test("applyTokens leaves token-looking text inside a path alone", () => {
   ]);
 });
 
+test("{biosconfig} is empty until the mirror has written one", () => {
+  // Nothing is generated when the mirror is off, and a row that still names the
+  // token gets an empty string rather than a path to a file that is not there.
+  const args = applyTokens(["--appendconfig={biosconfig}"], {
+    rom: "/cache/1/game.chd",
+    core: null,
+    savePaths: null,
+    biosPaths: {
+      directory: "/data/bios/psx",
+      appendConfig: join(mkdtempSync(join(tmpdir(), "romm-bios-")), "gone.cfg"),
+    },
+  });
+  assert.deepEqual(args, ["--appendconfig="]);
+});
+
 test("applyTokens substitutes the firmware directory", () => {
   const args = applyTokens(["-bios", "{bios}", "{rom}"], {
     rom: "/cache/1/game.chd",
@@ -477,6 +492,53 @@ test("a RetroArch launch is pointed at the firmware only once there is some", ()
     "-L",
     join(install.root, coreFileName("snes9x")),
     "/cache/1/game.sfc",
+  ]);
+});
+
+test("a RetroArch mapping can ask for the system directory itself", () => {
+  // The automatic flag is only for the built-in RetroArch path, since a
+  // mapping's arguments are the user's and "flatpak run org.libretro.RetroArch"
+  // is not something the shell can recognise as RetroArch. So a row says where
+  // it wants the generated config, which is the case the README's own Flatpak
+  // wildcard row needs.
+  const install = fakeInstall(["mednafen_psx_hw"]);
+  const biosRoot = mkdtempSync(join(tmpdir(), "romm-bios-"));
+  const generated = join(biosRoot, ".retroarch", "psx.cfg");
+  mkdirSync(join(biosRoot, ".retroarch"), { recursive: true });
+  writeFileSync(generated, 'system_directory = "x"');
+  const config = testConfig({
+    retroarchCoresPath: install.root,
+    biosPath: biosRoot,
+    emulators: [
+      {
+        platformSlug: "*",
+        label: "RetroArch (Flatpak)",
+        command: install.binary,
+        args: [
+          "run",
+          "org.libretro.RetroArch",
+          "--appendconfig={biosconfig}",
+          "-L",
+          "{core}",
+          "{rom}",
+        ],
+      },
+    ],
+  });
+  const launch = resolveLaunch({
+    config,
+    platformSlug: "psx",
+    cores: ["mednafen_psx_hw"],
+    romPath: "/cache/1/game.chd",
+    savePaths: null,
+  });
+  assert.deepEqual(launch.args, [
+    "run",
+    "org.libretro.RetroArch",
+    `--appendconfig=${generated}`,
+    "-L",
+    join(install.root, coreFileName("mednafen_psx_hw")),
+    "/cache/1/game.chd",
   ]);
 });
 

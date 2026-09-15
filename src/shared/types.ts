@@ -58,6 +58,10 @@ export interface LaunchState {
   stage?: "rom" | "core" | "emulator" | "firmware";
   /** The core being installed, while stage is "core". */
   core?: string;
+  /** The firmware file being fetched, while stage is "firmware". Its own field
+   *  rather than borrowing `core`, so a frontend reading one never has to
+   *  guess which stage it is in. */
+  firmware?: string;
   /** The emulator being set up, while stage is "emulator". Present for both
    *  halves of that stage, so a frontend can name what it is waiting for. */
   emulator?: string;
@@ -116,9 +120,11 @@ export interface EmulatorMapping {
   /** Argument template: "{rom}" becomes the cached ROM path, "{core}" the
    *  resolved core path, "{saves}" / "{states}" this game's save data
    *  directories, "{savefile}" / "{statefile}" the files inside them for an
-   *  emulator that wants one, and "{bios}" the directory this platform's RomM
-   *  firmware was mirrored into. Substituted per argv entry, so no shell is
-   *  involved. */
+   *  emulator that wants one, "{bios}" the directory this platform's RomM
+   *  firmware was mirrored into, and "{biosconfig}" a generated RetroArch
+   *  config naming that directory as its system_directory, for a RetroArch
+   *  mapping to pass to --appendconfig. Substituted per argv entry, so no shell
+   *  is involved. */
   args: string[];
   /** Display name for the emulator, shown in the renderer. */
   label?: string;

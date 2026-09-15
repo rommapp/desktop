@@ -34,8 +34,14 @@ const WRITE_BUFFER_BYTES = 4 * 1024 * 1024;
  *
  * Shared with the firmware mirror, which pulls from the same server over the
  * same session and wants the same backpressure, the same cancellation and the
- * same refusal to treat a non-2xx body as a file. The only thing either caller
- * decides is where the bytes land.
+ * same refusal to treat a non-2xx body as a file.
+ *
+ * `maxBytes` is what the two callers disagree about. A ROM is whatever size the
+ * library says and the user asked for it by name, so it has no cap. Firmware is
+ * asked for on the user's behalf, from a list, against a size the server
+ * declared beforehand -- so a body that runs past that size is not the file it
+ * claimed to be, and streaming it to the end of the disk to find out is the
+ * wrong way round.
  */
 export function downloadFromServer({
   url,
@@ -43,12 +49,16 @@ export function downloadFromServer({
   destination,
   onProgress,
   signal,
+  maxBytes,
 }: {
   url: URL;
   session: Session;
   destination: string;
   onProgress: (received: number, total: number | null) => void;
   signal: AbortSignal;
+  /** Ceiling on the transfer, enforced against the declared length and again
+   *  as the bytes arrive. Absent means no ceiling. */
+  maxBytes?: number;
 }): Promise<void> {
   return new Promise((resolve, reject) => {
     // useSessionCookies attaches the romm_session cookie the window already
@@ -88,6 +98,17 @@ export function downloadFromServer({
       const header = response.headers["content-length"];
       const declared = Array.isArray(header) ? header[0] : header;
       const total = declared ? Number.parseInt(declared, 10) : null;
+      // Refused before a byte is written where the server says up front that it
+      // is too big.
+      if (maxBytes !== undefined && total !== null && total > maxBytes) {
+        fail(
+          new LaunchError(
+            "download-failed",
+            `${url.pathname} is ${total} bytes, past the ${maxBytes} limit`,
+          ),
+        );
+        return;
+      }
       let received = 0;
 
       const file = createWriteStream(destination, {
@@ -97,6 +118,18 @@ export function downloadFromServer({
 
       response.on("data", (chunk: Buffer) => {
         received += chunk.length;
+        // And again as it arrives, because a declared length is a claim: a
+        // response that keeps going past the cap is stopped mid-stream rather
+        // than after it has filled the disk.
+        if (maxBytes !== undefined && received > maxBytes) {
+          fail(
+            new LaunchError(
+              "download-failed",
+              `${url.pathname} ran past the ${maxBytes} limit`,
+            ),
+          );
+          return;
+        }
         // A ROM can be several GB, so respect the write stream's backpressure
         // instead of buffering the whole transfer in memory.
         if (!file.write(chunk)) {

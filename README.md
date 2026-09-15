@@ -528,14 +528,44 @@ refuses a launch when any two of the three contain each other: the mirror
 deletes what the server no longer lists and cache eviction deletes a ROM
 directory whole, so an overlap means one of them deleting files the other owns.
 
-RetroArch is pointed at it for you. The shell writes a config naming
-`system_directory` and passes `--appendconfig`, which layers over your own
-settings for that one run rather than editing your `retroarch.cfg` -- so
-switching the mirror off switches this off with it. Those generated files live in
-`<biosPath>/.retroarch/`, are rewritten on every launch that syncs, and are not
-worth editing.
+The RetroArch the shell found for itself is pointed at it for you: it writes a
+config naming `system_directory` and passes `--appendconfig`, which layers over
+your own settings for that one run rather than editing your `retroarch.cfg`, so
+switching the mirror off switches this off with it. Those generated files live
+in `<biosPath>/.retroarch/`, are rewritten on every launch that syncs, and are
+not worth editing.
 
-A configured emulator has to be told, the same way save data works. `{bios}`
+A RetroArch you configured yourself under `emulators` does not get that
+automatically, because the shell cannot tell that `flatpak run
+org.libretro.RetroArch` is RetroArch, nor where in your own arguments a flag of
+its own would be safe to insert. Say where you want it with `{biosconfig}`:
+
+```json
+{
+  "emulators": [
+    {
+      "platformSlug": "*",
+      "label": "RetroArch (Flatpak)",
+      "command": "/usr/bin/flatpak",
+      "args": [
+        "run",
+        "org.libretro.RetroArch",
+        "--appendconfig={biosconfig}",
+        "-L",
+        "{core}",
+        "{rom}"
+      ]
+    }
+  ]
+}
+```
+
+That is safe on every platform, including the many with no firmware at all: the
+file always exists while the mirror is on, and on a platform with nothing to
+find it contains only comments, so it overrides none of your settings. Remove
+the token if you set `useRommFirmware` to `false`.
+
+Any other emulator has to be told too, the same way save data works. `{bios}`
 expands to that platform's directory:
 
 ```json
@@ -560,6 +590,12 @@ filename and nothing else, while a few libretro cores want a subdirectory of the
 system directory (Flycast looks for `dc/dc_boot.bin`). Put those where the core
 wants them, outside `<biosPath>`, since anything inside a platform's directory
 that RomM does not list is treated as firmware it no longer has.
+
+Deleting is the one thing the mirror does that it cannot take back, so it only
+ever acts on an answer: the server listing this platform's firmware. Being
+offline, lacking the read scope, a server too old for the endpoint, a platform
+the server does not have, and a reply that is not the list it should be all
+leave the mirror and its RetroArch pointer exactly as they were.
 
 ### Fullscreen
 

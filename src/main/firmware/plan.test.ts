@@ -159,15 +159,30 @@ test("a file the server no longer lists is removed", () => {
   assert.deepEqual(plan.remove, ["scph1001.bin"]);
 });
 
-test("a case-different name is the same file, not one to delete", () => {
-  // Windows and macOS would treat these as one path, so removing "the one the
-  // server does not list" would delete the one it does.
+test("a case-different name is fetched but not deleted", () => {
+  // Asymmetric on purpose. Fetching goes by the exact name because that is
+  // what a core opens, and on Linux SCPH5501.BIN is simply not scph5501.bin --
+  // so the server's spelling is fetched alongside. Removal goes by the loose
+  // name because on Windows and macOS the two are one file, and deleting "the
+  // one the server does not list" would delete the one it does.
   const plan = planFirmwareSync(
     [BIOS],
     [{ fileName: "SCPH5501.BIN", size: 524288 }],
   );
+  assert.deepEqual(plan.fetch, [BIOS]);
   assert.deepEqual(plan.remove, []);
+});
+
+test("an exact match is not re-fetched just because a case variant exists", () => {
+  const plan = planFirmwareSync(
+    [BIOS],
+    [
+      { fileName: "scph5501.bin", size: 524288 },
+      { fileName: "SCPH5501.BIN", size: 1 },
+    ],
+  );
   assert.deepEqual(plan.fetch, []);
+  assert.deepEqual(plan.remove, []);
 });
 
 test("an empty server list empties the mirror", () => {

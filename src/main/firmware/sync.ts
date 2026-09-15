@@ -75,6 +75,24 @@ async function getJson(
   }
 }
 
+/**
+ * The temporary name a download writes to.
+ *
+ * Leading dot, so it can never collide with a firmware name: readFirmwareList
+ * refuses anything safeFileName would rewrite, and safeFileName strips leading
+ * dots -- so no file the server lists can be spelled this way. Suffixing
+ * ".part" alone would collide with a firmware legitimately called "bios.part",
+ * which readMirror would then skip and re-download on every launch.
+ */
+function tempNameFor(fileName: string): string {
+  return `.${fileName}.part`;
+}
+
+/** Whether a directory entry is one of those temporary files. */
+function isTempName(name: string): boolean {
+  return name.startsWith(".") && name.endsWith(".part");
+}
+
 /** What the mirror holds now, or nothing when it does not exist yet. */
 async function readMirror(directory: string): Promise<LocalFirmware[]> {
   let entries;
@@ -88,10 +106,11 @@ async function readMirror(directory: string): Promise<LocalFirmware[]> {
   const files: LocalFirmware[] = [];
   for (const entry of entries) {
     if (!entry.isFile()) continue;
-    // A .part is a transfer that died. Left for its own download to overwrite
-    // rather than reported as firmware, so it can never be counted as a file
-    // the server no longer lists and deleted out from under a live transfer.
-    if (entry.name.endsWith(".part")) continue;
+    // A half-written transfer is not firmware. Skipped rather than reported, so
+    // it can never be counted as a file the server no longer lists and deleted
+    // out from under the download still writing it; swept separately below,
+    // once the server's list is known.
+    if (isTempName(entry.name)) continue;
     const info = await stat(join(directory, entry.name)).catch(() => null);
     if (!info) continue;
     files.push({ fileName: entry.name, size: info.size });
@@ -118,13 +137,7 @@ export interface FirmwareMirror extends BiosPaths {
  * its presence on disk is what tells the launch whether pointing RetroArch's
  * system_directory here would mean anything.
  */
-export async function syncPlatformFirmware({
-  config,
-  session,
-  platformSlug,
-  signal,
-  onProgress,
-}: {
+export function syncPlatformFirmware(options: {
   config: DesktopConfig;
   session: Session;
   platformSlug: string;
@@ -136,29 +149,90 @@ export async function syncPlatformFirmware({
     total: number | null,
   ) => void;
 }): Promise<FirmwareMirror | null> {
-  const paths = resolveBiosPaths(config.biosPath, platformSlug);
-  if (!paths) return null;
+  const paths = resolveBiosPaths(options.config.biosPath, options.platformSlug);
+  if (!paths) return Promise.resolve(null);
+  return serialised(paths.directory, () => runSync(paths, options));
+}
+
+/**
+ * One sync per platform directory at a time.
+ *
+ * Firmware is shared by every game on a platform, so two launches of two games
+ * can ask for the same mirror at once -- pressing Play on a second PS1 game
+ * while the first is still starting is an ordinary thing to do. Left to run
+ * side by side they would write the same temporary file, interleave their
+ * bytes, and each rename it out from under the other.
+ *
+ * A second caller therefore waits for the first and takes its result, which is
+ * also the right answer rather than merely a safe one: the mirror it wanted is
+ * exactly what the first call is producing. One process is enough to reason
+ * about because the app holds a single-instance lock.
+ */
+const running = new Map<string, Promise<FirmwareMirror | null>>();
+
+function serialised(
+  key: string,
+  work: () => Promise<FirmwareMirror | null>,
+): Promise<FirmwareMirror | null> {
+  const queued = (running.get(key) ?? Promise.resolve(null))
+    // The previous sync's failure is its own caller's business, and must not
+    // stop this one from running.
+    .catch(() => null)
+    .then(work);
+  running.set(key, queued);
+  // Cleared only if this is still the newest, so a third caller queued behind
+  // it keeps waiting on the right promise.
+  void queued
+    .catch(() => null)
+    .finally(() => {
+      if (running.get(key) === queued) running.delete(key);
+    });
+  return queued;
+}
+
+async function runSync(
+  paths: BiosPaths,
+  {
+    config,
+    session,
+    platformSlug,
+    signal,
+    onProgress,
+  }: {
+    config: DesktopConfig;
+    session: Session;
+    platformSlug: string;
+    signal: AbortSignal;
+    onProgress?: (
+      fileName: string,
+      received: number,
+      total: number | null,
+    ) => void;
+  },
+): Promise<FirmwareMirror | null> {
   const { serverUrl, useRommFirmware } = config;
   if (!useRommFirmware || !serverUrl) {
     // Switching the mirror off has to switch the RetroArch pointer off with it.
     // A config generated while it was on would otherwise keep overriding the
     // user's own system_directory with a directory nothing maintains any more.
-    await writeAppendConfig(paths, false);
+    await forgetAppendConfig(paths);
     return { ...paths, count: 0 };
   }
 
   const platforms = await getJson(serverUrl, session, "/api/platforms", signal);
-  // Could not ask. Whatever is mirrored is still the last thing the server did
-  // say, so it stays, pointer included: a launch on a train should not undo a
-  // setup that worked at home.
-  if (platforms === undefined) return untouched(paths);
+  // Nothing below this line is allowed to delete anything unless the server
+  // actually answered the question. "Could not ask" covers being offline, a 403
+  // without the firmware read scope, a 404 from an older server -- and a 200
+  // whose body is not the list it should be, which says just as little. All of
+  // them leave the mirror and its pointer exactly as they were: a launch on a
+  // train should not undo a setup that worked at home.
+  if (!Array.isArray(platforms)) return untouched(paths);
 
   const platformId = platformIdFor(platforms, platformSlug);
-  // Answered, and has no platform by this slug -- so nothing to point at.
-  if (platformId === null) {
-    await writeAppendConfig(paths, false);
-    return { ...paths, count: 0 };
-  }
+  // The server has no platform by this slug. That is a disagreement about what
+  // this platform even is, not a statement that it has no firmware, so it is
+  // not something to delete a mirror over either.
+  if (platformId === null) return untouched(paths);
 
   const listed = await getJson(
     serverUrl,
@@ -166,7 +240,10 @@ export async function syncPlatformFirmware({
     `/api/firmware?platform_id=${platformId}`,
     signal,
   );
-  if (listed === undefined) return untouched(paths);
+  if (!Array.isArray(listed)) return untouched(paths);
+
+  // From here on the answer is authoritative: this is the platform's firmware,
+  // and an empty list means it has none.
   const remote = readFirmwareList(listed);
   const plan = planFirmwareSync(remote, await readMirror(paths.directory));
 
@@ -181,20 +258,33 @@ export async function syncPlatformFirmware({
     } catch {
       continue;
     }
-    // Bounded like any other download, so a mislabelled row cannot fill the
-    // disk with what it claimed was a BIOS.
+    // A row claiming more than any real firmware is not one to start fetching.
     if (file.size > MAX_FIRMWARE_BYTES) continue;
     const target = join(paths.directory, file.fileName);
-    const temp = `${target}.part`;
+    const temp = join(paths.directory, tempNameFor(file.fileName));
     try {
       await downloadFromServer({
         url,
         session,
         destination: temp,
         signal,
+        // The size the row declared is the size this is allowed to be. Enforced
+        // as the bytes arrive, so a body that disagrees is stopped rather than
+        // written to the end of the disk and inspected afterwards.
+        maxBytes: file.size,
         onProgress: (received, total) =>
           onProgress?.(file.fileName, received, total),
       });
+      // And short is as wrong as long. A truncated 2xx is a plausible thing for
+      // a proxy to produce, and renaming it would publish an incomplete BIOS
+      // that every later launch would consider up to date, because its name and
+      // its presence are all the next plan would see. The existing file, if
+      // there is one, is left alone rather than replaced by this.
+      const written = await stat(temp).catch(() => null);
+      if (!written || written.size !== file.size) {
+        await rm(temp, { force: true });
+        continue;
+      }
       await rename(temp, target);
     } catch (error) {
       await rm(temp, { force: true });
@@ -208,14 +298,44 @@ export async function syncPlatformFirmware({
   for (const fileName of plan.remove) {
     await rm(join(paths.directory, fileName), { force: true }).catch(() => {});
   }
+  await sweepOrphanedTemporaries(paths.directory, plan.fetch.length > 0);
 
   // Counted from disk rather than from the server's list, because a fetch that
-  // failed leaves a file the emulator will not find. Writing the pointer for a
-  // directory that turned out to be empty would override a system_directory the
-  // user had set and working, which is the one thing this must not do.
+  // failed leaves one fewer file than the server listed. The count is what
+  // decides whether the generated config names a system directory at all, and
+  // pointing RetroArch at a directory that turned out to be empty would
+  // override a system_directory the user had set and working.
   const mirrored = await readMirror(paths.directory);
-  await writeAppendConfig(paths, mirrored.length > 0);
+  await writeAppendConfig(paths, mirrored.length > 0 ? paths.directory : null);
   return { ...paths, count: mirrored.length };
+}
+
+/**
+ * Delete the leftovers of transfers that died.
+ *
+ * A launch interrupted partway through a 200MB PUP leaves one of these behind,
+ * and nothing else would ever look at it again: the next sync writes to the
+ * same name and overwrites it, but only if that file is still listed. Dropped
+ * from RomM instead, and it would sit there for good.
+ *
+ * Skipped entirely while this run was fetching, because a concurrent sync of
+ * the same platform is serialised behind this one rather than running beside
+ * it -- but a sweep that cannot tell a live transfer from a dead one is not
+ * worth being clever about, and the next launch that fetches nothing will do
+ * it.
+ */
+async function sweepOrphanedTemporaries(
+  directory: string,
+  fetched: boolean,
+): Promise<void> {
+  if (fetched) return;
+  const entries = await readdir(directory, { withFileTypes: true }).catch(
+    () => [],
+  );
+  for (const entry of entries) {
+    if (!entry.isFile() || !isTempName(entry.name)) continue;
+    await rm(join(directory, entry.name), { force: true }).catch(() => {});
+  }
 }
 
 /** Report what is mirrored without changing any of it, for the answers that
@@ -227,20 +347,22 @@ async function untouched(paths: BiosPaths): Promise<FirmwareMirror> {
 /**
  * Keep the generated config in step with the mirror.
  *
- * Removed rather than left stale when a platform's firmware goes away, because
- * a config naming an empty system directory would override whatever the user
- * had set in their own retroarch.cfg -- taking away a system directory that was
- * working before the shell involved itself.
+ * Written whether or not there is firmware, and that is the point: a row naming
+ * "{biosconfig}" names it on every platform, so the file has to exist on every
+ * platform. What changes is what is in it -- a system_directory when there is
+ * something to find, and nothing but comments when there is not, because an
+ * appended config that sets nothing leaves the user's own system_directory
+ * exactly as it was.
+ *
+ * Passing null is therefore not the same as deleting it. Deleting is for the
+ * mirror being switched off, which is the one case where the shell should leave
+ * no trace of itself in a RetroArch launch.
  */
 async function writeAppendConfig(
   paths: BiosPaths,
-  hasFirmware: boolean,
+  directory: string | null,
 ): Promise<void> {
-  if (!hasFirmware) {
-    await rm(paths.appendConfig, { force: true }).catch(() => {});
-    return;
-  }
-  const contents = retroarchSystemConfig(paths.directory);
+  const contents = retroarchSystemConfig(directory);
   if (!contents) return;
   try {
     await mkdir(dirname(paths.appendConfig), { recursive: true });
@@ -249,4 +371,10 @@ async function writeAppendConfig(
     // Without it RetroArch simply is not pointed anywhere, which is where it
     // was before. Not a launch failure.
   }
+}
+
+/** Leave no trace of the shell in a RetroArch launch, for the mirror being
+ *  switched off outright. */
+async function forgetAppendConfig(paths: BiosPaths): Promise<void> {
+  await rm(paths.appendConfig, { force: true }).catch(() => {});
 }

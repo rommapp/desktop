@@ -62,6 +62,19 @@ test("a directory RetroArch's format cannot express is declined, not mangled", (
   assert.ok(retroarchSystemConfig("/data/bios/psx with spaces"));
 });
 
+test("a platform with no firmware still gets a config, setting nothing", () => {
+  // This is what makes "{biosconfig}" safe to name on every platform: a row
+  // that always passes --appendconfig passes a file that overrides nothing
+  // where there is no firmware, rather than one that points RetroArch at an
+  // empty directory and takes away the system_directory the user had set.
+  const written = retroarchSystemConfig(null);
+  assert.ok(written);
+  assert.doesNotMatch(written, /^system_directory/m);
+  for (const line of written.trimEnd().split("\n")) {
+    assert.match(line, /^#/, line);
+  }
+});
+
 test("the generated config says not to edit it", () => {
   // It is rewritten on every launch that syncs, so an edit would vanish.
   assert.match(retroarchSystemConfig("/data/bios/psx") ?? "", /^#/);

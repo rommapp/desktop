@@ -33,17 +33,18 @@ export interface BiosPaths {
   /** The directory itself, which is what "{bios}" expands to. */
   directory: string;
   /**
-   * A generated RetroArch config pointing system_directory at that directory.
+   * A generated RetroArch config, which is what "{biosconfig}" expands to.
    *
    * Written rather than edited into the user's own retroarch.cfg:
    * --appendconfig layers on top for one run and leaves their settings alone,
-   * so switching this off switches it off completely.
+   * so switching the mirror off switches this off completely.
    *
-   * Its presence on disk is also the signal that there is firmware to find --
-   * sync.ts writes it only when the mirror has something in it and removes it
-   * when the mirror empties. That keeps the question "should RetroArch be
-   * pointed at this?" answerable with one stat, by the launch and by the
-   * support probe alike, without either having to ask the server.
+   * It exists whenever the mirror is on, and sets system_directory only when
+   * there is firmware to point at -- with nothing but comments in it otherwise.
+   * That is what makes it safe to name unconditionally: a row that always
+   * passes --appendconfig is passing a file that changes no settings on a
+   * platform with no firmware, rather than one that overrides the user's own
+   * system_directory with an empty directory.
    */
   appendConfig: string;
 }
@@ -79,8 +80,23 @@ export function resolveBiosPaths(
   };
 }
 
+/** The header every generated config carries, so anyone who opens one knows
+ *  where it came from and that editing it is pointless. */
+const GENERATED_HEADER = [
+  "# Written by RomM Desktop, and regenerated on every launch that syncs",
+  "# firmware. Layered over your own settings with --appendconfig, so",
+  "# nothing here changes your retroarch.cfg. Editing it is pointless.",
+];
+
 /**
  * The config that tells RetroArch where this platform's firmware is.
+ *
+ * A null directory means there is no firmware for this platform, and the answer
+ * is a file of comments -- not the absence of a file. An appended config that
+ * sets nothing changes nothing, which is exactly what is wanted: a row that
+ * names this file unconditionally keeps working on a platform with no firmware,
+ * and RetroArch's own system_directory is left alone rather than overridden
+ * with an empty directory.
  *
  * Returns null for a directory that cannot be expressed in RetroArch's config
  * format. Its values are double-quoted with no escape for a quote inside one,
@@ -88,13 +104,16 @@ export function resolveBiosPaths(
  * line to be read as something else. Nothing is lost by declining: "{bios}"
  * still has the directory and only the RetroArch shortcut is skipped.
  */
-export function retroarchSystemConfig(directory: string): string | null {
+export function retroarchSystemConfig(directory: string | null): string | null {
+  if (directory === null) {
+    return [
+      ...GENERATED_HEADER,
+      "# This platform has no firmware in RomM, so this file sets nothing.",
+      "",
+    ].join("\n");
+  }
   if (/["\r\n]/.test(directory)) return null;
-  return [
-    "# Written by RomM Desktop, and regenerated on every launch that syncs",
-    "# firmware. Layered over your own settings with --appendconfig, so",
-    "# nothing here changes your retroarch.cfg. Editing it is pointless.",
-    `system_directory = "${directory}"`,
-    "",
-  ].join("\n");
+  return [...GENERATED_HEADER, `system_directory = "${directory}"`, ""].join(
+    "\n",
+  );
 }

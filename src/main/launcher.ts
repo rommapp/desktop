@@ -574,9 +574,9 @@ export class Launcher {
               romId: request.romId,
               status: "downloading",
               stage: "firmware",
-              // The file is named where a frontend would name a core, so a
-              // 200MB PS3 PUP reads as a transfer rather than a hung launch.
-              core: fileName,
+              // Named, so a 200MB PS3 PUP reads as a transfer of something
+              // rather than a hung launch.
+              firmware: fileName,
               progress,
               received,
               total: total ?? undefined,

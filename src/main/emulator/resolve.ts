@@ -71,6 +71,10 @@ export function applyTokens(
     savefile: savePaths?.saveFile ?? "",
     statefile: savePaths?.statePrefix ?? "",
     bios: biosPaths?.directory ?? "",
+    // Only once the file is actually there. It exists whenever the mirror is
+    // on, so the empty case means the user switched the mirror off and left the
+    // token in their arguments.
+    biosconfig: generatedSystemConfig(biosPaths ?? null) ?? "",
   };
   // One pass with a replacer, never chained replaceAll calls with string
   // replacements: a path is inserted verbatim, and token-looking text inside
@@ -80,26 +84,43 @@ export function applyTokens(
   );
 }
 
-const TOKEN_PATTERN = /\{(rom|core|saves|states|savefile|statefile|bios)\}/g;
+const TOKEN_PATTERN =
+  /\{(rom|core|saves|states|savefile|statefile|bios|biosconfig)\}/g;
 
 /** The tokens that only mean something once the shell owns the save data. */
 const SAVE_TOKENS = ["{saves}", "{states}", "{savefile}", "{statefile}"];
 
 /**
+ * The generated RetroArch config for this platform, if the mirror wrote one.
+ *
+ * Gated on the file existing, which is what makes this answerable without
+ * asking the server: the sync writes it whenever the mirror is on and deletes
+ * it when the mirror is switched off. What is inside decides whether anything
+ * is overridden -- a platform with no firmware gets a file of comments -- so
+ * its mere presence is safe to act on, for the launch and the support probe
+ * alike.
+ */
+function generatedSystemConfig(biosPaths: BiosPaths | null): string | null {
+  if (!biosPaths || !existsSync(biosPaths.appendConfig)) return null;
+  return biosPaths.appendConfig;
+}
+
+/**
  * The extra arguments that point RetroArch at this platform's firmware.
  *
- * --appendconfig layers a generated config over the user's own for one run,
- * rather than editing their retroarch.cfg: switching the mirror off switches
- * this off with it, and nothing of theirs is rewritten.
+ * --appendconfig layers that config over the user's own for one run rather than
+ * editing their retroarch.cfg, so switching the mirror off switches this off
+ * with it and nothing of theirs is rewritten.
  *
- * Gated on the file existing, which is the whole protocol. The sync writes it
- * only when the mirror has firmware in it and deletes it when the mirror
- * empties, so one stat answers "is there anything to point at" for the launch
- * and the support probe alike, with neither needing to have asked the server.
+ * Only for the built-in RetroArch path, because that is the only launch whose
+ * argument list the shell writes: a mapping's arguments are the user's, and the
+ * shell cannot know whether "flatpak run org.libretro.RetroArch" is RetroArch,
+ * nor where in someone else's argv a flag of its own would be safe to insert.
+ * A mapping asks for this with "{biosconfig}" instead.
  */
 function systemDirectoryArgs(biosPaths: BiosPaths | null): string[] {
-  if (!biosPaths || !existsSync(biosPaths.appendConfig)) return [];
-  return [`--appendconfig=${biosPaths.appendConfig}`];
+  const generated = generatedSystemConfig(biosPaths);
+  return generated ? [`--appendconfig=${generated}`] : [];
 }
 
 function findMapping(

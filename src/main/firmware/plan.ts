@@ -121,17 +121,23 @@ export function planFirmwareSync(
   remote: RemoteFirmware[],
   local: LocalFirmware[],
 ): FirmwareSyncPlan {
-  const onDisk = new Map(
-    local.map((file) => [file.fileName.toLowerCase(), file]),
-  );
+  // Fetching is decided on the exact name, because that is what a core opens.
+  // Linux is case-sensitive, so a mirror holding SCPH5501.BIN when the server
+  // says scph5501.bin does not have the file the core will ask for -- and
+  // matching those loosely would leave it permanently missing while reporting
+  // everything in order.
+  const onDisk = new Map(local.map((file) => [file.fileName, file]));
   const fetch = remote.filter((wanted) => {
-    const here = onDisk.get(wanted.fileName.toLowerCase());
+    const here = onDisk.get(wanted.fileName);
     return !here || here.size !== wanted.size;
   });
 
-  // Compared case-insensitively, because Windows and macOS would treat
-  // SCPH5501.BIN and scph5501.bin as one file and deleting "the one the server
-  // does not list" would take the one it does.
+  // Removal is decided loosely, and deliberately not symmetrically. On Windows
+  // and macOS those two names are one file, so deleting "the one the server does
+  // not list" would delete the one it does -- and on Linux the fetch above is
+  // about to write the server's spelling alongside, where a core will find it.
+  // Leaving the odd one is the recoverable mistake; deleting the right one is
+  // not.
   const wanted = new Set(remote.map((file) => file.fileName.toLowerCase()));
   const remove = local
     .filter((file) => !wanted.has(file.fileName.toLowerCase()))
