@@ -457,10 +457,12 @@ RPCS3 cannot open one at all.
 
 So a ROM the server reports as two or more disc images is fetched as those
 individual files instead, one request each. Discs are ordered by the number in
-their name (`Disc 2`, `disk 2`, `CD2`), and a `.cue` or `.gdi` is what counts
-as the disc rather than the `.bin` or `.img` it describes. The tracks it
-describes are still fetched, beside it: a sheet names them by relative name and
-cannot boot without them.
+their name (`Disc 2`, `disk 2`, `CD2`), and a `.cue`, `.gdi` or `.mds` is what
+counts as the disc rather than the `.bin`, `.img` or `.mdf` it describes. The
+tracks it describes are still fetched, beside it: a sheet names them by relative
+name and cannot boot without them. A sheet only accounts for the tracks whose
+names it matches, so a disc that arrived as a bare `.bin` is still a disc even
+when its sibling came as a pair.
 
 What the emulator is then handed depends on whether it reads an `.m3u`:
 
@@ -501,9 +503,11 @@ which outranks both inferences:
 ```
 
 A set already under `libraryPath` is launched in place rather than downloaded,
-all of it or none of it: a sheet's tracks sit beside it by relative name, and an
-emulator with no playlist looks for the next disc beside the one it booted, so a
-set split across two directories is one that cannot finish. Otherwise the whole
+all of it or none of it, and only when it sits in one directory: a sheet's
+tracks sit beside it by relative name, and an emulator with no playlist looks
+for the next disc beside the one it booted, so a set spread over two
+directories is one that cannot finish. A ROM's files can sit in subdirectories
+of its folder, so being under `libraryPath` is not by itself enough. Otherwise the whole
 set lands in the ROM cache, where the same size check applies to each file and
 the cache is brought back inside `cacheLimitBytes` once the set is whole. The
 playlist is always written to the cache, never into the library, so launching in

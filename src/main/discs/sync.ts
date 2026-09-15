@@ -101,48 +101,21 @@ export async function syncDiscSet({
   if (discs.length < 2) return null;
   const staged = selectStagedFiles(files);
 
-  // All of the set from the library or none of it. A sheet names its tracks by
-  // relative name, and an emulator with no playlist looks for the next disc
-  // beside the one it booted, so a set split across two directories is a set
-  // that cannot finish.
-  const local = staged.map((file) =>
-    resolveLibraryRom(config.libraryPath, file.fullPath, file.sizeBytes),
-  );
-
-  const romDir = join(cachePath, String(romId));
-  const paths = new Map<number, string>();
-
-  if (local.every((path) => path !== null)) {
-    staged.forEach((file, position) => {
-      paths.set(file.id, local[position] as string);
-    });
-  } else {
-    await mkdir(romDir, { recursive: true });
-    for (const [position, file] of staged.entries()) {
-      const target = await stageFile({
-        serverUrl,
-        session,
-        romId,
-        romDir,
-        file,
-        signal,
-        onProgress: (received, total) =>
-          onProgress?.(
-            file.fileName,
-            received,
-            total,
-            position + 1,
-            staged.length,
-          ),
-      });
-      if (!target) return null;
-      paths.set(file.id, target);
-    }
-    // These downloads bypass ensureRom, which is where an ordinary launch keeps
-    // the cache inside its limit. Once the set is whole, and never evicting the
-    // directory this launch is about to read.
-    await evictToLimit(cachePath, config.cacheLimitBytes, romDir);
-  }
+  // The set comes from one place: all of it from the library, in one
+  // directory, or all of it from the cache.
+  const paths =
+    libraryPaths(staged, config.libraryPath) ??
+    (await cachePaths({
+      staged,
+      serverUrl,
+      session,
+      romId,
+      cachePath,
+      cacheLimitBytes: config.cacheLimitBytes,
+      signal,
+      onProgress,
+    }));
+  if (!paths) return null;
 
   const bootPaths: string[] = [];
   for (const disc of discs) {
@@ -157,10 +130,94 @@ export async function syncDiscSet({
   // Written to the cache even when every disc came from the library, because
   // the library is the user's and a playlist left in it is one more file for
   // RomM to scan.
+  const romDir = join(cachePath, String(romId));
   await mkdir(romDir, { recursive: true });
   const playlistPath = join(romDir, PLAYLIST_NAME);
   await writeFile(playlistPath, renderM3u(bootPaths), "utf8");
   return playlistPath;
+}
+
+/**
+ * Where the set already sits in the user's library, or null when it does not
+ * sit there whole and in one directory.
+ *
+ * A sheet names its tracks by relative name, and an emulator with no playlist
+ * looks for the next disc beside the one it booted, so a set spread over two
+ * directories cannot finish. A rom's files can sit in subdirectories of its
+ * folder, which is why being under libraryPath is not the same as being beside
+ * each other.
+ */
+function libraryPaths(
+  staged: DiscFile[],
+  libraryPath: string | null,
+): Map<number, string> | null {
+  const found = new Map<number, string>();
+  const directories = new Set<string>();
+  for (const file of staged) {
+    const path = resolveLibraryRom(libraryPath, file.fullPath, file.sizeBytes);
+    if (!path) return null;
+    found.set(file.id, path);
+    directories.add(directoryOf(path));
+  }
+  return directories.size === 1 ? found : null;
+}
+
+/** Fetch the whole set into this rom's cache directory, or null when any of it
+ *  could not be fetched. */
+async function cachePaths({
+  staged,
+  serverUrl,
+  session,
+  romId,
+  cachePath,
+  cacheLimitBytes,
+  signal,
+  onProgress,
+}: {
+  staged: DiscFile[];
+  serverUrl: string;
+  session: Session;
+  romId: number;
+  cachePath: string;
+  cacheLimitBytes: number;
+  signal: AbortSignal;
+  onProgress: SyncOptions["onProgress"];
+}): Promise<Map<number, string> | null> {
+  const romDir = join(cachePath, String(romId));
+  await mkdir(romDir, { recursive: true });
+
+  const found = new Map<number, string>();
+  for (const [position, file] of staged.entries()) {
+    const target = await stageFile({
+      serverUrl,
+      session,
+      romId,
+      romDir,
+      file,
+      signal,
+      onProgress: (received, total) =>
+        onProgress?.(
+          file.fileName,
+          received,
+          total,
+          position + 1,
+          staged.length,
+        ),
+    });
+    if (!target) return null;
+    found.set(file.id, target);
+  }
+
+  // These downloads bypass ensureRom, which is where an ordinary launch keeps
+  // the cache inside its limit. Once the set is whole, and never evicting the
+  // directory this launch is about to read.
+  await evictToLimit(cachePath, cacheLimitBytes, romDir);
+  return found;
+}
+
+function directoryOf(path: string): string {
+  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return cut < 0 ? "" : path.slice(0, cut);
 }
 
 /** Fetch one file of the set, or null when it could not be fetched. */

@@ -114,6 +114,77 @@ test("selectStagedFiles keeps the tracks a sheet cannot boot without", () => {
   );
 });
 
+test("selectDiscs keeps a bare disc beside a sibling that came as a pair", () => {
+  // One sheet in the set does not make every bin someone else's data. Dropping
+  // this one would leave a single disc, and a single disc is not a disc set.
+  const discs = selectDiscs([
+    file("Game (Disc 1).cue", 1),
+    file("Game (Disc 1).bin", 2),
+    file("Game (Disc 2).bin", 3),
+  ]);
+  assert.deepEqual(
+    discs.map((f) => f.fileName),
+    ["Game (Disc 1).cue", "Game (Disc 2).bin"],
+  );
+});
+
+test("selectDiscs drops the tracks a sheet names, however they are numbered", () => {
+  const discs = selectDiscs([
+    file("Game (Disc 1).cue", 1),
+    file("Game (Disc 1) (Track 01).bin", 2),
+    file("Game (Disc 1) (Track 02).bin", 3),
+    file("Game (Disc 2).cue", 4),
+    file("Game (Disc 2) (Track 01).bin", 5),
+  ]);
+  assert.deepEqual(
+    discs.map((f) => f.fileName),
+    ["Game (Disc 1).cue", "Game (Disc 2).cue"],
+  );
+});
+
+test("selectDiscs stays in disc order with an unnumbered file in the set", () => {
+  // Comparing a numbered name against an unnumbered one by name is not
+  // transitive, so the sort could once leave disc 2 ahead of disc 1 depending
+  // on which pairs it happened to compare.
+  const discs = selectDiscs([
+    file("A Disc 2.chd", 1),
+    file("B bonus.chd", 2),
+    file("C Disc 1.chd", 3),
+  ]);
+  assert.deepEqual(
+    discs.map((f) => f.fileName),
+    ["C Disc 1.chd", "A Disc 2.chd", "B bonus.chd"],
+  );
+});
+
+test("selectStagedFiles keeps the data an .mds describes", () => {
+  // .mds is a descriptor like a .cue, and the .mdf beside it holds the disc.
+  const staged = selectStagedFiles([
+    file("Game (Disc 1).mds", 1),
+    file("Game (Disc 1).mdf", 2),
+    file("Game (Disc 2).mds", 3),
+    file("Game (Disc 2).mdf", 4),
+  ]);
+  assert.deepEqual(
+    staged.map((f) => f.fileName),
+    [
+      "Game (Disc 1).mdf",
+      "Game (Disc 1).mds",
+      "Game (Disc 2).mdf",
+      "Game (Disc 2).mds",
+    ],
+  );
+  assert.deepEqual(
+    selectDiscs([
+      file("Game (Disc 1).mds", 1),
+      file("Game (Disc 1).mdf", 2),
+      file("Game (Disc 2).mds", 3),
+      file("Game (Disc 2).mdf", 4),
+    ]).map((f) => f.fileName),
+    ["Game (Disc 1).mds", "Game (Disc 2).mds"],
+  );
+});
+
 test("selectStagedFiles keeps a sheet's audio tracks too", () => {
   const staged = selectStagedFiles([
     file("Game (Disc 1).cue", 1),

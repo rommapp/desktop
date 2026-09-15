@@ -36,6 +36,7 @@ const DISC_EXTENSIONS = [
 const TRACK_EXTENSIONS = [
   ".bin",
   ".img",
+  ".mdf",
   ".raw",
   ".sub",
   ".wav",
@@ -65,27 +66,39 @@ export function discNumberOf(fileName: string): number | null {
 /**
  * The discs among a rom's files, in the order an .m3u should list them.
  *
- * A `.cue` or `.gdi` wins over a `.bin` describing the same disc, because the
- * sheet is what an emulator is meant to be handed and the bin is its data. So
- * when any sheet is present the bare data files are dropped rather than listed
- * as discs of their own.
- *
- * Ordered by disc number where the names carry one, and otherwise by name, so
- * a set that numbers only some of its discs still puts those in sequence.
+ * A `.cue` or `.gdi` wins over the `.bin` it describes, because the sheet is
+ * what an emulator is meant to be handed and the bin is its data. Dropped by
+ * name rather than by the mere presence of a sheet somewhere in the set: a
+ * disc that is a bare `.bin` alongside a sibling that came as a `.cue` pair is
+ * still a disc, and a set losing one is a set that will not launch.
  */
 export function selectDiscs(files: DiscFile[]): DiscFile[] {
   const discs = files.filter((file) =>
     DISC_EXTENSIONS.includes(extensionOf(file.fileName)),
   );
-  const hasSheet = discs.some((file) =>
-    SHEET_EXTENSIONS.includes(extensionOf(file.fileName)),
+  const sheets = discs
+    .filter((file) => SHEET_EXTENSIONS.includes(extensionOf(file.fileName)))
+    .map((file) => baseNameOf(file.fileName).toLowerCase());
+  return inDiscOrder(
+    discs.filter(
+      (file) =>
+        !TRACK_EXTENSIONS.includes(extensionOf(file.fileName)) ||
+        !describedBy(sheets, file.fileName),
+    ),
   );
-  const listed = hasSheet
-    ? discs.filter(
-        (file) => !TRACK_EXTENSIONS.includes(extensionOf(file.fileName)),
-      )
-    : discs;
-  return inDiscOrder(listed);
+}
+
+/** Whether one of these sheets names this track, by the convention every disc
+ *  set follows: "Game (Disc 1).cue" describes "Game (Disc 1) (Track 02).bin"
+ *  and "Game (Disc 1).bin", and nothing else. */
+function describedBy(sheetBaseNames: string[], fileName: string): boolean {
+  const base = baseNameOf(fileName).toLowerCase();
+  return sheetBaseNames.some((sheet) => base.startsWith(sheet));
+}
+
+function baseNameOf(fileName: string): string {
+  const dot = fileName.lastIndexOf(".");
+  return dot < 0 ? fileName : fileName.slice(0, dot);
 }
 
 /**
@@ -107,11 +120,21 @@ export function selectStagedFiles(files: DiscFile[]): DiscFile[] {
   );
 }
 
+/**
+ * Numbered entries first, in numeric order, then the rest by name.
+ *
+ * Ranking the unnumbered rather than falling back to a name comparison between
+ * a numbered and an unnumbered entry: that comparison is not transitive, and a
+ * set holding one unnumbered file could sort Disc 2 ahead of Disc 1 depending
+ * on which pairs the sort happened to compare.
+ */
 function inDiscOrder(files: DiscFile[]): DiscFile[] {
   return [...files].sort((a, b) => {
     const left = discNumberOf(a.fileName);
     const right = discNumberOf(b.fileName);
     if (left !== null && right !== null && left !== right) return left - right;
+    if (left !== null && right === null) return -1;
+    if (left === null && right !== null) return 1;
     return a.fileName.localeCompare(b.fileName, "en");
   });
 }
