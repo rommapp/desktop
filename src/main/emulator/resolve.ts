@@ -173,6 +173,27 @@ export function hasPlatformSpecificEmulator(
   return detectedMappingFor(platformSlug, undefined, homedir()) !== null;
 }
 
+/**
+ * Whether the emulator this platform would use boots an .m3u playlist.
+ *
+ * It decides what a multi-disc game is handed: the playlist, or the first disc
+ * with the rest of the set beside it for the emulator's own disc menu. PCSX2
+ * and RPCS3 read no playlist, and handing one over would fail the launch.
+ *
+ * A mapping written by hand says so itself, or is inferred from its arguments:
+ * one naming "{core}" is RetroArch driving a libretro core. Anything else is
+ * assumed not to, because a disc that boots beats a playlist that might not.
+ */
+export function emulatorReadsPlaylist(
+  config: DesktopConfig,
+  platformSlug: string,
+): boolean {
+  const mapping = findMapping(config, platformSlug);
+  if (!mapping) return true; // The RetroArch default path.
+  if (mapping.playlist !== undefined) return mapping.playlist;
+  return mapping.args.some((arg) => arg.includes("{core}"));
+}
+
 /** What to call the emulator this platform would use, before a launch has
  *  resolved a core to name alongside it. */
 export function emulatorLabel(

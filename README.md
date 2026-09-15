@@ -111,8 +111,8 @@ The in-browser emulators (EmulatorJS, Ruffle, js-dos, PICO-8), file downloads
 and clipboard actions are untested in this shell and worth exercising.
 
 [Multi-disc games](#multi-disc-games) are covered by unit tests over disc
-selection and the playlist, but no real disc set has been launched through an
-emulator yet.
+selection, the playlist, and which emulators are handed one, but no real disc
+set has been launched through an emulator yet.
 
 ## Using a controller
 
@@ -393,7 +393,9 @@ be findable.
 ```
 
 `platformSlug` uses RomM's own slugs (`snes`, `n64`, `ps2`). The `*` row is the
-fallback for any platform without an entry of its own.
+fallback for any platform without an entry of its own. An optional `playlist`
+says whether the emulator boots an `.m3u`, which only affects
+[multi-disc games](#multi-disc-games).
 
 #### Emulator base path
 
@@ -454,16 +456,43 @@ resolve a playlist's sibling references inside a zip, and PCSX2, Dolphin and
 RPCS3 cannot open one at all.
 
 So a ROM the server reports as two or more disc images is fetched as those
-individual files instead, one request each, and a `discs.m3u` naming them is
-written beside them. The playlist is what the emulator is handed, so disc
-changes happen in its own disc menu rather than by relaunching. Discs are
-ordered by the number in their name (`Disc 2`, `disk 2`, `CD2`), and a `.cue`
-or `.gdi` is preferred over the `.bin` or `.img` it describes. An emulator that
-does not read `.m3u` is handed the playlist anyway, and will not start.
+individual files instead, one request each. Discs are ordered by the number in
+their name (`Disc 2`, `disk 2`, `CD2`), and a `.cue` or `.gdi` is preferred
+over the `.bin` or `.img` it describes.
 
-When every disc resolves under `libraryPath` the playlist is written beside
-them and nothing is downloaded. Otherwise the discs land in the ROM cache like
-any other download, and the same size check applies to each one.
+What the emulator is then handed depends on whether it reads an `.m3u`:
+
+|                    | Handed         | Changing disc                                                   |
+| ------------------ | -------------- | --------------------------------------------------------------- |
+| RetroArch, Dolphin | `discs.m3u`    | the emulator's disc-control menu                                |
+| PCSX2, RPCS3, Cemu | the first disc | the emulator's own "change disc", with the set in one directory |
+
+PCSX2 is the reason for the second row: [its M3U request was closed as not
+planned](https://github.com/PCSX2/pcsx2/issues/7640), so handing it a playlist
+would fail the launch outright. An emulator configured by hand is assumed not
+to read one unless its arguments name `{core}`, which means RetroArch driving
+a libretro core. Say so explicitly with `"playlist": true` on the mapping:
+
+```json
+{
+  "emulators": [
+    {
+      "platformSlug": "psx",
+      "command": "flatpak",
+      "args": ["run", "org.libretro.RetroArch", "-L", "{core}", "{rom}"],
+      "playlist": true
+    }
+  ]
+}
+```
+
+A disc already under `libraryPath` is launched in place rather than downloaded.
+With a playlist that is decided per disc, since the playlist names absolute
+paths and so spans the library and the cache alike; without one it is all or
+nothing, because an emulator looking beside the disc it booted cannot finish a
+set split across two directories. The playlist itself is always written to the
+ROM cache, never into the library, so launching in place leaves nothing behind
+for RomM to scan.
 
 Nothing here can fail a launch that would otherwise have worked. A server that
 will not answer, a ROM whose files cannot be read, and a set that turns out to

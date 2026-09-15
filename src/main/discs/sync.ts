@@ -4,7 +4,8 @@
 // emulator can boot a disc set out of: RetroArch cannot resolve a playlist's
 // sibling references inside a zip, and PCSX2, Dolphin and RPCS3 cannot open one
 // at all. So the discs are fetched as the individual files the server already
-// has, one request each, and an .m3u naming them is written beside them.
+// has, one request each, and an .m3u naming them is written for the emulators
+// that read one. The rest are handed the first disc, with the set beside it.
 //
 // Nothing here can fail a launch. A server that will not answer, a rom whose
 // files cannot be read, or a set with fewer than two discs all return null, and
@@ -18,23 +19,18 @@ import { downloadFromServer } from "../rom-cache.ts";
 import { resolveDownloadUrl, resolveLibraryRom } from "../safety.ts";
 import { readRomFiles, renderM3u, selectDiscs } from "./m3u.ts";
 
-/** The playlist's own name inside the rom's directory. */
+/** The playlist's own name inside the rom's cache directory. */
 const PLAYLIST_NAME = "discs.m3u";
-
-export interface DiscSet {
-  /** What to hand the emulator. */
-  path: string;
-  /** How many discs the playlist names, for the progress the caller reports. */
-  discCount: number;
-  /** True when every disc was already on local disk, so nothing was fetched. */
-  fromLibrary: boolean;
-}
 
 interface SyncOptions {
   config: DesktopConfig;
   session: Session;
   romId: number;
   signal: AbortSignal;
+  /** Whether this launch's emulator boots an .m3u. When it does not, the first
+   *  disc is what starts the game and the rest of the set is a disc change away
+   *  in the emulator's own menu, so no playlist is written. */
+  playlist: boolean;
   onProgress?: (
     fileName: string,
     received: number,
@@ -72,16 +68,17 @@ async function getJson(
 }
 
 /**
- * Fetch a rom's discs and write the playlist that boots them, or null when this
- * rom is not a disc set or the server would not say.
+ * Fetch a rom's discs and return what the emulator should be handed, or null
+ * when this rom is not a disc set or the server would not say.
  */
 export async function syncDiscSet({
   config,
   session,
   romId,
   signal,
+  playlist,
   onProgress,
-}: SyncOptions): Promise<DiscSet | null> {
+}: SyncOptions): Promise<string | null> {
   if (!config.serverUrl || !config.cachePath) return null;
 
   const body = await getJson(
@@ -97,27 +94,35 @@ export async function syncDiscSet({
   // without a playlist in the way.
   if (discs.length < 2) return null;
 
-  // When the server runs on this machine every disc is already here, and a
-  // playlist beside them costs nothing to write. Only taken when the whole set
-  // resolves: a playlist half in the library and half in the cache would name
-  // files in two directories, which a relative .m3u cannot do.
   const local = discs.map((disc) =>
     resolveLibraryRom(config.libraryPath, disc.fullPath, disc.sizeBytes),
   );
-  if (local.every((path) => path !== null)) {
-    const directory = dirnameOf(local[0] as string);
-    const playlist = join(directory, PLAYLIST_NAME);
-    await writeFile(playlist, renderM3u(discs), "utf8");
-    return { path: playlist, discCount: discs.length, fromLibrary: true };
-  }
+  // A disc already on this machine is launched in place rather than downloaded.
+  // Per disc when a playlist names them, since absolute paths span the library
+  // and the cache alike; all or nothing without one, because then the emulator
+  // finds the rest of the set by looking beside the disc it booted, and a set
+  // split across two directories is one it cannot finish.
+  const useLibrary = playlist || local.every((path) => path !== null);
 
   const romDir = join(config.cachePath, String(romId));
-  await mkdir(romDir, { recursive: true });
+  // Skipped entirely for a set that is already here and needs no playlist,
+  // rather than leaving an empty directory for the cache to account for.
+  if (playlist || !useLibrary) await mkdir(romDir, { recursive: true });
 
+  const paths: string[] = [];
   for (const [position, disc] of discs.entries()) {
+    const inLibrary = useLibrary ? local[position] : null;
+    if (inLibrary) {
+      paths.push(inLibrary);
+      continue;
+    }
+
     const target = join(romDir, disc.fileName);
     const existing = await stat(target).catch(() => null);
-    if (existing?.isFile() && existing.size === disc.sizeBytes) continue;
+    if (existing?.isFile() && existing.size === disc.sizeBytes) {
+      paths.push(target);
+      continue;
+    }
 
     // One file at a time, by id: the content endpoint serves a single requested
     // file directly rather than zipping it, which is the whole point of asking
@@ -160,15 +165,15 @@ export async function syncDiscSet({
       await rm(temp, { force: true });
       throw error;
     }
+    paths.push(target);
   }
 
-  const playlist = join(romDir, PLAYLIST_NAME);
-  await writeFile(playlist, renderM3u(discs), "utf8");
-  return { path: playlist, discCount: discs.length, fromLibrary: false };
-}
+  if (!playlist) return paths[0] as string;
 
-/** The directory a resolved library path sits in. */
-function dirnameOf(path: string): string {
-  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return cut < 0 ? path : path.slice(0, cut);
+  // Written to the cache even when every disc came from the library, because
+  // the library is the user's and a playlist left in it is one more file for
+  // RomM to scan.
+  const playlistPath = join(romDir, PLAYLIST_NAME);
+  await writeFile(playlistPath, renderM3u(paths), "utf8");
+  return playlistPath;
 }

@@ -84,12 +84,12 @@ export function selectDiscs(files: DiscFile[]): DiscFile[] {
 /**
  * The .m3u an emulator is handed for a multi-disc game.
  *
- * Relative names, one per line: the playlist sits beside the discs it names,
- * and a relative entry keeps it valid whether those discs are in the shell's
- * cache or in the user's own library.
+ * One absolute path per line, so a set that is part in the shell's cache and
+ * part in the user's own library still reads as one playlist. LF endings even
+ * on Windows, because Dolphin refuses a playlist with CRLF in it.
  */
-export function renderM3u(discs: DiscFile[]): string {
-  return discs.map((disc) => disc.fileName).join("\n") + "\n";
+export function renderM3u(discPaths: string[]): string {
+  return discPaths.join("\n") + "\n";
 }
 
 /** Read the files array of a /api/roms/{id} body, ignoring anything malformed. */

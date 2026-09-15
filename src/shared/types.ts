@@ -153,6 +153,10 @@ export interface EmulatorMapping {
   args: string[];
   /** Display name for the emulator, shown in the renderer. */
   label?: string;
+  /** Whether this emulator boots an .m3u playlist, for a multi-disc game.
+   *  Inferred from the arguments when unset: one naming "{core}" is RetroArch
+   *  driving a libretro core, which reads one. */
+  playlist?: boolean;
 }
 
 export interface DesktopConfig {

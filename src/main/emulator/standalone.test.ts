@@ -187,12 +187,14 @@ test("the platforms RetroArch cannot play at all have a row each", () => {
       // --no-gui so it quits when the game stops.
       args: ["--no-gui", "{rom}"],
       label: "RPCS3",
+      playlist: false,
     },
     {
       platformSlug: "wiiu",
       command: "/var/lib/flatpak/exports/bin/info.cemu.Cemu",
       args: ["-g", "{rom}"],
       label: "Cemu",
+      playlist: false,
     },
   ]);
 });
@@ -277,6 +279,7 @@ test("a detected row is shaped exactly like a hand-written one", () => {
     command: "/Applications/PCSX2-v2.8.2.app/Contents/MacOS/PCSX2",
     args: ["-batch", "{rom}"],
     label: "PCSX2",
+    playlist: false,
   });
 });
 

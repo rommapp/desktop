@@ -29,6 +29,7 @@ import {
 import {
   applyCorePreference,
   emulatorLabel,
+  emulatorReadsPlaylist,
   findPreferredCores,
   hasPlatformSpecificEmulator,
   resolveLaunch,
@@ -513,11 +514,11 @@ export class Launcher {
       // landing during it is only observed here.
       throwIfCancelled(controller.signal);
 
-      // A disc set is fetched as the individual discs the server holds, with a
-      // playlist written beside them, because the archive the content endpoint
-      // would otherwise hand over is not something any emulator can boot a
-      // multi-disc game out of. Returns null for everything else, including a
-      // server that would not answer, and the ordinary download below runs.
+      // A disc set is fetched as the individual discs the server holds,
+      // because the archive the content endpoint would otherwise hand over is
+      // not something any emulator can boot a multi-disc game out of. Returns
+      // null for everything else, including a server that would not answer, and
+      // the ordinary download below runs.
       const shouldReportDisc = createProgressGate();
       const discRateOf = createRateMeter();
       const discs = await syncDiscSet({
@@ -525,6 +526,7 @@ export class Launcher {
         session,
         romId: request.romId,
         signal: controller.signal,
+        playlist: emulatorReadsPlaylist(config, request.platformSlug),
         onProgress: (fileName, received, total, index, count) => {
           const progress = total ? received / total : undefined;
           if (!shouldReportDisc(progress)) return;
@@ -557,7 +559,7 @@ export class Launcher {
 
       let romPath: string;
       if (discs) {
-        romPath = discs.path;
+        romPath = discs;
       } else if (inLibrary) {
         romPath = inLibrary;
       } else {

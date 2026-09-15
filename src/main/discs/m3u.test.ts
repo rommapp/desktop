@@ -81,15 +81,21 @@ test("selectDiscs falls back to name order when nothing is numbered", () => {
   );
 });
 
-test("renderM3u names the discs relative to itself", () => {
+test("renderM3u lists one disc per line, in the order given", () => {
   const text = renderM3u([
-    file("Game (Disc 1).chd"),
-    file("Game (Disc 2).chd"),
+    "/cache/7/Game (Disc 1).chd",
+    "/library/psx/Game/Game (Disc 2).chd",
   ]);
-  assert.equal(text, "Game (Disc 1).chd\nGame (Disc 2).chd\n");
-  // No directory component: the playlist sits beside what it names, so it is
-  // valid from the cache and from the user's own library alike.
-  assert.ok(!text.includes("/"));
+  assert.equal(
+    text,
+    "/cache/7/Game (Disc 1).chd\n/library/psx/Game/Game (Disc 2).chd\n",
+  );
+});
+
+test("renderM3u ends every line with LF, which is all Dolphin accepts", () => {
+  const text = renderM3u(["/cache/7/a.chd", "/cache/7/b.chd"]);
+  assert.ok(!text.includes("\r"));
+  assert.ok(text.endsWith("\n"));
 });
 
 const row = {
