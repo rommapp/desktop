@@ -28,6 +28,8 @@ function emptyConfig(): DesktopConfig {
     emulatorsBasePath: null,
     emulators: [],
     cachePath: null,
+    biosPath: null,
+    useRommFirmware: true,
     saveDataPath: null,
     libraryPath: null,
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
@@ -60,6 +62,7 @@ export function withDetectedDefaults(config: DesktopConfig): DesktopConfig {
       firstExisting(coresCandidates(retroarchPath, undefined, home)) ??
       defaultCoresPath(retroarchPath, undefined, home),
     cachePath: config.cachePath ?? join(app.getPath("userData"), "rom-cache"),
+    biosPath: config.biosPath ?? join(app.getPath("userData"), "bios"),
     saveDataPath:
       config.saveDataPath ?? join(app.getPath("userData"), "save-data"),
   };

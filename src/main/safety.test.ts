@@ -200,9 +200,13 @@ test("safeFileName reads a device name up to the first dot", () => {
   assert.equal(safeFileName("nul.tar.gz"), "_nul.tar.gz");
 });
 
-/** A config differing only in the two paths this guard looks at. */
-function roots(cachePath: string | null, saveDataPath: string | null) {
-  return testConfig({ cachePath, saveDataPath });
+/** A config differing only in the paths this guard looks at. */
+function roots(
+  cachePath: string | null,
+  saveDataPath: string | null,
+  biosPath: string | null = null,
+) {
+  return testConfig({ cachePath, saveDataPath, biosPath });
 }
 
 test("assertSeparateRoots accepts directories that do not contain each other", () => {
@@ -355,6 +359,48 @@ test("the names these projects actually publish are accepted", () => {
   ]) {
     assert.ok(isPlainFileName(name), name);
   }
+});
+
+test("assertSeparateRoots rejects a firmware mirror that overlaps either root", () => {
+  // The mirror deletes whatever the server no longer lists, so a cache or a
+  // save tree underneath it would be deleted for not being firmware -- and a
+  // mirror under the cache would be evicted along with the game beside it.
+  const collisions: [string, string, string][] = [
+    ["/data/cache", "/data/saves", "/data/cache"],
+    ["/data/cache", "/data/saves", "/data/cache/bios"],
+    ["/data/cache", "/data/saves", "/data/saves/bios"],
+    ["/data/cache", "/data/saves/inner", "/data/saves"],
+    ["/data/bios/cache", "/data/saves", "/data/bios"],
+  ];
+  for (const [cache, saves, bios] of collisions) {
+    assert.throws(
+      () => assertSeparateRoots(roots(cache, saves, bios)),
+      { code: "invalid-request" },
+      `${bios} must not overlap ${cache} or ${saves}`,
+    );
+  }
+
+  // And three separate directories are fine, as is a mirror that is not set.
+  assertSeparateRoots(roots("/data/cache", "/data/saves", "/data/bios"));
+  assertSeparateRoots(roots("/data/cache", "/data/saves", null));
+});
+
+test("assertSeparateRoots names both of the directories that collided", () => {
+  // The message is the whole diagnosis: three roots means "they overlap" on
+  // its own does not say which two.
+  assert.throws(
+    () =>
+      assertSeparateRoots(
+        roots("/data/cache", "/data/saves", "/data/cache/bios"),
+      ),
+    (error: unknown) => {
+      const message = (error as Error).message;
+      assert.match(message, /biosPath/);
+      assert.match(message, /cachePath/);
+      assert.doesNotMatch(message, /saveDataPath/);
+      return true;
+    },
+  );
 });
 
 test("validatePlatformQuery accepts a platform and its cores", () => {

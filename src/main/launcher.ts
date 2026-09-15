@@ -18,6 +18,7 @@ import {
 } from "./emulator/buildbot.ts";
 import { installCore } from "./emulator/install.ts";
 import { offerStandaloneInstall } from "./emulator/standalone-install.ts";
+import { syncPlatformFirmware } from "./firmware/sync.ts";
 import { RELEASE_SOURCES } from "./emulator/standalone-release.ts";
 import {
   emulatorForPlatform,
@@ -573,6 +574,41 @@ export class Launcher {
       if (savePaths) {
         await mkdir(savePaths.saveDir, { recursive: true });
         await mkdir(savePaths.stateDir, { recursive: true });
+      }
+
+      // The firmware RomM already holds, brought down beside the game. After
+      // the ROM rather than before it: most platforms have none, so this is
+      // usually two small requests that find nothing to do, and putting it
+      // ahead of the transfer would delay every launch for the exception.
+      // Nothing here can fail a launch -- a platform with no firmware and a
+      // server that will not answer are the same outcome, which is the launch
+      // the shell would have performed anyway.
+      try {
+        const shouldReport = createProgressGate();
+        await syncPlatformFirmware({
+          config,
+          session,
+          platformSlug: request.platformSlug,
+          signal: controller.signal,
+          onProgress: (fileName, received, total) => {
+            const progress = total ? received / total : undefined;
+            if (!shouldReport(progress)) return;
+            this.emit({
+              romId: request.romId,
+              status: "downloading",
+              stage: "firmware",
+              // Named, so a 200MB PS3 PUP reads as a transfer of something
+              // rather than a hung launch.
+              firmware: fileName,
+              progress,
+              received,
+              total: total ?? undefined,
+            });
+          },
+        });
+      } catch {
+        // Except a cancel, which is the user's and belongs to the launch.
+        throwIfCancelled(controller.signal);
       }
 
       // Resolved again, and this time strictly: the validation above may have
