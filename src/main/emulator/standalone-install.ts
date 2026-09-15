@@ -190,7 +190,16 @@ async function runOffer(
 
   if (response !== 1) return DECLINED;
   if (!artifact) {
-    void shell.openExternal(source.downloadPage);
+    // Awaited, because the wait that follows is only justified by the page
+    // having actually opened. A browser that refuses to start would otherwise
+    // leave the launch polling for half an hour behind nothing at all, so a
+    // failure here is no hand-off: the launch carries on and fails the way it
+    // would have without the offer.
+    try {
+      await shell.openExternal(source.downloadPage);
+    } catch {
+      return DECLINED;
+    }
     // Nothing was fetched, but the user is off to install it by whatever means
     // that page offers -- a package manager, the project's own installer --
     // and both of those land where detection looks. So this waits like any

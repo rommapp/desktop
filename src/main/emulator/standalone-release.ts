@@ -355,21 +355,40 @@ export function pickPcsx2Artifact(
  * would have been sent anyway.
  */
 function appleSiliconBuild(intel: ReleaseArtifact): ReleaseArtifact | null {
-  const MACOS_SUFFIX = "_macos.7z";
-  if (!intel.fileName.endsWith(MACOS_SUFFIX)) return null;
-  const rename = (text: string): string =>
-    text.slice(0, -MACOS_SUFFIX.length) + "_macos_aarch64.7z";
-  const url = rename(
-    intel.url.replace(
-      "/RPCS3/rpcs3-binaries-mac/",
-      "/RPCS3/rpcs3-binaries-mac-arm64/",
-    ),
-  );
-  // The rename has to have moved it to the arm64 repository; otherwise this is
-  // a URL of some shape this was not written for, and the Intel build is not
-  // the answer to that.
-  if (!onGithubRelease(url, ["RPCS3/rpcs3-binaries-mac-arm64"])) return null;
-  return { ...intel, url, fileName: rename(intel.fileName) };
+  const INTEL_SUFFIX = "_macos.7z";
+  const ARM_SUFFIX = "_macos_aarch64.7z";
+  const INTEL_PATH = "/RPCS3/rpcs3-binaries-mac/";
+  const ARM_PATH = "/RPCS3/rpcs3-binaries-mac-arm64/";
+
+  let url: URL;
+  try {
+    url = new URL(intel.url);
+  } catch {
+    return null;
+  }
+
+  // Renamed on the path and nothing else. A query or fragment is no part of an
+  // asset's name -- fileNameOf drops both before anything here sees the name --
+  // so treating the URL as one string and slicing its tail would take the end
+  // off whatever followed the filename instead, leaving the Intel asset still
+  // being asked for with the rename hanging off the query. The repository
+  // prefix has to be the real one too, not merely present somewhere in the
+  // string.
+  if (!url.pathname.startsWith(INTEL_PATH)) return null;
+  if (!url.pathname.endsWith(INTEL_SUFFIX)) return null;
+  url.pathname =
+    ARM_PATH +
+    url.pathname.slice(INTEL_PATH.length, -INTEL_SUFFIX.length) +
+    ARM_SUFFIX;
+
+  // Checked against the allowlist afterwards like any other artifact, so a URL
+  // of some shape this was not written for ends here rather than in a download.
+  if (!onGithubRelease(url.href, ["RPCS3/rpcs3-binaries-mac-arm64"])) {
+    return null;
+  }
+  const fileName = fileNameOf(url.href);
+  if (!fileName.endsWith(ARM_SUFFIX)) return null;
+  return { ...intel, url: url.href, fileName };
 }
 
 /**

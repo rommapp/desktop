@@ -266,6 +266,42 @@ test("an Apple silicon Mac gets its own build, not the Intel one", () => {
   assert.equal(intel?.fileName, "rpcs3-v0.0.42-20004-0646d367_macos.7z");
 });
 
+test("a query on the macOS URL cannot smuggle the Intel asset through", () => {
+  // fileNameOf drops a query before anything sees the name, so a URL ending
+  // "_macos.7z?token=abc" passes a check on the name while the last characters
+  // of the URL itself are the query's, not the suffix's. Renaming the string as
+  // a whole took the end off the token and left the Intel file being asked for
+  // -- from the arm64 repository, which the allowlist checks by path prefix and
+  // would have allowed.
+  const withQuery = {
+    version: "0.0.42-20004",
+    mac: {
+      download:
+        "https://github.com/RPCS3/rpcs3-binaries-mac/releases/download/build-x/rpcs3_macos.7z?token=abc",
+    },
+  };
+  const arm = pickRpcs3Artifact(withQuery, "darwin", "arm64");
+  const url = new URL(arm?.url ?? "https://example.invalid");
+  assert.ok(url.pathname.endsWith("_macos_aarch64.7z"), url.pathname);
+  assert.doesNotMatch(url.pathname, /_macos\.7z$/);
+  assert.equal(arm?.fileName, "rpcs3_macos_aarch64.7z");
+  // The query is left as it arrived rather than being eaten by the rename.
+  assert.equal(url.search, "?token=abc");
+});
+
+test("a repository name that only appears mid-URL is not a match", () => {
+  // The prefix has to be the real one. A host or path that merely contains
+  // RPCS3's repository name is not RPCS3's repository.
+  const lookalike = {
+    version: "0.0.42-20004",
+    mac: {
+      download:
+        "https://github.com/evil/x/releases/download/b/RPCS3/rpcs3-binaries-mac/rpcs3_macos.7z",
+    },
+  };
+  assert.equal(pickRpcs3Artifact(lookalike, "darwin", "arm64"), null);
+});
+
 test("a derived Apple silicon URL that lands anywhere else is refused", () => {
   // The derivation only ever renames what the endpoint gave, so the check that
   // it ended up in RPCS3's own arm64 repository is what stops a redirected or
