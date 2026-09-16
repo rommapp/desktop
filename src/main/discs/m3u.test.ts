@@ -146,6 +146,48 @@ test("selectDiscs leaves a bare disc out of a set that also has a sheet", () => 
   );
 });
 
+test("selectDiscs keeps a whole-disc image beside a sheet", () => {
+  // A .chd cannot be a track of the .gdi however it is named, so dropping it
+  // would lose a disc the set can boot. Only the track formats are ambiguous.
+  const discs = selectDiscs([
+    file("Game (Disc 1).gdi", 1),
+    file("Game (Disc 1) (Track 01).bin", 2),
+    file("Game (Disc 2).chd", 3),
+  ]);
+  assert.deepEqual(
+    discs.map((f) => f.fileName),
+    ["Game (Disc 1).gdi", "Game (Disc 2).chd"],
+  );
+});
+
+test("selectDiscs keeps a whole-disc image beside a cue too", () => {
+  for (const extension of [".chd", ".iso", ".cdi", ".rvz"]) {
+    const discs = selectDiscs([
+      file("Game (Disc 1).cue", 1),
+      file("Game (Disc 1).bin", 2),
+      file(`Game (Disc 2)${extension}`, 3),
+    ]);
+    assert.deepEqual(
+      discs.map((f) => f.fileName),
+      ["Game (Disc 1).cue", `Game (Disc 2)${extension}`],
+      extension,
+    );
+  }
+});
+
+test("selectDiscs drops a sheet's audio tracks", () => {
+  // A cue's CDDA tracks are data the sheet names, not discs beside it.
+  const discs = selectDiscs([
+    file("Game.cue", 1),
+    file("Game (Track 01).bin", 2),
+    file("Game (Track 02).wav", 3),
+  ]);
+  assert.deepEqual(
+    discs.map((f) => f.fileName),
+    ["Game.cue"],
+  );
+});
+
 test("selectDiscs boots a set of single-file images that needs no sheet", () => {
   // .cdi and the Dolphin formats are whole discs in one file, so a set of them
   // has no sheet to prefer and every file is a disc.
