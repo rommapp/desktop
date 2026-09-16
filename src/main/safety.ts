@@ -1,5 +1,5 @@
-// Validation for the two pieces of launch input that come from the renderer.
-// Deliberately free of Electron imports so it can be unit tested directly.
+// Validation for the launch input that comes from the renderer. Deliberately
+// free of Electron imports so it can be unit tested directly.
 
 import { realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -7,6 +7,8 @@ import {
   type DesktopConfig,
   LaunchError,
   type LaunchRequest,
+  MAX_PLATFORM_QUERIES,
+  type PlatformSupportQuery,
 } from "../shared/types.ts";
 
 /**
@@ -257,6 +259,49 @@ export function validateLaunchRequest(value: unknown): LaunchRequest {
     ...(serverPath === undefined ? {} : { serverPath }),
     ...(fileSize === undefined ? {} : { fileSize }),
   };
+}
+
+/** Check a platform-support query's shape before it reaches the resolver. */
+export function validatePlatformQuery(value: unknown): PlatformSupportQuery {
+  if (typeof value !== "object" || value === null) {
+    throw new LaunchError("invalid-request", "Query must be an object.");
+  }
+  const candidate = value as Record<string, unknown>;
+
+  const platformSlug = candidate.platformSlug;
+  if (typeof platformSlug !== "string" || platformSlug.length === 0) {
+    throw new LaunchError("invalid-request", "platformSlug is required.");
+  }
+
+  const cores = candidate.cores;
+  if (!Array.isArray(cores) || cores.some((core) => typeof core !== "string")) {
+    throw new LaunchError(
+      "invalid-request",
+      "cores must be an array of strings.",
+    );
+  }
+
+  return { platformSlug, cores: cores as string[] };
+}
+
+/** validatePlatformQuery for a bulk call. Rejects the whole batch rather than
+ *  dropping a malformed entry, so a renderer never reads a silently short
+ *  answer as "these platforms are unsupported". */
+export function validatePlatformQueries(
+  value: unknown,
+): PlatformSupportQuery[] {
+  if (!Array.isArray(value)) {
+    throw new LaunchError("invalid-request", "Queries must be an array.");
+  }
+  if (value.length > MAX_PLATFORM_QUERIES) {
+    throw new LaunchError(
+      "invalid-request",
+      `Too many queries: ${value.length} exceeds the limit of ${MAX_PLATFORM_QUERIES}.`,
+    );
+  }
+  // Array.from rather than map, which skips holes: a sparse array would reach
+  // the launcher with an unvalidated undefined in it.
+  return Array.from(value, (query) => validatePlatformQuery(query));
 }
 
 /**

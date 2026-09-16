@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { MAX_PLATFORM_QUERIES } from "../shared/types.ts";
 import { testConfig } from "../test/config.ts";
 import {
   assertSeparateRoots,
@@ -13,6 +14,8 @@ import {
   resolveLibraryRom,
   safeFileName,
   validateLaunchRequest,
+  validatePlatformQueries,
+  validatePlatformQuery,
 } from "./safety.ts";
 
 const SERVER = "https://romm.example.com";
@@ -398,4 +401,74 @@ test("assertSeparateRoots names both of the directories that collided", () => {
       return true;
     },
   );
+});
+
+test("validatePlatformQuery accepts a platform and its cores", () => {
+  assert.deepEqual(
+    validatePlatformQuery({ platformSlug: "snes", cores: ["snes9x"] }),
+    { platformSlug: "snes", cores: ["snes9x"] },
+  );
+});
+
+test("validatePlatformQuery rejects a malformed query", () => {
+  for (const query of [
+    null,
+    "snes",
+    { cores: [] },
+    { platformSlug: "", cores: [] },
+    { platformSlug: "snes" },
+    { platformSlug: "snes", cores: "snes9x" },
+    { platformSlug: "snes", cores: [7] },
+  ]) {
+    assert.throws(() => validatePlatformQuery(query), {
+      code: "invalid-request",
+    });
+  }
+});
+
+test("validatePlatformQueries validates every entry", () => {
+  const queries = [
+    { platformSlug: "snes", cores: ["snes9x"] },
+    { platformSlug: "ps2", cores: [] },
+  ];
+  assert.deepEqual(validatePlatformQueries(queries), queries);
+  assert.deepEqual(validatePlatformQueries([]), []);
+});
+
+test("validatePlatformQueries rejects a batch with one bad entry", () => {
+  assert.throws(
+    () =>
+      validatePlatformQueries([
+        { platformSlug: "snes", cores: ["snes9x"] },
+        { platformSlug: 7, cores: [] },
+      ]),
+    { code: "invalid-request" },
+  );
+});
+
+test("validatePlatformQueries rejects a batch with a hole in it", () => {
+  // Array.prototype.map skips holes, so a sparse array once passed validation
+  // and reached the launcher with an unvalidated undefined in it.
+  const sparse = new Array(1);
+  assert.throws(() => validatePlatformQueries(sparse), {
+    code: "invalid-request",
+  });
+  const mixed = [{ platformSlug: "snes", cores: [] }];
+  mixed.length = 2;
+  assert.throws(() => validatePlatformQueries(mixed), {
+    code: "invalid-request",
+  });
+});
+
+test("validatePlatformQueries rejects a non-array and an oversized batch", () => {
+  assert.throws(() => validatePlatformQueries({ platformSlug: "snes" }), {
+    code: "invalid-request",
+  });
+  const tooMany = Array.from({ length: MAX_PLATFORM_QUERIES + 1 }, (_, i) => ({
+    platformSlug: `p${i}`,
+    cores: [],
+  }));
+  assert.throws(() => validatePlatformQueries(tooMany), {
+    code: "invalid-request",
+  });
 });

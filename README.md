@@ -38,8 +38,9 @@ security policy.
 
 ## Requirements
 
-- A reachable RomM server running a version that ships the `useNativeShell`
-  integration.
+- A reachable RomM server running a version whose frontend ships the native
+  play route. A server without it still loads, just with no way to reach the
+  bridge.
 - An emulator. RetroArch is autodetected, the shell offers to fetch its
   installer if you have none, and missing cores are downloaded on demand;
   anything else is configured by hand.

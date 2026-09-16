@@ -117,6 +117,10 @@ export interface PlatformSupportQuery {
   cores: string[];
 }
 
+/** Upper bound on one bulk platform-support call, so a renderer cannot ask for
+ *  an unbounded number of config loads in a single invoke. */
+export const MAX_PLATFORM_QUERIES = 512;
+
 /** Whether a given platform can be launched natively, and by what. */
 export interface PlatformSupport {
   supported: boolean;
@@ -230,13 +234,48 @@ export interface DesktopConfig {
 
 export const DEFAULT_CACHE_LIMIT_BYTES = 20 * 1024 * 1024 * 1024;
 
+/**
+ * Behaviour a shell declares that the presence of a method cannot express: a
+ * field of `LaunchRequest` it honours, a `LaunchState` field it populates, a
+ * change to what an existing method does. A renderer reads this list; it never
+ * parses `shellVersion`, which is for display and support only.
+ */
+export type ShellCapability =
+  /** LaunchState carries `stage`, `core` and `emulator`, so a renderer can name
+   *  what a wait is for rather than reporting every wait as a ROM download. */
+  | "launch-stage"
+  /** LaunchRequest's `serverPath` and `fileSize` are honoured, so a ROM already
+   *  on this disk is launched in place rather than downloaded back to it. */
+  | "library-passthrough"
+  /** getPlatformSupportAll answers a whole library in one call. */
+  | "platform-support-all"
+  /** The RomM firmware library is mirrored beside the game, reported as the
+   *  "firmware" launch stage with the file named in `firmware`. */
+  | "firmware-mirror"
+  /** A rom of two or more discs is fetched as those files and booted from a
+   *  playlist or its first disc, with each transfer reported by `file`,
+   *  `fileIndex` and `fileCount` rather than as one restarting download. */
+  | "multi-disc";
+
+// The list itself lives in the preload, which is the only file that ships it:
+// a sandboxed preload cannot import a value, so it cannot read one from here.
+
 /** The API the preload bridge exposes to the renderer as window.rommNative. */
 export interface RommNativeBridge {
   readonly shellVersion: string;
   readonly os: "darwin" | "win32" | "linux";
+  /** Typed as plain strings, not ShellCapability: a renderer built against an
+   *  older copy of this file must be able to read a newer shell's list without
+   *  the unknown entries being a type error. */
+  readonly capabilities: readonly string[];
   launch(request: LaunchRequest): Promise<LaunchResult>;
   cancel(romId: number): Promise<void>;
   getPlatformSupport(query: PlatformSupportQuery): Promise<PlatformSupport>;
+  /** Answer for many platforms at once, keyed by platform slug. A renderer that
+   *  marks every tile in a library needs one call, not one per platform. */
+  getPlatformSupportAll(
+    queries: PlatformSupportQuery[],
+  ): Promise<Record<string, PlatformSupport>>;
   /** Subscribe to launch progress. Returns an unsubscribe function. */
   onLaunchState(listener: (state: LaunchState) => void): () => void;
   openSettings(): Promise<void>;
