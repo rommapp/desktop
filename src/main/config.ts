@@ -31,6 +31,11 @@ function emptyConfig(): DesktopConfig {
     biosPath: null,
     useRommFirmware: true,
     saveDataPath: null,
+    // On like the firmware mirror: both are the shell doing what the server
+    // already knows how to do, and both fail quietly rather than failing a
+    // launch, so the cost of the default being wrong is one setting away.
+    syncSaves: true,
+    deviceId: null,
     libraryPath: null,
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
     fullscreen: false,

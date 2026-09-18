@@ -1,0 +1,568 @@
+// Moving a save between the server and the emulator.
+//
+// A native launch is the one place where the shell owns a save file RomM also
+// has a copy of, so it is the one place the two can disagree. What to do about a
+// disagreement is decided in plan.ts; this is the part that asks and the part
+// that moves bytes, and the rule that shapes all of it is that nothing here may
+// lose a save.
+//
+// Two entry points, at the two ends of a launch. `pullSave` runs before the
+// emulator starts: it asks what the server has and writes it to disk when the
+// server's copy should win. `pushSave` runs after the emulator exits and sends
+// what changed. Between them the emulator is running and none of this is.
+//
+// Like the firmware mirror, none of this can fail a launch. A server that cannot
+// be reached, a user without the right scope, a device the server has forgotten
+// and a body that is not the shape it should be all end the same way: no save
+// moves, and the game starts anyway.
+
+import { type Session } from "electron";
+import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { type DesktopConfig, type SaveSyncOutcome } from "../../shared/types.ts";
+import { oneAtATime } from "../firmware/queue.ts";
+import { downloadFromServer } from "../rom-cache.ts";
+import { resolveDownloadUrl } from "../safety.ts";
+import { ensureDeviceId, forgetDeviceId } from "./device.ts";
+import { hashFile, md5Hex } from "./hash.ts";
+import { apiRequest } from "./http.ts";
+import { saveUploadBody } from "./multipart.ts";
+import {
+  archiveName,
+  AUTOSAVE_SLOT,
+  buildNegotiatePayload,
+  MAX_SAVE_BYTES,
+  planPull,
+  planPush,
+  type Allowance,
+  type LocalSave,
+  type SaveStamp,
+  type SyncOperation,
+} from "./plan.ts";
+
+/** Where a half-written download sits until it is complete. Leading dot, so it
+ *  is never mistaken for the save itself by anything listing the directory. */
+function tempNameFor(fileName: string): string {
+  return `.${fileName}.part`;
+}
+
+/** Whether a launch should sync at all. */
+export function saveSyncEnabled(config: DesktopConfig): boolean {
+  return Boolean(config.syncSaves && config.serverUrl);
+}
+
+/**
+ * What the save on disk is right now, or null when there is nothing there.
+ *
+ * The modification time is carried alongside the digest because the negotiation
+ * is decided on it, and it has to be the time of the bytes being described: a
+ * stat taken separately from the hash could describe a different version of the
+ * file, which on a device with no sync history is the difference between an
+ * upload and a download.
+ */
+async function readLocal(
+  path: string,
+): Promise<{ stamp: SaveStamp; updatedAt: Date } | null> {
+  const info = await stat(path).catch(() => null);
+  if (!info?.isFile()) return null;
+  return {
+    stamp: { hash: await hashFile(path), size: info.size },
+    updatedAt: info.mtime,
+  };
+}
+
+type Negotiation =
+  | { kind: "ok"; sessionId: number; operation: SyncOperation | null }
+  /** The server does not know this device any more. */
+  | { kind: "unknown-device" }
+  /** No answer: offline, refused, or a body that is not what it should be. */
+  | { kind: "unreachable" };
+
+/**
+ * Ask what the server has, for this one ROM.
+ *
+ * `rom_ids` scopes the answer to the ROM being launched, so the response is
+ * about this game rather than the user's whole library, and `saves` carries at
+ * most the one local save. Both are read-only scopes: a ROM left out is outside
+ * this negotiation, never a deletion.
+ */
+async function negotiate(options: {
+  serverUrl: string;
+  session: Session;
+  deviceId: string;
+  romId: number;
+  local: LocalSave | null;
+  signal: AbortSignal;
+}): Promise<Negotiation> {
+  const { serverUrl, session, deviceId, romId, local, signal } = options;
+
+  const response = await apiRequest({
+    serverUrl,
+    session,
+    path: "/api/sync/negotiate",
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      device_id: deviceId,
+      ...buildNegotiatePayload(romId, local),
+    }),
+    signal,
+  });
+  if (!response) return { kind: "unreachable" };
+  if (response.status === 404) return { kind: "unknown-device" };
+  if (response.status >= 300) return { kind: "unreachable" };
+
+  const body = response.body as
+    | { session_id?: unknown; operations?: unknown }
+    | null;
+  const sessionId = body?.session_id;
+  if (typeof sessionId !== "number" || !Array.isArray(body?.operations)) {
+    return { kind: "unreachable" };
+  }
+
+  // The answer can be about more than the ROM asked about, so the ROM being
+  // launched is picked out rather than the first operation being taken on trust.
+  const mine = body.operations.find(
+    (item) =>
+      typeof item === "object" &&
+      item !== null &&
+      (item as { rom_id?: unknown }).rom_id === romId,
+  );
+  return { kind: "ok", sessionId, operation: mine ? toOperation(mine) : null };
+}
+
+/** Coerce one operation, keeping only the fields this code acts on. */
+function toOperation(raw: unknown): SyncOperation {
+  const item = raw as Record<string, unknown>;
+  const action = item.action;
+  return {
+    action:
+      action === "upload" ||
+      action === "download" ||
+      action === "conflict" ||
+      action === "no_op"
+        ? action
+        : "no_op",
+    rom_id: typeof item.rom_id === "number" ? item.rom_id : 0,
+    save_id: typeof item.save_id === "number" ? item.save_id : null,
+    file_name: typeof item.file_name === "string" ? item.file_name : "",
+    slot: typeof item.slot === "string" ? item.slot : null,
+    server_content_hash:
+      typeof item.server_content_hash === "string"
+        ? item.server_content_hash
+        : null,
+  };
+}
+
+type UploadResult =
+  | { kind: "ok" }
+  /** The slot moved on since this device last saw it. */
+  | { kind: "conflict" }
+  | { kind: "failed"; detail: string };
+
+/**
+ * Send one save, either into the autosave slot or as an archival save.
+ *
+ * `overwrite` is always false. That is the invariant, not a default: a save
+ * already in the slot that this device has not seen is never replaced, and the
+ * server answers 409 to say so rather than letting this overwrite it.
+ */
+async function upload(options: {
+  serverUrl: string;
+  session: Session;
+  deviceId: string;
+  romId: number;
+  fileName: string;
+  bytes: Uint8Array;
+  slot: string | null;
+  signal: AbortSignal;
+}): Promise<UploadResult> {
+  const { serverUrl, session, deviceId, romId, fileName, bytes, slot, signal } =
+    options;
+
+  const params = new URLSearchParams({
+    rom_id: String(romId),
+    device_id: deviceId,
+    overwrite: "false",
+  });
+  if (slot) {
+    params.set("slot", slot);
+    // Without this a slotted upload mints a version the server never reaps,
+    // which is how a slot grows without bound. An archival save has no slot to
+    // rotate, so it is left out.
+    params.set("autocleanup", "true");
+  }
+
+  const body = saveUploadBody(fileName, bytes);
+  const response = await apiRequest({
+    serverUrl,
+    session,
+    path: `/api/saves?${params.toString()}`,
+    method: "POST",
+    headers: { "content-type": body.contentType },
+    body: body.body,
+    signal,
+  });
+  if (!response) return { kind: "failed", detail: "no answer from the server" };
+  if (response.status === 409) return { kind: "conflict" };
+  if (response.status >= 300) {
+    return { kind: "failed", detail: `server returned ${response.status}` };
+  }
+  return { kind: "ok" };
+}
+
+/**
+ * Write the server's save over the local one.
+ *
+ * Downloaded to a temporary name and renamed only once the bytes have been
+ * checked against the digest the negotiation reported. The rename is what makes
+ * this destructive, so it is the last thing that happens and it does not happen
+ * on a transfer that cannot be confirmed: a truncated response would otherwise
+ * replace a working save with half of one.
+ */
+async function download(options: {
+  serverUrl: string;
+  session: Session;
+  deviceId: string;
+  saveId: number;
+  target: string;
+  expectedHash: string | null;
+  signal: AbortSignal;
+}): Promise<boolean> {
+  const { serverUrl, session, deviceId, saveId, target, expectedHash, signal } =
+    options;
+
+  // `optimistic=false` keeps the server from recording this device as synced on
+  // the way out. The baseline is recorded afterwards, by confirming a transfer
+  // that actually arrived.
+  const path = `/api/saves/${saveId}/content?device_id=${encodeURIComponent(
+    deviceId,
+  )}&optimistic=false`;
+  let url: URL;
+  try {
+    url = resolveDownloadUrl(serverUrl, path);
+  } catch {
+    return false;
+  }
+
+  const temp = join(dirname(target), tempNameFor(basename(target)));
+  try {
+    // The launcher creates the directory this launch uses, but a save pull is
+    // not always the first thing to touch it and a download into a directory
+    // that does not exist fails in a way that reads as "the server was down".
+    await mkdir(dirname(target), { recursive: true });
+    await downloadFromServer({
+      url,
+      session,
+      destination: temp,
+      signal,
+      maxBytes: MAX_SAVE_BYTES,
+      // A save is kilobytes where a ROM is gigabytes, and the launch already
+      // reports that it is syncing. A byte count per tenth of a second would be
+      // noise with nothing to attach it to.
+      onProgress: () => {},
+    });
+
+    if (expectedHash !== null && (await hashFile(temp)) !== expectedHash) {
+      await rm(temp, { force: true });
+      return false;
+    }
+    await rename(temp, target);
+  } catch (error) {
+    await rm(temp, { force: true });
+    // A cancel is the launch's own and has to reach it. Anything else is one
+    // save that did not move, which is not this code's call to make fatal.
+    if (signal.aborted) throw error;
+    return false;
+  }
+
+  // Tell the server the save landed, which is what records this device's
+  // baseline for it. A failure here costs the baseline and nothing else: the
+  // file is already on disk, where the emulator will find it, and the next
+  // negotiation simply has no history to compare against.
+  await apiRequest({
+    serverUrl,
+    session,
+    path: `/api/saves/${saveId}/downloaded`,
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ device_id: deviceId }),
+    signal,
+  }).catch(() => undefined);
+
+  return true;
+}
+
+export interface PullOptions {
+  config: DesktopConfig;
+  session: Session;
+  romId: number;
+  /** The exact SRAM file the emulator will be told to use. */
+  saveFile: string;
+  signal: AbortSignal;
+}
+
+export interface PullResult {
+  /** What the push after exit is allowed to do. */
+  allowance: Allowance;
+  /** What was on disk when the emulator started. */
+  before: SaveStamp | null;
+  deviceId: string | null;
+  sessionId: number | null;
+  /** What to tell the renderer, or null when nothing moved. */
+  outcome: SaveSyncOutcome | null;
+}
+
+/**
+ * Bring the server's save down before the emulator starts.
+ *
+ * Runs before the spawn and blocks it, which is the only time the local file can
+ * be replaced without racing the emulator for it. Aborting the launch aborts
+ * this, and the abort is re-thrown rather than swallowed, so a cancel reads as a
+ * cancel rather than as a save that failed to sync.
+ */
+export function pullSave(options: PullOptions): Promise<PullResult> {
+  // The game's save file is the resource, not the game: two launches of the same
+  // ROM would write the same temporary file and rename it out from under each
+  // other. Serialised, so the second takes the first's answer.
+  return oneAtATime(options.saveFile, options.signal, () => runPull(options));
+}
+
+async function runPull({
+  config,
+  session,
+  romId,
+  saveFile,
+  signal,
+}: PullOptions): Promise<PullResult> {
+  const local = await readLocal(saveFile);
+  const idle: PullResult = {
+    allowance: "unreachable",
+    before: local?.stamp ?? null,
+    deviceId: null,
+    sessionId: null,
+    outcome: null,
+  };
+
+  const serverUrl = config.serverUrl;
+  if (!serverUrl) return idle;
+
+  let deviceId = await ensureDeviceId({ config, session, signal });
+  if (!deviceId) return idle;
+
+  const ask = (id: string) =>
+    negotiate({
+      serverUrl,
+      session,
+      deviceId: id,
+      romId,
+      local: local && {
+        fileName: basename(saveFile),
+        contentHash: local.stamp.hash,
+        updatedAt: local.updatedAt,
+        sizeBytes: local.stamp.size,
+      },
+      signal,
+    });
+
+  let negotiation = await ask(deviceId);
+
+  // The device row is gone: deleted from the device list, or a database that
+  // was restored without it. Registering again is the recovery, and it happens
+  // once: an id that is rejected twice is not a stale id.
+  if (negotiation.kind === "unknown-device") {
+    await forgetDeviceId();
+    // The config in hand still holds the id the server just refused, so the one
+    // passed in has to be cleared too or registration would be skipped.
+    const renewed = await ensureDeviceId({
+      config: { ...config, deviceId: null },
+      session,
+      signal,
+    });
+    if (!renewed) return idle;
+    deviceId = renewed;
+    negotiation = await ask(deviceId);
+  }
+  if (negotiation.kind !== "ok") return idle;
+
+  const { sessionId, operation } = negotiation;
+  const plan = planPull(operation, local?.stamp ?? null);
+  // Recomputed here rather than reused, because the emulator is about to start
+  // against whatever is on disk now, and that is what the push has to compare
+  // against.
+  let before = local?.stamp ?? null;
+  let outcome: SaveSyncOutcome | null = null;
+
+  if (plan.archiveFirst && local) {
+    // The server's copy is about to be written over bytes whose content it does
+    // not already hold. Unless those bytes go somewhere first, the pull does not
+    // happen: this is the case a device with no sync history can reach on a
+    // timestamp alone, and losing the only copy of a save is not a recoverable
+    // outcome to be optimistic about.
+    const bytes = await readFile(saveFile).catch(() => null);
+    const archived = bytes
+      ? await upload({
+          serverUrl,
+          session,
+          deviceId,
+          romId,
+          fileName: archiveName(basename(saveFile), new Date()),
+          bytes,
+          slot: null,
+          signal,
+        })
+      : null;
+    if (!archived || archived.kind !== "ok") {
+      // Nothing was pulled, so the local copy is still the one on disk and the
+      // push after exit is still free to send it.
+      return { allowance: plan.allowance, before, deviceId, sessionId, outcome };
+    }
+  }
+
+  if (plan.pull && operation?.save_id != null) {
+    const pulled = await download({
+      serverUrl,
+      session,
+      deviceId,
+      saveId: operation.save_id,
+      target: saveFile,
+      expectedHash: operation.server_content_hash,
+      signal,
+    });
+    if (pulled) {
+      before = (await readLocal(saveFile))?.stamp ?? null;
+      outcome = { action: "downloaded", slot: operation.slot };
+    }
+  }
+
+  return { allowance: plan.allowance, before, deviceId, sessionId, outcome };
+}
+
+export interface PushOptions {
+  config: DesktopConfig;
+  session: Session;
+  romId: number;
+  saveFile: string;
+  deviceId: string;
+  /** What was on disk when the emulator started. */
+  before: SaveStamp | null;
+  allowance: Allowance;
+  signal: AbortSignal;
+}
+
+/**
+ * Send what the emulator left behind, if it left anything new.
+ *
+ * Detached: the launch reports the emulator's exit immediately rather than
+ * waiting for an upload, so this resolves on its own and its result is pushed to
+ * the renderer as a separate status. Returns null when there is nothing worth
+ * reporting, which is the common case, because most launches end with the
+ * emulator having written nothing.
+ */
+export async function pushSave({
+  config,
+  session,
+  romId,
+  saveFile,
+  deviceId,
+  before,
+  allowance,
+  signal,
+}: PushOptions): Promise<SaveSyncOutcome | null> {
+  const serverUrl = config.serverUrl;
+  if (!serverUrl) return null;
+
+  // Read once, so the digest that decides whether to send and the bytes that are
+  // sent are the same bytes. Hashing and then re-reading could describe two
+  // versions of a file that has only one of them on disk.
+  const bytes = await readFile(saveFile).catch(() => null);
+  const after: SaveStamp | null = bytes
+    ? { hash: md5Hex(bytes), size: bytes.length }
+    : null;
+
+  const action = planPush(before, after, allowance);
+  if (action === "none" || !bytes) return null;
+
+  // A conflict already had its answer decided before the emulator ran: the
+  // server's slot holds progress this device has not seen, so the local bytes
+  // are archived rather than offered to it.
+  const wantSlot = action === "push";
+  const archive = () =>
+    upload({
+      serverUrl,
+      session,
+      deviceId,
+      romId,
+      fileName: archiveName(basename(saveFile), new Date()),
+      bytes,
+      slot: null,
+      signal,
+    });
+
+  if (!wantSlot) {
+    const archived = await archive();
+    return archived.kind === "ok"
+      ? { action: "archived" }
+      : { action: "failed", detail: describe(archived) };
+  }
+
+  const uploaded = await upload({
+    serverUrl,
+    session,
+    deviceId,
+    romId,
+    fileName: basename(saveFile),
+    bytes,
+    slot: AUTOSAVE_SLOT,
+    signal,
+  });
+  if (uploaded.kind === "ok") {
+    return { action: "uploaded", slot: AUTOSAVE_SLOT };
+  }
+  if (uploaded.kind === "conflict") {
+    // The slot moved on between the negotiation and now, or this device's
+    // baseline is older than what is in it. Retrying the same upload would be
+    // refused identically, so the local bytes go up as an archival save, which
+    // is paired with nothing and therefore replaces nothing.
+    const archived = await archive();
+    return archived.kind === "ok"
+      ? { action: "archived" }
+      : { action: "failed", detail: describe(archived) };
+  }
+  return { action: "failed", detail: describe(uploaded) };
+}
+
+function describe(result: UploadResult): string {
+  return result.kind === "failed" ? result.detail : "upload refused";
+}
+
+/**
+ * Close the sync session, so it is not left open for good.
+ *
+ * Best effort by design: the saves have already moved or not, and a session that
+ * fails to close is a stale row rather than a lost save. The counts are what
+ * this client did, reported here rather than on each upload -- the upload
+ * endpoint also has a counter, and feeding both would count every save twice.
+ */
+export async function completeSync(options: {
+  serverUrl: string;
+  session: Session;
+  sessionId: number;
+  completed: number;
+  failed: number;
+  signal: AbortSignal;
+}): Promise<void> {
+  const { serverUrl, session, sessionId, completed, failed, signal } = options;
+  await apiRequest({
+    serverUrl,
+    session,
+    path: `/api/sync/sessions/${sessionId}/complete`,
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      operations_completed: completed,
+      operations_failed: failed,
+    }),
+    signal,
+  }).catch(() => undefined);
+}
