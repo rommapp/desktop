@@ -125,6 +125,8 @@ next launch attempt without a restart and is not overwritten by the next save.
 | `cachePath`              | `rom-cache`        | [ROM cache](#rom-cache) directory                                       |
 | `cacheLimitBytes`        | 20 GB              | Cache size before LRU eviction                                          |
 | `saveDataPath`           | `save-data`        | [Save and state](#save-data) directories                                |
+| `syncSaves`              | `true`             | [Move saves to and from RomM](#saves-synced-with-romm) around a launch  |
+| `deviceId`               | set by the shell   | This machine's row in RomM's device list                                |
 | `useRommFirmware`        | `true`             | [Mirror RomM's firmware library](#firmware-from-romm)                   |
 | `biosPath`               | `bios`             | Where that mirror lives                                                 |
 | `fullscreen`             | `false`            | Open the main window with no title bar, for a TV or cabinet             |
@@ -437,8 +439,8 @@ single-payload download. Only cancelling stays fatal.
 
 Left to itself an emulator writes save data next to the ROM, where cache
 [eviction](#rom-cache) eventually deletes it or RomM scans it out of your
-library. So each game gets a directory of its own, keyed on the ROM id.
-Syncing it back to RomM is out of scope.
+library. So each game gets a directory of its own, keyed on the ROM id, and
+what is in there is [synced with RomM](#saves-synced-with-romm) around a launch.
 
 ```
 <saveDataPath>/<romId>/saves/<name>.srm
@@ -482,6 +484,76 @@ tokens. Prefer `{savefile}` and `{statefile}` where they are accepted: given
 only a directory an emulator names the save after the ROM, and since the cached
 copy carries a name the shell has made portable for Windows, a ROM whose name
 needed rewriting derives two save names, one per launch path.
+
+### Saves synced with RomM
+
+RomM keeps a save library of its own, and a native launch is the one moment this
+shell holds a save file RomM also has a copy of. With `syncSaves` on, every
+launch asks the server what it has for that game before the emulator starts, and
+offers it what the emulator left behind once it exits. Between those two moments
+the two copies can only agree by having been told.
+
+The direction of travel is a pull before and a push after:
+
+```
+RomM  ──pull──▶  <saveDataPath>/<romId>/saves/<name>.srm  ──push──▶  RomM
+```
+
+A push goes into the `autosave` slot, which is the same slot the browser player
+writes to, so a game played in the browser and a game played here keep one save
+between them rather than one each. A slot that has moved on since this device
+last saw it is never overwritten: `overwrite` is always false, the server answers
+409, and the local bytes are filed as an archival save outside every slot instead
+of being offered to a slot that already holds newer progress. The same happens
+before a pull that would replace local bytes whose content the server does not
+already hold, so the worst a conflict can cost is an extra save to choose between
+in RomM. A pull the shell cannot make safe does not happen at all: a server copy
+it has no hash to check the transfer against, and a local file it could not read
+to know what that copy would be displacing, both leave the save on disk exactly
+as the emulator will find it.
+
+Only a launch that names the save file syncs one. The built-in RetroArch path
+does, by passing `-s`, and a mapping does when its arguments name `{savefile}`.
+Anything else keeps its saves wherever the emulator puts them, and nothing is
+pulled into a file it will not read. `{saves}` does not count: it hands over the
+directory and leaves the emulator to name the save after the content, which is
+the one thing that differs between a game launched from the cache and the same
+game launched from the library. If you want sync on a mapping that currently
+names `{saves}`, name `{savefile}` as well.
+
+Most launches push nothing. The shell takes the save's digest before the
+emulator starts and again after it exits, and sends only what changed. The
+exception is a save RomM does not hold yet: the negotiation says so, and that
+save goes up on the first launch whether or not the session touched it, so
+turning sync on brings an existing shelf of saves across instead of making you
+play each game again to move it.
+
+The device is registered once and its id kept in `deviceId`. That id is what lets
+the server tell "this device already has this save" from "this device has never
+seen it", so clearing it is worth knowing about: the next launch registers a
+fresh device with no sync history, the first negotiation after that falls back to
+comparing timestamps alone, and a save that exists on both sides in different
+versions is archived rather than merged. Nothing is lost, only merged less
+cleverly. To stop syncing altogether, turn `syncSaves` off; the local files stay
+exactly where they are.
+
+None of this can fail a launch. A server that will not answer, an upload the
+server refuses, and a device the server has forgotten all end the same way as a
+platform with no save to sync: the file is left where it is and the game starts
+anyway.
+
+One gap worth knowing about. The push happens when the emulator exits, which
+means the shell has to still be running to send it. Close the window while a
+game is open and, on Windows and Linux, the shell quits and that session's save
+is never pushed -- the emulator keeps running, and what it writes stays local
+until the next launch of that game sends it. macOS is unaffected, since closing
+the window there does not quit the app. Leave the window open until you have
+finished playing, and nothing is lost either way: the save is on disk, and the
+next launch negotiates it.
+
+Save states are not synced. RomM's API has no slot, content hash or device
+tracking for them, so `<saveDataPath>/<romId>/states/` belongs to this machine
+alone.
 
 ### Firmware from RomM
 

@@ -98,4 +98,25 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => launcher.dispose());
+/** How long a quit waits for a save already on its way to the server. Bounded
+ *  because a quit the user asked for has to happen, whatever the network is
+ *  doing. */
+const SAVE_SETTLE_MS = 5000;
+
+let quitting = false;
+
+app.on("before-quit", (event) => {
+  launcher.dispose();
+  if (quitting) return;
+
+  // An upload in flight is not something a quit can finish or roll back, only
+  // interrupt, and a request cut off mid-body is one the server may keep half
+  // of. Hold the quit for it briefly instead of deciding that for the user. The
+  // second pass through this handler is the one that actually quits.
+  quitting = true;
+  event.preventDefault();
+  void Promise.race([
+    launcher.saveSyncSettled(),
+    new Promise<void>((resolve) => setTimeout(resolve, SAVE_SETTLE_MS)),
+  ]).then(() => app.quit());
+});

@@ -30,6 +30,7 @@ const ALL_CAPABILITIES = {
   "platform-support-all": true,
   "firmware-mirror": true,
   "multi-disc": true,
+  "save-sync": true,
 } satisfies Record<ShellCapability, true>;
 
 // Object.keys loses the key type, and the satisfies above is what makes this

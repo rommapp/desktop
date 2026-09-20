@@ -14,6 +14,7 @@ import {
   emulatorIsPresent,
   emulatorLabel,
   emulatorReadsPlaylist,
+  emulatorUsesSaveFile,
   hasPlatformSpecificEmulator,
   isSafeCoreName,
   requiresCore,
@@ -1019,4 +1020,48 @@ test("a wildcard row is not a considered choice for this platform", () => {
     useDetectedEmulators: false,
   });
   assert.equal(hasPlatformSpecificEmulator(config, "ps2"), false);
+});
+
+test("emulatorUsesSaveFile answers for the emulator a platform would use", () => {
+  // No mapping at all: the built-in RetroArch path, whose arguments the shell
+  // writes and which passes -s with the exact file.
+  assert.ok(emulatorUsesSaveFile(testConfig(), "psx"));
+
+  const config = testConfig({
+    emulators: [
+      // The exact form, and the one to prefer.
+      {
+        platformSlug: "snes",
+        command: "/usr/bin/retroarch",
+        args: ["-L", "{core}", "-s", "{savefile}", "{rom}"],
+      },
+      // The directory form, which does not count: the emulator names the save
+      // after the content, and that is precisely what differs between a cached
+      // launch and an in-library one.
+      {
+        platformSlug: "gba",
+        command: "/usr/bin/mgba",
+        args: ["--savedir", "{saves}", "{rom}"],
+      },
+      // Save states are not synced, so naming only those is not consuming the
+      // save file.
+      {
+        platformSlug: "n64",
+        command: "/usr/bin/mupen64plus",
+        args: ["--statedir", "{states}", "{statefile}", "{rom}"],
+      },
+      // The documented minimal mapping: no save token at all. This emulator
+      // keeps its saves wherever it puts them by default.
+      {
+        platformSlug: "ps2",
+        command: "/usr/bin/pcsx2-qt",
+        args: ["-batch", "{rom}"],
+      },
+    ],
+  });
+
+  assert.ok(emulatorUsesSaveFile(config, "snes"));
+  assert.equal(emulatorUsesSaveFile(config, "gba"), false);
+  assert.equal(emulatorUsesSaveFile(config, "n64"), false);
+  assert.equal(emulatorUsesSaveFile(config, "ps2"), false);
 });

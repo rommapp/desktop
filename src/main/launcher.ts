@@ -10,6 +10,7 @@ import {
   LaunchError,
   type PlatformSupport,
   type PlatformSupportQuery,
+  type SaveSyncOutcome,
 } from "../shared/types.ts";
 import { loadConfig } from "./config.ts";
 import {
@@ -30,6 +31,7 @@ import {
   applyCorePreference,
   emulatorLabel,
   emulatorReadsPlaylist,
+  emulatorUsesSaveFile,
   findPreferredCores,
   hasPlatformSpecificEmulator,
   resolveLaunch,
@@ -38,6 +40,14 @@ import { syncDiscSet } from "./discs/sync.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
 import { resolveSavePaths } from "./saves/paths.ts";
+import {
+  completeSync,
+  pullSave,
+  pushSave,
+  saveSyncEnabled,
+  type PullResult,
+} from "./saves/sync.ts";
+import type { Allowance, SaveStamp } from "./saves/plan.ts";
 import { assertSeparateRoots, resolveLibraryRom } from "./safety.ts";
 
 interface ActiveLaunch {
@@ -142,6 +152,10 @@ function describeInstallableEmulator(
 export class Launcher {
   private readonly active = new Map<number, ActiveLaunch>();
   private readonly emit: (state: LaunchState) => void;
+  /** Save uploads still in flight, so a quit can wait for them. Not keyed by
+   *  rom id: a push outlives the launch that started it and is deliberately not
+   *  reachable from `active`. */
+  private readonly pushes = new Set<Promise<void>>();
 
   constructor(emit: (state: LaunchState) => void) {
     this.emit = emit;
@@ -640,6 +654,43 @@ export class Launcher {
         await mkdir(savePaths.stateDir, { recursive: true });
       }
 
+      // Blocking, unlike the push at the other end of the launch: what the
+      // emulator boots with has to be settled before it boots, and a save
+      // written underneath a running emulator is a save nobody has.
+      // Gated on the launch actually using the file, not just on a save
+      // directory being configured: a mapping that names no save token keeps
+      // its saves where the emulator puts them, and syncing around it would
+      // move bytes nothing reads.
+      const syncsSaves =
+        saveSyncEnabled(config) &&
+        emulatorUsesSaveFile(config, request.platformSlug);
+
+      let saveSync: PullResult | null = null;
+      if (savePaths && syncsSaves) {
+        this.emit({
+          romId: request.romId,
+          status: "downloading",
+          stage: "save",
+        });
+        saveSync = await pullSave({
+          config,
+          session,
+          romId: request.romId,
+          saveFile: savePaths.saveFile,
+          signal: controller.signal,
+        });
+        // Reported, not awaited on: the launch carries on to the emulator, and
+        // the frontend needs to be able to say a save was replaced before it
+        // started rather than only after one was sent.
+        if (saveSync.outcome) {
+          this.emit({
+            romId: request.romId,
+            status: "sync",
+            sync: saveSync.outcome,
+          });
+        }
+      }
+
       // The firmware RomM already holds, brought down beside the game. After
       // the ROM rather than before it: most platforms have none, so this is
       // usually two small requests that find nothing to do, and putting it
@@ -711,6 +762,23 @@ export class Launcher {
       child.on("exit", (code) => {
         this.active.delete(request.romId);
         this.emit({ romId: request.romId, status: "exited", exitCode: code });
+        // A session is the only thing that says a negotiation happened, and a
+        // negotiation is what the push is allowed to act on. Without one there
+        // is nothing to offer the server and nothing to close.
+        if (savePaths && saveSync?.deviceId && saveSync.sessionId !== null) {
+          this.settlePush({
+            config,
+            session,
+            romId: request.romId,
+            saveFile: savePaths.saveFile,
+            deviceId: saveSync.deviceId,
+            before: saveSync.before,
+            allowance: saveSync.allowance,
+            signal: controller.signal,
+            sessionId: saveSync.sessionId,
+            pulled: saveSync.outcome,
+          });
+        }
       });
 
       this.emit({ romId: request.romId, status: "running" });
@@ -735,7 +803,79 @@ export class Launcher {
     this.active.delete(romId);
   }
 
-  /** Stop tracking on shutdown so pending downloads do not outlive the window. */
+  /**
+   * Send what the emulator left behind, then close the sync session.
+   *
+   * Detached from the exit, which has already been reported: the exit is what
+   * brings the window back, and holding it until a body had finished uploading
+   * would make a player wait on the network for a game they have stopped
+   * playing. What happened arrives as its own status instead.
+   */
+  private settlePush(options: {
+    config: DesktopConfig;
+    session: Session;
+    romId: number;
+    saveFile: string;
+    deviceId: string;
+    before: SaveStamp | null;
+    allowance: Allowance;
+    signal: AbortSignal;
+    sessionId: number;
+    /** What the pull did, so the session counts both ends. */
+    pulled: SaveSyncOutcome | null;
+  }): void {
+    const run = (async () => {
+      const pushed = await pushSave(options);
+      if (pushed) {
+        this.emit({ romId: options.romId, status: "sync", sync: pushed });
+      }
+
+      // Both ends of the launch, counted here rather than by the server: the
+      // upload endpoint has a counter of its own and feeding both would count
+      // every save twice. A 404 or a refusal costs a stale session row and
+      // nothing else, so this is the last thing tried and the only thing that
+      // failing is not worth acting on.
+      const outcomes = [options.pulled, pushed].filter(
+        (outcome): outcome is SaveSyncOutcome => outcome !== null,
+      );
+      const serverUrl = options.config.serverUrl;
+      if (serverUrl) {
+        await completeSync({
+          serverUrl,
+          session: options.session,
+          sessionId: options.sessionId,
+          completed: outcomes.filter((o) => o.action !== "failed").length,
+          failed: outcomes.filter((o) => o.action === "failed").length,
+          signal: options.signal,
+        });
+      }
+    })().catch(() => undefined);
+
+    this.pushes.add(run);
+    void run.finally(() => this.pushes.delete(run));
+  }
+
+  /**
+   * Resolve once nothing is still on its way to the server.
+   *
+   * For the quit path, which bounds the wait itself. A save half-sent is not a
+   * save, and a window closing is not a reason to decide which of the two the
+   * server ends up with.
+   */
+  async saveSyncSettled(): Promise<void> {
+    // Drained rather than snapshotted. One emulator can exit while another's
+    // upload is still on the wire, and the push that exit registers lands in
+    // the set after a single `Promise.all` has already stopped looking at it --
+    // which is the one request the caller is bounding its wait for.
+    while (this.pushes.size > 0) {
+      await Promise.all([...this.pushes]);
+    }
+  }
+
+  /** Stop tracking on shutdown so pending downloads do not outlive the window.
+   *  Uploads are left alone for the same reason they are not tracked here: they
+   *  are already on the wire, and a request cut off mid-body leaves the server
+   *  holding an orphan that this side cannot clean up. */
   dispose(): void {
     for (const entry of this.active.values()) {
       if (!entry.child) entry.controller.abort();

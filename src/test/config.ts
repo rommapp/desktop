@@ -28,6 +28,10 @@ export function testConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     biosPath: null,
     useRommFirmware: false,
     saveDataPath: null,
+    // Off and unset by default: save sync negotiates with the server, so a test
+    // that wants it says so.
+    syncSaves: false,
+    deviceId: null,
     libraryPath: null,
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
     fullscreen: false,

@@ -63,7 +63,39 @@ export interface LaunchRequest {
   fileSize?: number;
 }
 
-export type LaunchStatus = "downloading" | "running" | "exited" | "failed";
+export type LaunchStatus =
+  | "downloading"
+  | "running"
+  | "exited"
+  | "failed"
+  /** A save moved, after the emulator had already exited. Its own status rather
+   *  than a stage, because it outlives the launch it belongs to: the exit is
+   *  reported immediately and the upload settles afterwards, so a frontend that
+   *  predates this sees an unknown status on an already-finished launch rather
+   *  than a launch that never finishes. */
+  | "sync";
+
+/** What happened to a save around one launch. */
+export type SaveSyncAction =
+  /** The server's copy was written over the local one before the emulator ran. */
+  | "downloaded"
+  /** What the emulator wrote was sent to the save's slot. */
+  | "uploaded"
+  /** Nothing was replaced. The local bytes were kept as an archival save
+   *  because the slot held progress this device had not seen. */
+  | "archived"
+  /** It was tried and did not work. The local file is untouched. */
+  | "failed";
+
+export interface SaveSyncOutcome {
+  action: SaveSyncAction;
+  /** The slot the save moved through, when it went through one. Absent for an
+   *  archival save, which deliberately sits outside every slot. */
+  slot?: string | null;
+  /** Why, when the outcome was a failure. For logs, not for display: a renderer
+   *  has its own message for the action. */
+  detail?: string;
+}
 
 export interface LaunchState {
   romId: number;
@@ -73,8 +105,10 @@ export interface LaunchState {
    *  ordinary one rather than as an unknown status it has to handle.
    *  "emulator" covers both fetching a standalone emulator and the wait while
    *  the user installs what was fetched, which has no progress to report.
-   *  "firmware" is the RomM firmware mirror, which usually has nothing to do. */
-  stage?: "rom" | "core" | "emulator" | "firmware";
+   *  "firmware" is the RomM firmware mirror, which usually has nothing to do.
+   *  "save" is the save pull, which happens after a ROM is ready and before the
+   *  emulator starts. */
+  stage?: "rom" | "core" | "emulator" | "firmware" | "save";
   /** The core being installed, while stage is "core". */
   core?: string;
   /** The firmware file being fetched, while stage is "firmware". Its own field
@@ -103,6 +137,8 @@ export interface LaunchState {
   error?: { code: LaunchErrorCode; message: string };
   /** Process exit code, set when status is "exited". */
   exitCode?: number | null;
+  /** What happened to a save, set when status is "sync". */
+  sync?: SaveSyncOutcome;
 }
 
 export interface LaunchResult {
@@ -219,6 +255,20 @@ export interface DesktopConfig {
    *  Keeping saves out of the cache protects them from its eviction, and out of
    *  the library from being scanned. Defaults to userData/save-data. */
   saveDataPath: string | null;
+  /** Move saves between the server and the emulator around a native launch.
+   *  Reads as "the server is the source of truth, minus anything it has not
+   *  seen": a save the server has and this device has not seen is pulled before
+   *  the emulator starts, whatever the emulator writes is pushed after it exits,
+   *  and a slot that moved on is archived rather than overwritten. Turning it
+   *  off leaves the local files exactly where they are. */
+  syncSaves: boolean;
+  /** This machine's id in the user's RomM device list, written by the shell the
+   *  first time it syncs and never typed by hand. Clearing it makes the next
+   *  launch register a new device, which starts with no sync history: nothing is
+   *  lost, but the first negotiation after it falls back to comparing
+   *  timestamps, so a save that exists on both sides in different versions is
+   *  archived rather than merged. */
+  deviceId: string | null;
   /** Root of the RomM library as this machine sees it. When the server runs
    *  here, a ROM found under this path is launched in place rather than
    *  downloaded back to the same disk. Null disables the lookup. */
@@ -255,7 +305,13 @@ export type ShellCapability =
   /** A rom of two or more discs is fetched as those files and booted from a
    *  playlist or its first disc, with each transfer reported by `file`,
    *  `fileIndex` and `fileCount` rather than as one restarting download. */
-  | "multi-disc";
+  | "multi-disc"
+  /** Saves are moved between the server and the emulator around a native
+   *  launch: the save pull is reported as the "save" launch stage, and what
+   *  happened to a save afterwards as a "sync" status carrying `sync`. Save
+   *  states are not synced, and a shell without this capability leaves both
+   *  sides of it undone. */
+  | "save-sync";
 
 // The list itself lives in the preload, which is the only file that ships it:
 // a sandboxed preload cannot import a value, so it cannot read one from here.

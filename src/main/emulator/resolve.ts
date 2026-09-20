@@ -202,6 +202,39 @@ export function emulatorReadsPlaylist(
   return PLAYLIST_EMULATORS.some((emulator) => named.includes(emulator));
 }
 
+/**
+ * Whether this platform's launch will actually read and write the save file the
+ * shell owns.
+ *
+ * Sync moves `<saveDataPath>/<romId>/saves/<name>.srm`, and that is only the
+ * emulator's save if the launch points the emulator at it. A mapping's
+ * arguments are the user's: they are free to name no save token at all, and
+ * such a launch keeps its saves wherever the emulator puts them by default.
+ * Syncing around one would pull RomM's copy into a file nothing reads and then
+ * hash that same untouched file on the way out -- a sync that reports itself as
+ * having happened and did nothing.
+ *
+ * "{savefile}" is the only form that counts, because it is the only one that
+ * pins the name. "{saves}" hands over the directory and leaves the emulator to
+ * derive the filename from the content -- which is exactly what differs between
+ * a cached launch and an in-library one, and the reason the built-in path below
+ * passes -s rather than setting savefile_directory. Syncing a "{saves}" mapping
+ * would pull into a name the emulator may not read and offer RomM a file it may
+ * never have written. A user who wants sync on such a mapping names
+ * "{savefile}" and gets it. The state tokens are not consulted either, because
+ * save states are not synced.
+ */
+export function emulatorUsesSaveFile(
+  config: DesktopConfig,
+  platformSlug: string,
+): boolean {
+  const mapping = findMapping(config, platformSlug);
+  // The RetroArch default path, whose arguments the shell writes itself: it
+  // passes -s, naming the exact file.
+  if (!mapping) return true;
+  return mapping.args.some((arg) => arg.includes("{savefile}"));
+}
+
 /** What to call the emulator this platform would use, before a launch has
  *  resolved a core to name alongside it. */
 export function emulatorLabel(
