@@ -31,6 +31,7 @@ import {
   applyCorePreference,
   emulatorLabel,
   emulatorReadsPlaylist,
+  emulatorUsesSaveFile,
   findPreferredCores,
   hasPlatformSpecificEmulator,
   resolveLaunch,
@@ -656,8 +657,16 @@ export class Launcher {
       // Blocking, unlike the push at the other end of the launch: what the
       // emulator boots with has to be settled before it boots, and a save
       // written underneath a running emulator is a save nobody has.
+      // Gated on the launch actually using the file, not just on a save
+      // directory being configured: a mapping that names no save token keeps
+      // its saves where the emulator puts them, and syncing around it would
+      // move bytes nothing reads.
+      const syncsSaves =
+        saveSyncEnabled(config) &&
+        emulatorUsesSaveFile(config, request.platformSlug);
+
       let saveSync: PullResult | null = null;
-      if (savePaths && saveSyncEnabled(config)) {
+      if (savePaths && syncsSaves) {
         this.emit({
           romId: request.romId,
           status: "downloading",

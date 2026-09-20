@@ -512,6 +512,14 @@ it has no hash to check the transfer against, and a local file it could not read
 to know what that copy would be displacing, both leave the save on disk exactly
 as the emulator will find it.
 
+Only a launch that uses the save file syncs one. The built-in RetroArch path
+always does, and a mapping does when its arguments name `{savefile}` or
+`{saves}`. A mapping that names neither keeps its saves wherever the emulator
+puts them by default, so nothing is pulled into a file it will not read.
+`{savefile}` is the exact form and the better one: `{saves}` names only the
+directory and leaves the emulator to work out the filename, which usually
+matches what the shell chose but is not guaranteed to.
+
 Most launches push nothing. The shell takes the save's digest before the
 emulator starts and again after it exits, and sends only what changed. The
 exception is a save RomM does not hold yet: the negotiation says so, and that
@@ -532,6 +540,15 @@ None of this can fail a launch. A server that will not answer, an upload the
 server refuses, and a device the server has forgotten all end the same way as a
 platform with no save to sync: the file is left where it is and the game starts
 anyway.
+
+One gap worth knowing about. The push happens when the emulator exits, which
+means the shell has to still be running to send it. Close the window while a
+game is open and, on Windows and Linux, the shell quits and that session's save
+is never pushed -- the emulator keeps running, and what it writes stays local
+until the next launch of that game sends it. macOS is unaffected, since closing
+the window there does not quit the app. Leave the window open until you have
+finished playing, and nothing is lost either way: the save is on disk, and the
+next launch negotiates it.
 
 Save states are not synced. RomM's API has no slot, content hash or device
 tracking for them, so `<saveDataPath>/<romId>/states/` belongs to this machine
