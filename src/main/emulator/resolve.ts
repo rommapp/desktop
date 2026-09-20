@@ -214,12 +214,15 @@ export function emulatorReadsPlaylist(
  * hash that same untouched file on the way out -- a sync that reports itself as
  * having happened and did nothing.
  *
- * "{savefile}" is the exact form and the one to prefer. "{saves}" names the
- * directory and leaves the emulator to derive the filename from the ROM, which
- * usually agrees with saveBaseName and is not guaranteed to. It counts anyway:
- * a user who named it asked for the shell to own their saves, and reading that
- * as "no" would switch sync off for someone it currently works for. The state
- * tokens are not consulted, because save states are not synced.
+ * "{savefile}" is the only form that counts, because it is the only one that
+ * pins the name. "{saves}" hands over the directory and leaves the emulator to
+ * derive the filename from the content -- which is exactly what differs between
+ * a cached launch and an in-library one, and the reason the built-in path below
+ * passes -s rather than setting savefile_directory. Syncing a "{saves}" mapping
+ * would pull into a name the emulator may not read and offer RomM a file it may
+ * never have written. A user who wants sync on such a mapping names
+ * "{savefile}" and gets it. The state tokens are not consulted either, because
+ * save states are not synced.
  */
 export function emulatorUsesSaveFile(
   config: DesktopConfig,
@@ -229,9 +232,7 @@ export function emulatorUsesSaveFile(
   // The RetroArch default path, whose arguments the shell writes itself: it
   // passes -s, naming the exact file.
   if (!mapping) return true;
-  return mapping.args.some(
-    (arg) => arg.includes("{savefile}") || arg.includes("{saves}"),
-  );
+  return mapping.args.some((arg) => arg.includes("{savefile}"));
 }
 
 /** What to call the emulator this platform would use, before a launch has

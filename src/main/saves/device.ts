@@ -15,6 +15,7 @@ import { app, type Session } from "electron";
 import { hostname, platform } from "node:os";
 import { type DesktopConfig } from "../../shared/types.ts";
 import { updateConfig } from "../config.ts";
+import { untilSettledOrCancelled } from "../firmware/queue.ts";
 import { apiRequest } from "./http.ts";
 
 /** What the device row says about this machine. */
@@ -58,6 +59,16 @@ export interface DeviceOptions {
 /** A registration in flight, if one is. */
 let registering: Promise<string | null> | null = null;
 
+/**
+ * The signal the shared registration runs under, which is to say none.
+ *
+ * Registering is the machine's business rather than any one launch's: the id it
+ * produces is written to the config and is what every later launch syncs as. A
+ * launch that walks away from it should not take it down for the launch beside
+ * it, or for the next one.
+ */
+const OUTLIVES_ANY_LAUNCH = new AbortController().signal;
+
 export function ensureDeviceId(options: DeviceOptions): Promise<string | null> {
   if (options.config.deviceId) return Promise.resolve(options.config.deviceId);
 
@@ -67,17 +78,23 @@ export function ensureDeviceId(options: DeviceOptions): Promise<string | null> {
   // the same two requests in order rather than one. RomM does dedupe on the
   // fingerprint, but two requests that both miss that lookup are the server
   // racing itself, and one request cannot.
-  registering ??= register(options)
-    // Never rejects, because this promise is shared: one launch's cancel
-    // arriving mid-registration must not fail another launch that is waiting
-    // on the same attempt. The cancelled one still ends as cancelled -- its
-    // own signal is checked again before anything is spawned.
+  const shared = (registering ??= register({
+    ...options,
+    signal: OUTLIVES_ANY_LAUNCH,
+  })
+    // Never rejects: this promise has more than one caller, and a failure is
+    // an absence of an id rather than something to throw at all of them.
     .catch(() => null)
     // Cleared once it settles, so a failure is not remembered as an answer.
     .finally(() => {
       registering = null;
-    });
-  return registering;
+    }));
+
+  // The waiting is this launch's to abandon, the request is not. A launch
+  // cancelled while queued behind someone else's registration stops waiting
+  // here and reads as cancelled, and the registration carries on to be
+  // persisted for whoever asks next.
+  return untilSettledOrCancelled(shared, options.signal);
 }
 
 async function register({

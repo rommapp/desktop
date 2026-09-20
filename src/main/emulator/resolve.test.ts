@@ -1035,9 +1035,9 @@ test("emulatorUsesSaveFile answers for the emulator a platform would use", () =>
         command: "/usr/bin/retroarch",
         args: ["-L", "{core}", "-s", "{savefile}", "{rom}"],
       },
-      // The directory form. The emulator derives the filename itself, which
-      // usually agrees with the shell and is not guaranteed to -- but the user
-      // asked for the shell to own their saves, so it counts.
+      // The directory form, which does not count: the emulator names the save
+      // after the content, and that is precisely what differs between a cached
+      // launch and an in-library one.
       {
         platformSlug: "gba",
         command: "/usr/bin/mgba",
@@ -1061,7 +1061,7 @@ test("emulatorUsesSaveFile answers for the emulator a platform would use", () =>
   });
 
   assert.ok(emulatorUsesSaveFile(config, "snes"));
-  assert.ok(emulatorUsesSaveFile(config, "gba"));
+  assert.equal(emulatorUsesSaveFile(config, "gba"), false);
   assert.equal(emulatorUsesSaveFile(config, "n64"), false);
   assert.equal(emulatorUsesSaveFile(config, "ps2"), false);
 });

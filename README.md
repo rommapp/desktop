@@ -512,13 +512,14 @@ it has no hash to check the transfer against, and a local file it could not read
 to know what that copy would be displacing, both leave the save on disk exactly
 as the emulator will find it.
 
-Only a launch that uses the save file syncs one. The built-in RetroArch path
-always does, and a mapping does when its arguments name `{savefile}` or
-`{saves}`. A mapping that names neither keeps its saves wherever the emulator
-puts them by default, so nothing is pulled into a file it will not read.
-`{savefile}` is the exact form and the better one: `{saves}` names only the
-directory and leaves the emulator to work out the filename, which usually
-matches what the shell chose but is not guaranteed to.
+Only a launch that names the save file syncs one. The built-in RetroArch path
+does, by passing `-s`, and a mapping does when its arguments name `{savefile}`.
+Anything else keeps its saves wherever the emulator puts them, and nothing is
+pulled into a file it will not read. `{saves}` does not count: it hands over the
+directory and leaves the emulator to name the save after the content, which is
+the one thing that differs between a game launched from the cache and the same
+game launched from the library. If you want sync on a mapping that currently
+names `{saves}`, name `{savefile}` as well.
 
 Most launches push nothing. The shell takes the save's digest before the
 emulator starts and again after it exits, and sends only what changed. The
