@@ -853,8 +853,14 @@ export class Launcher {
    * save, and a window closing is not a reason to decide which of the two the
    * server ends up with.
    */
-  saveSyncSettled(): Promise<void> {
-    return Promise.all([...this.pushes]).then(() => undefined);
+  async saveSyncSettled(): Promise<void> {
+    // Drained rather than snapshotted. One emulator can exit while another's
+    // upload is still on the wire, and the push that exit registers lands in
+    // the set after a single `Promise.all` has already stopped looking at it --
+    // which is the one request the caller is bounding its wait for.
+    while (this.pushes.size > 0) {
+      await Promise.all([...this.pushes]);
+    }
   }
 
   /** Stop tracking on shutdown so pending downloads do not outlive the window.

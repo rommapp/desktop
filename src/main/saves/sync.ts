@@ -20,12 +20,12 @@ import { type Session } from "electron";
 import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { type DesktopConfig, type SaveSyncOutcome } from "../../shared/types.ts";
-import { oneAtATime } from "../firmware/queue.ts";
 import { downloadFromServer } from "../rom-cache.ts";
 import { resolveDownloadUrl } from "../safety.ts";
 import { ensureDeviceId, forgetDeviceId } from "./device.ts";
 import { hashFile, md5Hex } from "./hash.ts";
 import { apiRequest } from "./http.ts";
+import { inTurn } from "./lock.ts";
 import { saveUploadBody } from "./multipart.ts";
 import {
   archiveName,
@@ -318,14 +318,15 @@ export interface PullResult {
  *
  * Runs before the spawn and blocks it, which is the only time the local file can
  * be replaced without racing the emulator for it. Aborting the launch aborts
- * this, and the abort is re-thrown rather than swallowed, so a cancel reads as a
- * cancel rather than as a save that failed to sync.
+ * the transfers, and the abort is re-thrown rather than swallowed, so a cancel
+ * reads as a cancel rather than as a save that failed to sync.
  */
 export function pullSave(options: PullOptions): Promise<PullResult> {
-  // The game's save file is the resource, not the game: two launches of the same
-  // ROM would write the same temporary file and rename it out from under each
-  // other. Serialised, so the second takes the first's answer.
-  return oneAtATime(options.saveFile, options.signal, () => runPull(options));
+  // The game's save file is the resource, not the game. The launch this one is
+  // most likely to be queued behind is the previous launch of the same game,
+  // still uploading what the player just did: renaming the server's copy over
+  // the file underneath that upload is how the wrong bytes end up on both ends.
+  return inTurn(options.saveFile, () => runPull(options));
 }
 
 async function runPull({
@@ -459,7 +460,15 @@ export interface PushOptions {
  * reporting, which is the common case, because most launches end with the
  * emulator having written nothing.
  */
-export async function pushSave({
+export function pushSave(options: PushOptions): Promise<SaveSyncOutcome | null> {
+  // The same turn the pull takes, for the same reason and against the same
+  // launch: this reads the file to decide whether to send it and then sends
+  // what it read, and a relaunch pulling in between would make those two
+  // different files.
+  return inTurn(options.saveFile, () => runPush(options));
+}
+
+async function runPush({
   config,
   session,
   romId,
