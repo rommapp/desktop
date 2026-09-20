@@ -201,14 +201,20 @@ test("a download with no server save id pulls nothing", () => {
   assert.equal(plan.archiveFirst, false);
 });
 
-test("an upload or a no-op pulls nothing and leaves the push allowed", () => {
-  for (const action of ["upload", "no_op"] as const) {
-    assert.deepEqual(planPull(op({ action }), stamp()), {
-      pull: false,
-      archiveFirst: false,
-      allowance: "push",
-    });
-  }
+test("a no-op pulls nothing and leaves the push allowed", () => {
+  assert.deepEqual(planPull(op({ action: "no_op" }), stamp()), {
+    pull: false,
+    archiveFirst: false,
+    allowance: "push",
+  });
+});
+
+test("an upload is the server asking for the save, not permitting it", () => {
+  assert.deepEqual(planPull(op({ action: "upload" }), stamp()), {
+    pull: false,
+    archiveFirst: false,
+    allowance: "requested",
+  });
 });
 
 test("a conflict pulls nothing and marks the push as archival", () => {
@@ -242,6 +248,22 @@ test("a conflicted save is archived when the shell cannot tell", () => {
   // an unnecessary push would mint a version other devices sync from.
   assert.equal(planPush(stamp({ hash: null }), stamp(), "conflict"), "archive");
   assert.equal(planPush(null, stamp(), "conflict"), "archive");
+});
+
+test("a save the server asked for is sent whether or not it changed", () => {
+  // The server has nothing paired with this slot. Someone adopting sync with a
+  // shelf of existing saves would otherwise never get them to RomM: each one
+  // waits for a session that happens to change it.
+  assert.equal(planPush(stamp(), stamp(), "requested"), "push");
+  assert.equal(planPush(stamp(), stamp({ hash: "bbbb" }), "requested"), "push");
+  assert.equal(planPush(null, stamp(), "requested"), "push");
+  assert.equal(planPush(stamp({ hash: null }), stamp(), "requested"), "push");
+});
+
+test("a save the emulator removed is not sent even when asked for", () => {
+  // Nothing on disk is nothing to send, and a deletion is still not something
+  // this shell propagates.
+  assert.equal(planPush(stamp(), null, "requested"), "none");
 });
 
 test("only a changed save is sent", () => {

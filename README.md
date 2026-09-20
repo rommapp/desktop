@@ -512,6 +512,13 @@ it has no hash to check the transfer against, and a local file it could not read
 to know what that copy would be displacing, both leave the save on disk exactly
 as the emulator will find it.
 
+Most launches push nothing. The shell takes the save's digest before the
+emulator starts and again after it exits, and sends only what changed. The
+exception is a save RomM does not hold yet: the negotiation says so, and that
+save goes up on the first launch whether or not the session touched it, so
+turning sync on brings an existing shelf of saves across instead of making you
+play each game again to move it.
+
 The device is registered once and its id kept in `deviceId`. That id is what lets
 the server tell "this device already has this save" from "this device has never
 seen it", so clearing it is worth knowing about: the next launch registers a

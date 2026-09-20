@@ -54,8 +54,13 @@ export interface SyncOperation {
   server_content_hash: string | null;
 }
 
-/** What the push stage may do, decided before the emulator ever runs. */
-export type Allowance = "push" | "conflict" | "unreachable";
+/**
+ * What the push stage may do, decided before the emulator ever runs.
+ *
+ * `requested` is the server having asked for this save outright, which is a
+ * stronger thing than being allowed to offer one.
+ */
+export type Allowance = "push" | "requested" | "conflict" | "unreachable";
 
 /** What the push stage will do, decided from what the emulator left behind. */
 export type PushAction = "none" | "push" | "archive";
@@ -171,7 +176,15 @@ export function planPull(
 ): PullPlan {
   if (!op) return { pull: false, archiveFirst: false, allowance: "push" };
 
-  const allowance: Allowance = op.action === "conflict" ? "conflict" : "push";
+  // `upload` is the server saying it has nothing paired with this slot and
+  // wants what the client holds. That is a request, not a permission, and the
+  // push stage treats it as one.
+  const allowance: Allowance =
+    op.action === "conflict"
+      ? "conflict"
+      : op.action === "upload"
+        ? "requested"
+        : "push";
 
   // Both conditions beyond the action are the same rule read twice: a download
   // replaces a file, so it happens only when the shell can say what it is about
@@ -196,11 +209,13 @@ export function planPull(
 }
 
 /**
- * Whether the emulator changed anything worth sending.
+ * Whether there is anything worth sending, and in what form.
  *
- * `archive` covers the conflict case, where the server's slot belongs to bytes
- * this device has never seen: the local copy goes up as a new null-slot save
- * rather than being written over the top of them, or dropped.
+ * Mostly this is "did the emulator change the file", but not always. `archive`
+ * covers the conflict case, where the server's slot belongs to bytes this
+ * device has never seen: the local copy goes up as a new null-slot save rather
+ * than being written over the top of them, or dropped. And a save the server
+ * asked for is sent whether or not this run touched it.
  */
 export function planPush(
   before: SaveStamp | null,
@@ -221,6 +236,12 @@ export function planPush(
   // what keeps a conflicted game from filing another archive every launch, with
   // no slot to rotate them and nothing to reap them.
   if (allowance === "conflict") return difference === false ? "none" : "archive";
+
+  // The server has nothing in this slot and said so. Whether the emulator wrote
+  // anything this run is beside the point: the save exists here and nowhere
+  // else, and declining to send it because the last hour of play happened to
+  // change nothing is how a library of saves stays on one machine forever.
+  if (allowance === "requested") return "push";
 
   // The slot is shared with the browser client, and a version other devices
   // sync from is not one to mint on a guess.
