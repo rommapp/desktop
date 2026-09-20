@@ -104,6 +104,25 @@ export function buildNegotiatePayload(romId: number, local: LocalSave | null) {
 }
 
 /**
+ * Whether a body is the save row RomM answers an accepted upload with.
+ *
+ * A 2xx on its own is not proof a save landed. A proxy or a sign-in page can
+ * produce one, and `apiRequest` reports a body it could not parse as null
+ * rather than as a failure. This answer is load bearing in a way the others are
+ * not: the pull archives the local bytes and then writes over them on the
+ * strength of it, so anything that can forge an "ok" can cost the only copy of
+ * a save. `POST /api/saves` answers with the save it stored, and a stored save
+ * has an id.
+ */
+export function storedSave(body: unknown): boolean {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    typeof (body as { id?: unknown }).id === "number"
+  );
+}
+
+/**
  * The one operation in the server's answer that belongs to this launch.
  *
  * The answer can be about more than the ROM that was asked about, and can hold

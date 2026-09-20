@@ -9,6 +9,7 @@ import {
   planPull,
   planPush,
   selectOperation,
+  storedSave,
   type Allowance,
   type SaveStamp,
   type SyncOperation,
@@ -321,4 +322,17 @@ test("an archive of a nameless save still gets an extension", () => {
     archiveName("Game", new Date("2026-01-02T03:04:05.006Z")),
     "Game [2026-01-02 03-04-05-006].srm",
   );
+});
+
+test("an accepted upload is the save the server stored", () => {
+  assert.ok(storedSave({ id: 12, rom_id: 7, file_name: "Game.srm" }));
+});
+
+test("a 2xx that is not a save is not an accepted upload", () => {
+  // What a sign-in page, a proxy, or a body that would not parse looks like by
+  // the time it reaches here. Each one would otherwise green-light the pull
+  // that writes over the bytes this upload was meant to be preserving.
+  for (const body of [null, undefined, "", "<html>", 12, [], {}, { id: "12" }]) {
+    assert.equal(storedSave(body), false, JSON.stringify(body) ?? "undefined");
+  }
 });

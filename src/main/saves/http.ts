@@ -131,6 +131,13 @@ export async function apiRequest({
     const response = await session.fetch(url.toString(), {
       method,
       credentials: "include",
+      // The URL was checked for being on-origin and under /api/, and following
+      // a redirect would walk straight back out of that. A 307 or 308 keeps the
+      // method and the body, so a POST forwarded off-origin would carry a save
+      // file and the CSRF header with it. These are API endpoints: a redirect
+      // from one is not something to chase quietly, and refusing reads here as
+      // a server that did not answer, which every caller already handles.
+      redirect: "error",
       signal,
       body,
       headers: {

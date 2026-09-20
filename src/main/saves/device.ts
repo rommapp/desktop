@@ -55,13 +55,36 @@ export interface DeviceOptions {
  * the caller with nothing to sync as. That is not fatal: it means no save moves
  * this launch, exactly as if the server had been unreachable.
  */
-export async function ensureDeviceId({
+/** A registration in flight, if one is. */
+let registering: Promise<string | null> | null = null;
+
+export function ensureDeviceId(options: DeviceOptions): Promise<string | null> {
+  if (options.config.deviceId) return Promise.resolve(options.config.deviceId);
+
+  // Shared between callers rather than queued behind each other. Two games
+  // started at once on a machine that has never registered both arrive here,
+  // and the config each was handed still says null -- so taking turns would be
+  // the same two requests in order rather than one. RomM does dedupe on the
+  // fingerprint, but two requests that both miss that lookup are the server
+  // racing itself, and one request cannot.
+  registering ??= register(options)
+    // Never rejects, because this promise is shared: one launch's cancel
+    // arriving mid-registration must not fail another launch that is waiting
+    // on the same attempt. The cancelled one still ends as cancelled -- its
+    // own signal is checked again before anything is spawned.
+    .catch(() => null)
+    // Cleared once it settles, so a failure is not remembered as an answer.
+    .finally(() => {
+      registering = null;
+    });
+  return registering;
+}
+
+async function register({
   config,
   session,
   signal,
 }: DeviceOptions): Promise<string | null> {
-  if (config.deviceId) return config.deviceId;
-
   const response = await apiRequest({
     serverUrl: config.serverUrl ?? "",
     session,

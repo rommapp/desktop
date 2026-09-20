@@ -35,6 +35,7 @@ import {
   planPull,
   planPush,
   selectOperation,
+  storedSave,
   type Allowance,
   type LocalSave,
   type SaveStamp,
@@ -181,6 +182,14 @@ async function upload(options: {
   if (response.status === 409) return { kind: "conflict" };
   if (response.status >= 300) {
     return { kind: "failed", detail: `server returned ${response.status}` };
+  }
+  // A status on its own is not proof the save landed, and this answer is load
+  // bearing: the pull archives the local bytes and then writes over them on the
+  // strength of an "ok" here, so anything that can forge one can cost the only
+  // copy of a save. The endpoint answers with the save it stored, so that is
+  // what gets checked for.
+  if (!storedSave(response.body)) {
+    return { kind: "failed", detail: "the server did not answer with a save" };
   }
   return { kind: "ok" };
 }
