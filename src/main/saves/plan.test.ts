@@ -8,6 +8,7 @@ import {
   MAX_SAVE_BYTES,
   planPull,
   planPush,
+  selectOperation,
   type Allowance,
   type SaveStamp,
   type SyncOperation,
@@ -76,6 +77,55 @@ test("a launch with nothing on disk offers the server nothing", () => {
 
 test("the save ceiling matches the server's upload limit", () => {
   assert.equal(MAX_SAVE_BYTES, 512 * 1024 * 1024);
+});
+
+test("the operation taken is this ROM's, in the shared slot", () => {
+  const chosen = selectOperation(
+    [
+      op({ rom_id: 9, slot: AUTOSAVE_SLOT, save_id: 1 }),
+      op({ rom_id: 7, slot: "manual", save_id: 2 }),
+      op({ rom_id: 7, slot: AUTOSAVE_SLOT, save_id: 3 }),
+    ],
+    7,
+  );
+  assert.equal(chosen?.save_id, 3);
+});
+
+test("a save in another slot is never taken for this launch", () => {
+  // With no local save to compare against the server describes every slot the
+  // ROM has. Downloading a manual slot into the autosave file would boot a save
+  // the player did not ask for.
+  const chosen = selectOperation(
+    [op({ rom_id: 7, slot: "manual", action: "download", save_id: 2 })],
+    7,
+  );
+  assert.equal(chosen, null);
+});
+
+test("an operation naming no slot is still this launch's", () => {
+  // The server talking about the ROM rather than about one of its slots.
+  const chosen = selectOperation([op({ rom_id: 7, slot: null, save_id: 4 })], 7);
+  assert.equal(chosen?.save_id, 4);
+});
+
+test("the shared slot is preferred over an unattributed operation", () => {
+  const chosen = selectOperation(
+    [
+      op({ rom_id: 7, slot: null, save_id: 4 }),
+      op({ rom_id: 7, slot: AUTOSAVE_SLOT, save_id: 5 }),
+    ],
+    7,
+  );
+  assert.equal(chosen?.save_id, 5);
+});
+
+test("an answer about other ROMs alone yields nothing", () => {
+  assert.equal(selectOperation([op({ rom_id: 9 })], 7), null);
+  assert.equal(selectOperation([], 7), null);
+});
+
+test("entries that are not operations are passed over", () => {
+  assert.equal(selectOperation([null, 3, "op", []], 7), null);
 });
 
 test("an answer with nothing in it still permits the push", () => {

@@ -34,6 +34,7 @@ import {
   MAX_SAVE_BYTES,
   planPull,
   planPush,
+  selectOperation,
   type Allowance,
   type LocalSave,
   type SaveStamp,
@@ -120,37 +121,10 @@ async function negotiate(options: {
     return { kind: "unreachable" };
   }
 
-  // The answer can be about more than the ROM asked about, so the ROM being
-  // launched is picked out rather than the first operation being taken on trust.
-  const mine = body.operations.find(
-    (item) =>
-      typeof item === "object" &&
-      item !== null &&
-      (item as { rom_id?: unknown }).rom_id === romId,
-  );
-  return { kind: "ok", sessionId, operation: mine ? toOperation(mine) : null };
-}
-
-/** Coerce one operation, keeping only the fields this code acts on. */
-function toOperation(raw: unknown): SyncOperation {
-  const item = raw as Record<string, unknown>;
-  const action = item.action;
   return {
-    action:
-      action === "upload" ||
-      action === "download" ||
-      action === "conflict" ||
-      action === "no_op"
-        ? action
-        : "no_op",
-    rom_id: typeof item.rom_id === "number" ? item.rom_id : 0,
-    save_id: typeof item.save_id === "number" ? item.save_id : null,
-    file_name: typeof item.file_name === "string" ? item.file_name : "",
-    slot: typeof item.slot === "string" ? item.slot : null,
-    server_content_hash:
-      typeof item.server_content_hash === "string"
-        ? item.server_content_hash
-        : null,
+    kind: "ok",
+    sessionId,
+    operation: selectOperation(body.operations, romId),
   };
 }
 

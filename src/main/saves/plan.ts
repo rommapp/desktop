@@ -99,6 +99,63 @@ export function buildNegotiatePayload(romId: number, local: LocalSave | null) {
 }
 
 /**
+ * The one operation in the server's answer that belongs to this launch.
+ *
+ * The answer can be about more than the ROM that was asked about, and can hold
+ * more than one operation for that ROM: with no local save to compare against,
+ * the server has every slot the ROM owns to describe rather than the one this
+ * launch cares about. So the ROM is matched first and the slot second, and a
+ * manual slot is passed over rather than written into the file the emulator is
+ * about to be pointed at.
+ *
+ * An operation naming no slot is still this launch's. It is the server talking
+ * about the ROM rather than about one of its slots, which is the shape a no-op
+ * takes, and reading it as someone else's would throw away the answer.
+ */
+export function selectOperation(
+  operations: unknown[],
+  romId: number,
+): SyncOperation | null {
+  const ours = operations
+    .filter(
+      (item): item is Record<string, unknown> =>
+        typeof item === "object" &&
+        item !== null &&
+        (item as { rom_id?: unknown }).rom_id === romId,
+    )
+    .map(toOperation);
+
+  return (
+    ours.find((op) => op.slot === AUTOSAVE_SLOT) ??
+    ours.find((op) => op.slot === null) ??
+    null
+  );
+}
+
+/** Coerce one operation, keeping only the fields this code acts on. */
+function toOperation(raw: unknown): SyncOperation {
+  const item = raw as Record<string, unknown>;
+  const action = item.action;
+  return {
+    action:
+      action === "upload" ||
+      action === "download" ||
+      action === "conflict" ||
+      action === "no_op"
+        ? action
+        : "no_op",
+    rom_id: typeof item.rom_id === "number" ? item.rom_id : 0,
+    save_id: typeof item.save_id === "number" ? item.save_id : null,
+    file_name: typeof item.file_name === "string" ? item.file_name : "",
+    slot: typeof item.slot === "string" ? item.slot : null,
+    server_content_hash:
+      typeof item.server_content_hash === "string"
+        ? item.server_content_hash
+        : null,
+  };
+}
+
+/**
  * What to do with the server's answer.
  *
  * A null operation here is an answer, not the absence of one: the server was
