@@ -507,7 +507,10 @@ last saw it is never overwritten: `overwrite` is always false, the server answer
 of being offered to a slot that already holds newer progress. The same happens
 before a pull that would replace local bytes whose content the server does not
 already hold, so the worst a conflict can cost is an extra save to choose between
-in RomM.
+in RomM. A pull the shell cannot make safe does not happen at all: a server copy
+it has no hash to check the transfer against, and a local file it could not read
+to know what that copy would be displacing, both leave the save on disk exactly
+as the emulator will find it.
 
 The device is registered once and its id kept in `deviceId`. That id is what lets
 the server tell "this device already has this save" from "this device has never

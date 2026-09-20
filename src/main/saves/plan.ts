@@ -101,27 +101,39 @@ export function buildNegotiatePayload(romId: number, local: LocalSave | null) {
 /**
  * What to do with the server's answer.
  *
- * A null operation means the question could not be asked, which is the only way
- * this reads as `unreachable`; the push stage treats that as "offer nothing".
+ * A null operation here is an answer, not the absence of one: the server was
+ * asked and had nothing to say about this ROM, which is the ordinary first
+ * launch where neither side holds a save yet. Nothing comes down, and the save
+ * the emulator is about to make is still the shell's to offer afterwards.
+ * Not being able to ask at all is the caller's to report, and reads as
+ * `unreachable`.
  */
 export function planPull(
   op: SyncOperation | null,
   local: SaveStamp | null,
 ): PullPlan {
-  if (!op) return { pull: false, archiveFirst: false, allowance: "unreachable" };
+  if (!op) return { pull: false, archiveFirst: false, allowance: "push" };
 
   const allowance: Allowance = op.action === "conflict" ? "conflict" : "push";
-  const pull = op.action === "download" && op.save_id !== null;
+
+  // Both conditions beyond the action are the same rule read twice: a download
+  // replaces a file, so it happens only when the shell can say what it is about
+  // to write and what it is about to displace. A server hash it does not have
+  // is a transfer it cannot check before the rename; a local file it could not
+  // read is bytes it cannot prove are held anywhere else. Either way it keeps
+  // what is on disk, which costs a sync and loses nothing.
+  const pull =
+    op.action === "download" &&
+    op.save_id !== null &&
+    op.server_content_hash !== null &&
+    !(local !== null && local.hash === null);
 
   // The server's copy is about to be written over these bytes. When they are not
   // the bytes the server already holds, nothing else has them: a device with no
   // sync history can be handed a download on a timestamp alone, and this is what
   // keeps that from being a silent overwrite of the only copy.
   const archiveFirst =
-    pull &&
-    local !== null &&
-    local.hash !== null &&
-    local.hash !== op.server_content_hash;
+    pull && local !== null && local.hash !== op.server_content_hash;
 
   return { pull, archiveFirst, allowance };
 }
@@ -139,18 +151,36 @@ export function planPush(
   allowance: Allowance,
 ): PushAction {
   if (allowance === "unreachable") return "none";
-  if (allowance === "conflict") return after ? "archive" : "none";
 
   // Nothing on disk to send: the emulator either never made the file or removed
   // it, and a deletion is not something this shell propagates.
   if (!after) return "none";
-  if (!before) return "push";
 
-  // An unreadable file is one the shell has no opinion about, and "no opinion"
-  // must not read as "changed".
-  if (before.hash === null || after.hash === null) return "none";
+  const difference = changed(before, after);
 
-  return before.hash === after.hash ? "none" : "push";
+  // An archival save is paired with nothing and replaces nothing, so "cannot
+  // tell" costs a duplicate at worst and is worth erring towards. Declining the
+  // one case it can tell -- bytes the emulator demonstrably left alone -- is
+  // what keeps a conflicted game from filing another archive every launch, with
+  // no slot to rotate them and nothing to reap them.
+  if (allowance === "conflict") return difference === false ? "none" : "archive";
+
+  // The slot is shared with the browser client, and a version other devices
+  // sync from is not one to mint on a guess.
+  return difference === true ? "push" : "none";
+}
+
+/**
+ * Whether the file the emulator left differs from the one it started with.
+ *
+ * Three answers rather than two. Null is "cannot tell", which the two callers
+ * above resolve in opposite directions, because what an unnecessary push costs
+ * and what an unnecessary archive costs are not the same thing.
+ */
+function changed(before: SaveStamp | null, after: SaveStamp): boolean | null {
+  if (!before) return true;
+  if (before.hash === null || after.hash === null) return null;
+  return before.hash !== after.hash;
 }
 
 /**
