@@ -20,6 +20,7 @@ import { type Session } from "electron";
 import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { type DesktopConfig, type SaveSyncOutcome } from "../../shared/types.ts";
+import { isSignedOut } from "../auth/status.ts";
 import { downloadFromServer } from "../rom-cache.ts";
 import { resolveDownloadUrl } from "../safety.ts";
 import { ensureDeviceId, forgetDeviceId } from "./device.ts";
@@ -180,6 +181,11 @@ async function upload(options: {
   });
   if (!response) return { kind: "failed", detail: "no answer from the server" };
   if (response.status === 409) return { kind: "conflict" };
+  // Named, because it is the one upload failure with a cause a reader can act
+  // on. The save stays on disk and the next launch of this game offers it again.
+  if (isSignedOut(response.status)) {
+    return { kind: "failed", detail: "signed out of RomM" };
+  }
   if (response.status >= 300) {
     return { kind: "failed", detail: `server returned ${response.status}` };
   }

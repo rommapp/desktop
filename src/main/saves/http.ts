@@ -11,6 +11,7 @@
 // is to leave the local file alone.
 
 import { type Session } from "electron";
+import { noteSignedOut } from "../auth/recover.ts";
 import { resolveDownloadUrl } from "../safety.ts";
 
 /** The cookie the server's CSRF middleware double-submits against. */
@@ -147,6 +148,8 @@ export async function apiRequest({
         ...(method === "POST" && token ? { [CSRF_HEADER]: token } : {}),
       },
     });
+
+    noteSignedOut(serverUrl, response.status);
 
     let parsed: unknown = null;
     try {
