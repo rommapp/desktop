@@ -19,6 +19,7 @@ import {
   planCoreInstall,
 } from "./emulator/buildbot.ts";
 import { installCore } from "./emulator/install.ts";
+import { createLineBudget, createLineSink } from "./emulator/output.ts";
 import { offerStandaloneInstall } from "./emulator/standalone-install.ts";
 import { syncPlatformFirmware } from "./firmware/sync.ts";
 import { RELEASE_SOURCES } from "./emulator/standalone-release.ts";
@@ -98,6 +99,26 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
     const timer = setTimeout(done, ms);
     signal.addEventListener("abort", done, { once: true });
   });
+}
+
+/** Repeat a launch's own output into the shell's log, so the emulator's account
+ *  of the run sits beside the shell's. */
+function captureLaunchOutput(child: ChildProcess, romId: number): void {
+  // One budget for the launch, spent by both streams: the cap is a promise
+  // about the run, not about each pipe.
+  const budget = createLineBudget();
+  // A sink per stream, because the two arrive independently: one held tail
+  // shared between them would splice half a line onto half of another.
+  for (const stream of [child.stdout, child.stderr]) {
+    if (!stream) continue;
+    const sink = createLineSink(
+      (line) => console.info(`[emulator ${romId}] ${line}`),
+      budget,
+    );
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk: string) => sink.write(chunk));
+    stream.once("end", () => sink.end());
+  }
 }
 
 /** A launch that was cancelled should stop, not carry on to the emulator. */
@@ -772,14 +793,27 @@ export class Launcher {
       // user's, so a generated config would be a file nothing reads. The
       // interval is asked for only where the shell is syncing this launch's
       // saves; the display mode is the page's answer either way.
+      const askedAutosave = savePaths && syncsSaves ? autosave : 0;
       const launchConfig =
         config.saveDataPath &&
         usesBuiltInRetroArch(config, request.platformSlug)
           ? await writeLaunchConfig(config.saveDataPath, request.romId, {
-              autosaveSeconds: savePaths && syncsSaves ? autosave : 0,
+              autosaveSeconds: askedAutosave,
               fullscreen: request.fullscreen,
+              // The flags name the files and the settings pin the directory:
+              // a redirect in the user's own config beats the flags, and this
+              // config beats the redirect.
+              saveDir: savePaths?.saveDir,
+              stateDir: savePaths?.stateDir,
             })
           : null;
+      // The interval is the one thing the arguments below do not show: they
+      // name the generated config, not what is in it.
+      console.info(
+        launchConfig
+          ? `[launch] rom ${request.romId}: asked for a save every ${askedAutosave}s in ${launchConfig}`
+          : `[launch] rom ${request.romId}: no generated config, the emulator keeps its own settings`,
+      );
 
       // Resolved again, and this time strictly: the validation above may have
       // assumed a core that had yet to be downloaded, and nothing is spawned
@@ -799,13 +833,23 @@ export class Launcher {
       // would still start after the cancel was reported.
       throwIfCancelled(controller.signal);
 
+      // The whole of what the emulator was told, so a run that syncs nothing
+      // can be read back rather than reconstructed: --appendconfig names the
+      // generated config, -s names the file the push reads afterwards.
+      console.info(
+        `[launch] rom ${request.romId}: ${launch.command} ${launch.args.join(" ")}`,
+      );
+
       // argv form, never a shell string, so a path containing shell
       // metacharacters stays a single argument.
       const child = spawn(launch.command, launch.args, {
-        stdio: "ignore",
+        stdio: config.logEmulatorOutput ? ["ignore", "pipe", "pipe"] : "ignore",
         windowsHide: false,
       });
       entry.child = child;
+      if (config.logEmulatorOutput) {
+        captureLaunchOutput(child, request.romId);
+      }
 
       // Offers what the emulator writes while it is still running, so the launch
       // does not rest on the single reading taken after it exits. Started from
@@ -991,6 +1035,9 @@ export class Launcher {
           deviceId: push.deviceId,
           before: push.watch?.baseline() ?? push.before,
           allowance: push.allowance,
+          // The run's own version, so the last save of a launch lands on the
+          // one the watcher opened rather than beside it.
+          version: push.watch?.version() ?? null,
         });
         if (pushed) {
           this.emit({ romId, status: "sync", sync: pushed });

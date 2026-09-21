@@ -52,9 +52,9 @@ npm run dev
 On first launch it asks for your server address, then loads it. Log in exactly
 as you would in a browser; the shell holds no credentials of its own.
 
-| Flag      | Effect                                                           |
-| --------- | ---------------------------------------------------------------- |
-| `--setup` | Reopen the server-address window to correct a mistyped address   |
+| Flag      | Effect                                                              |
+| --------- | ------------------------------------------------------------------- |
+| `--setup` | Reopen the server-address window to correct a mistyped address      |
 | `--spike` | Inject a test panel, for a server without the RomM-side integration |
 
 `--spike` is throwaway scaffolding carrying a hardcoded slice of RomM's
@@ -128,29 +128,30 @@ Config lives in `desktop-config.json` in Electron's `userData` directory:
 It is re-read whenever it changes on disk, so an edit takes effect on the next
 launch attempt without a restart.
 
-| Key                      | Default            | What it does                                                            |
-| ------------------------ | ------------------ | ----------------------------------------------------------------------- |
-| `retroarchPath`          | autodetected       | RetroArch executable, for an install somewhere unusual                  |
-| `retroarchCoresPath`     | derived from above | Cores directory                                                         |
-| `preferredCores`         | none               | [Your core order per platform](#choosing-a-core)                        |
-| `autoInstallCores`       | `true`             | [Fetch a missing core](#missing-cores) from the libretro buildbot       |
-| `offerRetroArchInstall`  | `true`             | Offer RetroArch's installer when nothing is installed                   |
-| `useDetectedEmulators`   | `true`             | Use [detected](#detected-standalone-emulators) PCSX2, Dolphin, RPCS3, Cemu |
-| `offerStandaloneInstall` | `true`             | Offer to fetch those when they are missing                              |
-| `emulators`              | none               | [Your own platform-to-command rows](#your-own-emulator-rows)            |
-| `emulatorsBasePath`      | none               | Prefix for relative `command` values                                    |
-| `libraryPath`            | none               | [Library root](#local-library), to launch in place instead of downloading |
-| `cachePath`              | `rom-cache`        | [ROM cache](#rom-cache) directory                                       |
-| `cacheLimitBytes`        | 20 GB              | Cache size before LRU eviction                                          |
-| `saveDataPath`           | `save-data`        | [Save and state](#save-data) directories                                |
-| `syncSaves`              | `true`             | [Move saves to and from RomM](#saves-synced-with-romm) around a launch  |
-| `retroarchAutosaveSeconds` | `10`             | How often RetroArch is asked to write the save, at least 6s; `0` leaves it alone |
-| `trackPlaySessions`      | `true`             | [Report how long you played](#play-sessions-reported-to-romm) to RomM   |
-| `minPlaySessionSeconds`  | `60`               | Shortest run that counts as having played something                     |
-| `deviceId`               | set by the shell   | This machine's row in RomM's device list                                |
-| `useRommFirmware`        | `true`             | [Mirror RomM's firmware library](#firmware-from-romm)                   |
-| `biosPath`               | `bios`             | Where that mirror lives                                                 |
-| `fullscreen`             | `false`            | Open the main window with no title bar, for a TV or cabinet             |
+| Key                        | Default            | What it does                                                                     |
+| -------------------------- | ------------------ | -------------------------------------------------------------------------------- |
+| `retroarchPath`            | autodetected       | RetroArch executable, for an install somewhere unusual                           |
+| `retroarchCoresPath`       | derived from above | Cores directory                                                                  |
+| `preferredCores`           | none               | [Your core order per platform](#choosing-a-core)                                 |
+| `autoInstallCores`         | `true`             | [Fetch a missing core](#missing-cores) from the libretro buildbot                |
+| `offerRetroArchInstall`    | `true`             | Offer RetroArch's installer when nothing is installed                            |
+| `useDetectedEmulators`     | `true`             | Use [detected](#detected-standalone-emulators) PCSX2, Dolphin, RPCS3, Cemu       |
+| `offerStandaloneInstall`   | `true`             | Offer to fetch those when they are missing                                       |
+| `emulators`                | none               | [Your own platform-to-command rows](#your-own-emulator-rows)                     |
+| `emulatorsBasePath`        | none               | Prefix for relative `command` values                                             |
+| `libraryPath`              | none               | [Library root](#local-library), to launch in place instead of downloading        |
+| `cachePath`                | `rom-cache`        | [ROM cache](#rom-cache) directory                                                |
+| `cacheLimitBytes`          | 20 GB              | Cache size before LRU eviction                                                   |
+| `saveDataPath`             | `save-data`        | [Save and state](#save-data) directories                                         |
+| `syncSaves`                | `true`             | [Move saves to and from RomM](#saves-synced-with-romm) around a launch           |
+| `retroarchAutosaveSeconds` | `10`               | How often RetroArch is asked to write the save, at least 6s; `0` leaves it alone |
+| `logEmulatorOutput`        | `false`            | [Repeat the emulator's own log](#when-a-save-does-not-sync) in the shell's       |
+| `trackPlaySessions`        | `true`             | [Report how long you played](#play-sessions-reported-to-romm) to RomM            |
+| `minPlaySessionSeconds`    | `60`               | Shortest run that counts as having played something                              |
+| `deviceId`                 | set by the shell   | This machine's row in RomM's device list                                         |
+| `useRommFirmware`          | `true`             | [Mirror RomM's firmware library](#firmware-from-romm)                            |
+| `biosPath`                 | `bios`             | Where that mirror lives                                                          |
+| `fullscreen`               | `false`            | Open the main window with no title bar, for a TV or cabinet                      |
 
 The three unset paths default to directories beside the config file.
 `cachePath`, `saveDataPath` and `biosPath` must not contain one another -- the
@@ -296,16 +297,16 @@ entry of its own.
 Tokens are substituted per argv entry, so no shell is involved and paths
 containing spaces need no quoting:
 
-| Token          | Expands to                                                           |
-| -------------- | --------------------------------------------------------------------- |
-| `{rom}`        | The cached, or in-place, ROM path                                    |
-| `{core}`       | The resolved libretro core path                                      |
-| `{saves}`      | This game's [save directory](#save-data)                             |
-| `{states}`     | This game's save-state directory                                     |
-| `{savefile}`   | The save file inside `{saves}`                                       |
-| `{statefile}`  | The state file inside `{states}`                                     |
-| `{bios}`       | This platform's [firmware directory](#firmware-from-romm)            |
-| `{biosconfig}` | A generated RetroArch config naming `system_directory`               |
+| Token          | Expands to                                                |
+| -------------- | --------------------------------------------------------- |
+| `{rom}`        | The cached, or in-place, ROM path                         |
+| `{core}`       | The resolved libretro core path                           |
+| `{saves}`      | This game's [save directory](#save-data)                  |
+| `{states}`     | This game's save-state directory                          |
+| `{savefile}`   | The save file inside `{saves}`                            |
+| `{statefile}`  | The state file inside `{states}`                          |
+| `{bios}`       | This platform's [firmware directory](#firmware-from-romm) |
+| `{biosconfig}` | A generated RetroArch config naming `system_directory`    |
 
 A token that cannot be resolved fails the launch with an explanation rather than
 passing an empty argument. An optional `playlist` key says whether the emulator
@@ -480,8 +481,49 @@ also passes its full-screen answer per launch, which travels in the same file,
 since RetroArch has a flag for starting fullscreen and none for the opposite. A
 configured emulator is handed neither: its arguments and its config are yours.
 
+The same config pins where the save goes. `-s` and `-S` name the files, which is
+what the shell wants, but they are deprecated and lose to your own settings: a
+`savefile_directory`, a sorting option or "save files in content directory"
+redirects the write while the read still comes from the named file, so a game
+loads the shell's save and writes its own somewhere else, and every launch after
+that reports the save as unchanged. So the generated config sets
+`savefile_directory` and `savestate_directory` to this game's own directories and
+turns every redirect off them off. RetroArch still names the file itself, from
+the content, and when that name differs from the one the shell pulled into place
+the log says which file the emulator wrote instead.
+
+A launch leaves one save in the slot, not one per interval. The autosave slot is
+a history, and every upload into it opens a new version, so the first save a run
+sends opens the version and the rest of the run writes over that one, the way a
+browser session updates the save it opened. Delete it mid-run, or let the slot
+rotate past it, and the next save opens another. The save the launch started
+from is never written over: it stays in the slot's history, which is what a
+second device's progress is recovered from.
+
+Deleting a save in RomM deletes it here too. The server remembers which slots
+were emptied, so a negotiation can tell a save nobody ever uploaded from one its
+owner removed, and the next launch drops the local copy instead of offering it
+back. A save written after the deletion is new progress and is still sent.
+
 Nothing here can fail a launch. One limit remains: save states are not synced at
 all, since RomM's API has no slot or device tracking for them.
+
+### When a save does not sync
+
+Every decision a launch makes about saves is logged. A run says what the server
+answered and what it is allowed to do, whether it is watching the file and how
+often, and the outcome of each transfer: bytes sent to the slot, an archival
+save filed, a refusal with the server's reason, or nothing to send with the
+file's size and the time it was last written. A save that never arrives is one
+of those lines.
+
+What the shell cannot see is the emulator's own reasoning, and "nothing to send,
+the save is unchanged" is usually about that: the file the shell handed over
+came back untouched, so the emulator wrote its save somewhere else or did not
+write one. Set `logEmulatorOutput` to `true` and the emulator's output is
+repeated in the shell's log, capped per launch, with the built-in RetroArch
+launch asked to be verbose. RetroArch then names the configs it appended and the
+save file it resolved, which is what settles where a save went.
 
 ### Play sessions reported to RomM
 

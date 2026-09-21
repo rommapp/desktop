@@ -13,12 +13,7 @@
 import { type Session } from "electron";
 import { noteSignedOut } from "../auth/recover.ts";
 import { resolveDownloadUrl } from "../safety.ts";
-
-/** The cookie the server's CSRF middleware double-submits against. */
-const CSRF_COOKIE = "romm_csrftoken";
-
-/** The header it reads that value back from. */
-const CSRF_HEADER = "x-csrftoken";
+import { CSRF_COOKIE, csrfHeaders } from "./csrf.ts";
 
 /**
  * A path that answers without authentication and warms the CSRF cookie.
@@ -41,7 +36,7 @@ export interface ApiRequest {
   session: Session;
   /** Path and query, starting at `/api/`. */
   path: string;
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PUT";
   body?: BodyInit;
   headers?: Record<string, string>;
   signal: AbortSignal;
@@ -141,12 +136,7 @@ export async function apiRequest({
       redirect: "error",
       signal,
       body,
-      headers: {
-        ...headers,
-        // Only on a write: a GET is a safe method and the middleware never asks
-        // it for one.
-        ...(method === "POST" && token ? { [CSRF_HEADER]: token } : {}),
-      },
+      headers: { ...headers, ...csrfHeaders(method, token) },
     });
 
     noteSignedOut(serverUrl, response.status);

@@ -29,7 +29,8 @@ export function randomBoundary(): string {
 }
 
 /**
- * A single-file multipart body for `POST /api/saves`.
+ * A single-file multipart body for `POST /api/saves` and the `PUT` that writes
+ * over a version it opened.
  *
  * The field name is `saveFile`, which is what RomM's endpoint declares. No
  * escaping is applied to the filename: every name reaching here has already been

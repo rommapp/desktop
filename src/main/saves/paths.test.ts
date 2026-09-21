@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { basename, join, sep } from "node:path";
 import { test } from "node:test";
-import { resolveSavePaths, saveBaseName } from "./paths.ts";
+import { newerSibling, resolveSavePaths, saveBaseName } from "./paths.ts";
 
 const ROOT = join("/var", "save-data");
 
@@ -59,4 +59,43 @@ test("resolveSavePaths keeps a hostile filename inside the root", () => {
   const paths = resolveSavePaths(ROOT, 1, "../../../../etc/passwd");
   assert.ok(paths);
   assert.ok(paths.saveFile.startsWith(join(ROOT, "1") + sep));
+});
+
+test("a save written after ours, under another name, is named", () => {
+  // The emulator names the save, not the shell: a launch pins the directory but
+  // a name derived from the content can still differ, and then the shell's file
+  // sits untouched beside the one the game is really writing.
+  const ours = { name: "Game.srm", modifiedAt: 1_000 };
+  const beside = [
+    ours,
+    { name: "Game (USA).srm", modifiedAt: 2_000 },
+    { name: "Game (Europe).srm", modifiedAt: 1_500 },
+  ];
+
+  assert.equal(newerSibling(ours, beside), "Game (USA).srm");
+});
+
+test("nothing is named when our own save is the newest, or the only one", () => {
+  const ours = { name: "Game.srm", modifiedAt: 3_000 };
+
+  assert.equal(newerSibling(ours, [ours]), null);
+  assert.equal(newerSibling(ours, []), null);
+  assert.equal(
+    newerSibling(ours, [ours, { name: "Game (USA).srm", modifiedAt: 2_999 }]),
+    null,
+  );
+});
+
+test("only saves count, not the state and temp files beside them", () => {
+  // A launch writes states into their own directory, but a download in progress
+  // and a stray file are not saves the emulator wrote.
+  const ours = { name: "Game.srm", modifiedAt: 1_000 };
+  const beside = [
+    ours,
+    { name: ".Game.srm.part", modifiedAt: 5_000 },
+    { name: "Game.state", modifiedAt: 5_000 },
+    { name: "Game.SRM.backup", modifiedAt: 5_000 },
+  ];
+
+  assert.equal(newerSibling(ours, beside), null);
 });

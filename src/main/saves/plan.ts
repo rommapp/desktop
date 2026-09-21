@@ -47,7 +47,7 @@ export interface LocalSave {
 
 /** One operation from the negotiate response, for the ROM being launched. */
 export interface SyncOperation {
-  action: "upload" | "download" | "conflict" | "no_op";
+  action: "upload" | "download" | "conflict" | "no_op" | "delete";
   rom_id: number;
   save_id: number | null;
   file_name: string;
@@ -69,6 +69,9 @@ export type PushAction = "none" | "push" | "archive";
 export interface PullPlan {
   /** Download the server's save over the local one. */
   pull: boolean;
+  /** Delete the local save: the slot it came from was emptied on the server,
+   *  and holding on to it is how a deletion undoes itself. */
+  removeLocal: boolean;
   /** Send the local bytes up as a null-slot save before that happens. */
   archiveFirst: boolean;
   allowance: Allowance;
@@ -105,7 +108,8 @@ export function buildNegotiatePayload(romId: number, local: LocalSave | null) {
 }
 
 /**
- * Whether a body is the save row RomM answers an accepted upload with.
+ * The id of the save row RomM answers an accepted upload with, or null when the
+ * body is not one.
  *
  * A 2xx on its own is not proof a save landed. A proxy or a sign-in page can
  * produce one, and `apiRequest` reports a body it could not parse as null
@@ -114,13 +118,15 @@ export function buildNegotiatePayload(romId: number, local: LocalSave | null) {
  * strength of it, so anything that can forge an "ok" can cost the only copy of
  * a save. `POST /api/saves` answers with the save it stored, and a stored save
  * has an id.
+ *
+ * The id is the answer rather than a yes: a slotted upload opens a new version,
+ * and the rest of the run writes to that one instead of opening another.
  */
-export function storedSave(body: unknown): boolean {
-  return (
-    typeof body === "object" &&
-    body !== null &&
-    typeof (body as { id?: unknown }).id === "number"
-  );
+export function storedSave(body: unknown): number | null {
+  const id = (body as { id?: unknown } | null)?.id;
+  return typeof body === "object" && body !== null && typeof id === "number"
+    ? id
+    : null;
 }
 
 /**
@@ -166,6 +172,7 @@ function toOperation(raw: unknown): SyncOperation {
       action === "upload" ||
       action === "download" ||
       action === "conflict" ||
+      action === "delete" ||
       action === "no_op"
         ? action
         : "no_op",
@@ -194,7 +201,27 @@ export function planPull(
   op: SyncOperation | null,
   local: SaveStamp | null,
 ): PullPlan {
-  if (!op) return { pull: false, archiveFirst: false, allowance: "push" };
+  if (!op) {
+    return {
+      pull: false,
+      removeLocal: false,
+      archiveFirst: false,
+      allowance: "push",
+    };
+  }
+
+  // The server remembers this slot being emptied and the client still has what
+  // was in it. Keeping the file would offer it back on the next launch, which
+  // is the deletion undoing itself; what the emulator writes from here is new
+  // and still the shell's to send.
+  if (op.action === "delete") {
+    return {
+      pull: false,
+      removeLocal: true,
+      archiveFirst: false,
+      allowance: "push",
+    };
+  }
 
   // `upload` is the server saying it has nothing paired with this slot and
   // wants what the client holds. That is a request, not a permission, and the
@@ -225,7 +252,7 @@ export function planPull(
   const archiveFirst =
     pull && local !== null && local.hash !== op.server_content_hash;
 
-  return { pull, archiveFirst, allowance };
+  return { pull, removeLocal: false, archiveFirst, allowance };
 }
 
 /**
