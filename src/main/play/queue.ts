@@ -64,7 +64,10 @@ function isRecord(value: unknown): value is PlaySessionRecord {
     Number.isFinite(candidate.durationMs) &&
     candidate.durationMs >= 0 &&
     Number.isFinite(Date.parse(candidate.startTime)) &&
-    Number.isFinite(Date.parse(candidate.endTime))
+    Number.isFinite(Date.parse(candidate.endTime)) &&
+    // The server validates this for the whole request, so one row that does not
+    // move forward would take its batch of a hundred down with it.
+    Date.parse(candidate.endTime) > Date.parse(candidate.startTime)
   );
 }
 

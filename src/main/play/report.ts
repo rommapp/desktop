@@ -10,7 +10,7 @@ import { type DesktopConfig } from "../../shared/types.ts";
 import { playQueuePath } from "../config.ts";
 import { ensureDeviceId } from "../saves/device.ts";
 import { apiRequest } from "../saves/http.ts";
-import { claimQueue, dequeue, ownerOf, pruneQueue } from "./queue.ts";
+import { claimQueue, dequeue, pruneQueue } from "./queue.ts";
 import {
   forServer,
   inBatches,
@@ -48,10 +48,11 @@ async function flushPlaySessions(options: ReportOptions): Promise<void> {
   // Pruned here rather than only as sessions arrive, so the age bound holds for
   // a machine that has stopped being played on.
   const queued = forServer(await pruneQueue(playQueuePath()), serverUrl);
-  const owner = await ownerOf(playQueuePath(), serverUrl);
-  // Nothing waiting and the queue already has an owner: the ordinary case, and
-  // the one that has to stay free of a request.
-  if (queued.length === 0 && owner !== undefined) return;
+  // Asked even with nothing waiting, because a stale owner is worse than a
+  // spared request: a session recorded after an account change but before the
+  // next flush would read as the previous account's backlog and be discarded.
+  // Only a shell that records nothing has no owner worth keeping current.
+  if (queued.length === 0 && !config.trackPlaySessions) return;
 
   // Who the server thinks is asking. A session is filed against whoever is
   // signed in when it arrives, not whoever played it, so this is asked before

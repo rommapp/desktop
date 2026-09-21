@@ -108,18 +108,23 @@ async function openInitialWindow(): Promise<void> {
   // Setup stays windowed whatever the setting says: filling a screen to ask
   // for one address is hostile, and it is the one screen needing a keyboard.
   createSetupWindow((serverUrl) => {
-    const window = createMainWindow(serverUrl, config.fullscreen);
-    // Re-read rather than reuse: the config in hand predates the address just
-    // saved, and the offer is gated on that being set. This is the true first
-    // run, so it is the one time the offer matters most.
-    void loadConfig().then((saved) => {
+    void (async () => {
+      // Re-read rather than reuse: the config in hand predates the address just
+      // saved, and the offer is gated on that being set. This is the true first
+      // run, so it is the one time the offer matters most. Read before the
+      // window exists, not after: createMainWindow starts navigating
+      // immediately, and a local server can finish loading before an awaited
+      // read resolves, which would leave the listeners below with no load left
+      // to hear.
+      const saved = await loadConfig();
+      const window = createMainWindow(serverUrl, saved.fullscreen);
       offerEmulatorOnce(saved, window);
       // --setup on a shell that has been used before reaches here with a
       // backlog behind it. Safe whether or not the address just typed is the
       // same one: a session is only ever offered to the server it was played
       // against.
       reportBacklog(saved, window);
-    });
+    })();
   });
 }
 

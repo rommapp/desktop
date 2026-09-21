@@ -295,3 +295,22 @@ test("owners survive the writes that touch sessions", async () => {
   await dequeue(path, [record(1)]);
   assert.equal(await ownerOf(path, SERVER), 7, "dequeue keeps it");
 });
+
+test("a row the server would refuse whole never joins a batch", async () => {
+  const path = queueFile();
+  const backwards = {
+    ...record(1),
+    endTime: new Date(NOW - 120_000).toISOString(),
+  };
+  writeFileSync(
+    path,
+    JSON.stringify({ owners: {}, sessions: [backwards, record(2)] }),
+  );
+
+  // The server validates end_time > start_time for the request rather than the
+  // row, so one that does not move forward would take its whole batch with it.
+  assert.deepEqual(
+    (await readQueue(path)).map((entry) => entry.romId),
+    [2],
+  );
+});
