@@ -39,6 +39,8 @@ function isRecord(value: unknown): value is PlaySessionRecord {
   return (
     typeof candidate.romId === "number" &&
     Number.isInteger(candidate.romId) &&
+    typeof candidate.serverUrl === "string" &&
+    candidate.serverUrl.length > 0 &&
     (candidate.saveSlot === null || typeof candidate.saveSlot === "string") &&
     typeof candidate.startTime === "string" &&
     typeof candidate.endTime === "string" &&
@@ -78,6 +80,26 @@ async function writeQueue(
   const temp = `${path}.tmp`;
   await writeFile(temp, JSON.stringify(records, null, 2), "utf8");
   await rename(temp, path);
+}
+
+/**
+ * Drop everything the backlog has outgrown, and persist it.
+ *
+ * Called on delivery as well as on arrival, because `enqueue` is the only other
+ * place that prunes and a machine that has stopped being played on never
+ * reaches it. Without this the age bound would hold for a shell in use and not
+ * for the one it was written for.
+ */
+export function pruneQueue(
+  path: string,
+  now: number = Date.now(),
+): Promise<PlaySessionRecord[]> {
+  return inTurn(path, async () => {
+    const queued = await readQueue(path);
+    const kept = prune(queued, now);
+    if (kept.length !== queued.length) await writeQueue(path, kept);
+    return kept;
+  });
 }
 
 /** Drop what is past either bound, oldest first. */

@@ -11,8 +11,11 @@ import {
   MAX_QUEUED,
   MAX_QUEUED_AGE_MS,
   prune,
+  pruneQueue,
   readQueue,
 } from "./queue.ts";
+
+const SERVER = "https://romm.example.com";
 
 const NOW = Date.UTC(2026, 0, 2, 12, 0, 0);
 
@@ -20,10 +23,15 @@ function queueFile(): string {
   return join(mkdtempSync(join(tmpdir(), "romm-play-")), "play-sessions.json");
 }
 
-function record(romId: number, startedAt = NOW - 60_000): PlaySessionRecord {
+function record(
+  romId: number,
+  startedAt = NOW - 60_000,
+  serverUrl = SERVER,
+): PlaySessionRecord {
   return {
     romId,
     saveSlot: "autosave",
+    serverUrl,
     startTime: new Date(startedAt).toISOString(),
     endTime: new Date(startedAt + 60_000).toISOString(),
     durationMs: 60_000,
@@ -164,4 +172,45 @@ test("the file on disk is the records and nothing else", async () => {
   const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
   assert.ok(Array.isArray(parsed));
   assert.deepEqual(parsed, [record(1)]);
+});
+
+test("delivery prunes what the backlog has outgrown, and persists it", async () => {
+  const path = queueFile();
+  await enqueue(path, record(1, NOW - MAX_QUEUED_AGE_MS - 1000), NOW);
+  await enqueue(path, record(2, NOW - 1000), NOW);
+  // Nothing has been enqueued since, which is the case the age bound is for:
+  // a machine that has stopped being played on never reaches enqueue again.
+  const kept = await pruneQueue(path, NOW);
+
+  assert.deepEqual(
+    kept.map((entry) => entry.romId),
+    [2],
+  );
+  assert.deepEqual(
+    (await readQueue(path)).map((entry) => entry.romId),
+    [2],
+    "the removal is written, not just returned",
+  );
+});
+
+test("pruning a backlog with nothing to drop leaves the file alone", async () => {
+  const path = queueFile();
+  await enqueue(path, record(1), NOW);
+  const before = await readFile(path, "utf8");
+
+  assert.equal((await pruneQueue(path, NOW)).length, 1);
+  assert.equal(await readFile(path, "utf8"), before);
+});
+
+test("a queue for another server survives being pruned for this one", async () => {
+  const path = queueFile();
+  await enqueue(path, record(1, NOW - 1000, "https://other.example"), NOW);
+  await enqueue(path, record(2), NOW);
+
+  // Pruning is about age and size, not about whose server it is: repointing the
+  // shell must not quietly discard the backlog of the server left behind.
+  assert.deepEqual(
+    (await pruneQueue(path, NOW)).map((entry) => entry.serverUrl),
+    ["https://other.example", SERVER],
+  );
 });

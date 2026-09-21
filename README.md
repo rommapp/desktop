@@ -589,7 +589,15 @@ in front of it, and the backlog goes up with the next launch to finish rather
 than waiting for one per session. Delivery is therefore at least once, which is
 safe here because RomM identifies a session by device, game and start time and
 counts a resent one only once. The queue holds 500 sessions or 90 days, whichever
-comes first, dropping the oldest.
+comes first, dropping the oldest, and is trimmed both as sessions arrive and as
+they go out, so the age bound holds for a machine that has stopped being played
+on as well as for one in use.
+
+Each session records which server it was played against, and is only ever
+offered to that one. A rom id belongs to the server that issued it, so a backlog
+built up against one RomM would land on whatever games happen to hold those ids
+on another. Point the shell somewhere else and the old backlog waits rather than
+being misfiled; point it back and it goes up.
 
 A session played through a synced save rides along on the same call that closes
 the save sync, so RomM can say which play wrote the save it received. Everything
@@ -598,8 +606,12 @@ scope, a server that is down -- leaves the record queued; one about the payload
 itself does not, so a single bad row cannot block the sessions behind it forever.
 
 Like save sync, none of this can fail a launch, and the device it reports as is
-the same `deviceId` the saves sync under. Turning `trackPlaySessions` off stops
-sessions being recorded at all; anything already queued is still sent.
+the same `deviceId` the saves sync under. A machine that has not registered one
+still reports its sessions, unattributed, rather than holding them back.
+
+Turning `trackPlaySessions` off stops sessions being recorded at all. Anything
+already queued is still sent, since the setting is about what gets recorded and
+not about stranding what already was.
 
 ### Firmware from RomM
 

@@ -10,11 +10,18 @@
 // here -- what counts as a play session, how long it lasted, what the server is
 // sent -- can be tested without one.
 
-/** A launch being timed, from the moment the emulator was spawned. */
-export interface OpenPlaySession {
+/** What a launch is, for the purposes of being timed. */
+export interface PlaySessionSubject {
   romId: number;
   /** The save slot this launch played through, when it synced one. */
   saveSlot: string | null;
+  /** The server this was played against. A rom id means nothing without it, so
+   *  a session is never offered to a server other than the one it belongs to. */
+  serverUrl: string;
+}
+
+/** A launch being timed, from the moment the emulator was spawned. */
+export interface OpenPlaySession extends PlaySessionSubject {
   /** Wall clock at the spawn, which is what the server is told. */
   startedAt: number;
   /** Monotonic reading at the spawn, which is what the duration is measured
@@ -23,9 +30,7 @@ export interface OpenPlaySession {
 }
 
 /** One finished play session, as it is queued and as it is sent. */
-export interface PlaySessionRecord {
-  romId: number;
-  saveSlot: string | null;
+export interface PlaySessionRecord extends PlaySessionSubject {
   /** ISO 8601 in UTC. Also half of the identity the server dedupes on, so it is
    *  stored rather than recomputed: a retry has to carry the same value the
    *  first attempt did. */
@@ -64,13 +69,11 @@ export const DEFAULT_MINIMUM_PLAY_SECONDS = 60;
 const SERVER_RESOLUTION_MS = 1000;
 
 export function openPlaySession(
-  romId: number,
-  saveSlot: string | null,
+  subject: PlaySessionSubject,
   clocks: Clocks = systemClocks,
 ): OpenPlaySession {
   return {
-    romId,
-    saveSlot,
+    ...subject,
     startedAt: clocks.now(),
     startedTick: clocks.tick(),
   };
@@ -91,12 +94,18 @@ export function closePlaySession(
   minimumMs: number,
   clocks: Clocks = systemClocks,
 ): PlaySessionRecord | null {
-  const durationMs = Math.round(clocks.tick() - open.startedTick);
-  if (durationMs < Math.max(minimumMs, SERVER_RESOLUTION_MS)) return null;
+  // The floor is checked against the elapsed time itself, and the duration
+  // rounded down afterwards. Rounding first would let a run just short of the
+  // floor be rounded up past it, which is how "no sub-second run is recorded"
+  // stops being true at 999.6ms.
+  const elapsedMs = clocks.tick() - open.startedTick;
+  if (elapsedMs < Math.max(minimumMs, SERVER_RESOLUTION_MS)) return null;
+  const durationMs = Math.floor(elapsedMs);
 
   return {
     romId: open.romId,
     saveSlot: open.saveSlot,
+    serverUrl: open.serverUrl,
     startTime: new Date(open.startedAt).toISOString(),
     endTime: new Date(open.startedAt + durationMs).toISOString(),
     durationMs,
@@ -180,8 +189,25 @@ export function shouldRetry(status: number): boolean {
  * The server's own identity, minus the device and the user, which do not vary
  * within one machine's queue: it dedupes on (user, device, rom, start_time), so
  * matching on the same pair is what lets a record the server has already taken
- * be recognised here and dropped.
+ * be recognised here and dropped. The server is part of it because a rom id is
+ * only unique within one, and two servers can hand out the same one.
  */
 export function identityOf(record: PlaySessionRecord): string {
-  return `${record.romId}\u0000${record.startTime}`;
+  return [record.serverUrl, record.romId, record.startTime].join("\u0000");
+}
+
+/**
+ * The records belonging to one server.
+ *
+ * A rom id is the server's, not the shell's, so a backlog queued against one
+ * RomM must never be offered to another: the ids would land on whatever games
+ * happen to hold them there. A shell repointed at a different server therefore
+ * leaves the old backlog alone rather than misfiling it, and picks it up again
+ * if it is ever pointed back.
+ */
+export function forServer(
+  records: readonly PlaySessionRecord[],
+  serverUrl: string,
+): PlaySessionRecord[] {
+  return records.filter((record) => record.serverUrl === serverUrl);
 }

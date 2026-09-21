@@ -108,7 +108,14 @@ async function openInitialWindow(): Promise<void> {
     // Re-read rather than reuse: the config in hand predates the address just
     // saved, and the offer is gated on that being set. This is the true first
     // run, so it is the one time the offer matters most.
-    void loadConfig().then((saved) => offerEmulatorOnce(saved, window));
+    void loadConfig().then((saved) => {
+      offerEmulatorOnce(saved, window);
+      // --setup on a shell that has been used before reaches here with a
+      // backlog behind it. Safe whether or not the address just typed is the
+      // same one: a session is only ever offered to the server it was played
+      // against.
+      reportBacklog(saved, window);
+    });
   });
 }
 

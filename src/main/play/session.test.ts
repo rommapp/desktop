@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   closePlaySession,
+  forServer,
   identityOf,
   inBatches,
   minimumPlayMs,
@@ -12,6 +13,8 @@ import {
   type Clocks,
   type PlaySessionRecord,
 } from "./session.ts";
+
+const SERVER = "https://romm.example.com";
 
 /** Clocks a test drives by hand. `now` is wall clock, `tick` monotonic, and
  *  they are moved separately so a test can disagree the two on purpose. */
@@ -26,7 +29,10 @@ const START = Date.UTC(2026, 0, 2, 10, 0, 0);
 
 function played(elapsedMs: number, minimumMs = MINUTE) {
   const { clocks, state } = fakeClocks(START, 1000);
-  const open = openPlaySession(7, "autosave", clocks);
+  const open = openPlaySession(
+    { romId: 7, saveSlot: "autosave", serverUrl: SERVER },
+    clocks,
+  );
   state.tick += elapsedMs;
   state.now += elapsedMs;
   return closePlaySession(open, minimumMs, clocks);
@@ -37,6 +43,7 @@ test("a run past the floor becomes a record the server can take", () => {
   assert.ok(record);
   assert.equal(record.romId, 7);
   assert.equal(record.saveSlot, "autosave");
+  assert.equal(record.serverUrl, SERVER);
   assert.equal(record.durationMs, 90_000);
   assert.equal(record.startTime, "2026-01-02T10:00:00.000Z");
   assert.equal(record.endTime, "2026-01-02T10:01:30.000Z");
@@ -59,9 +66,24 @@ test("a floor below the server's resolution is still a whole second", () => {
   assert.ok(played(1000, 0));
 });
 
+test("a run just short of the floor is not rounded up past it", () => {
+  // The check is against the elapsed time, not a rounded copy of it: rounding
+  // first would make this 999.6ms run a recorded second.
+  assert.equal(played(999.6, 0), null);
+  assert.equal(played(59_999.6), null);
+  // And what does clear the floor is reported as whole milliseconds, rounded
+  // down, so the duration never claims time that did not pass.
+  const record = played(60_000.9);
+  assert.ok(record);
+  assert.equal(record.durationMs, 60_000);
+});
+
 test("the duration ignores a wall clock that moved during the game", () => {
   const { clocks, state } = fakeClocks(START, 1000);
-  const open = openPlaySession(7, null, clocks);
+  const open = openPlaySession(
+    { romId: 7, saveSlot: null, serverUrl: SERVER },
+    clocks,
+  );
   state.tick += 10 * MINUTE;
   // An NTP correction mid-game, backwards past the start.
   state.now -= 60 * MINUTE;
@@ -74,7 +96,10 @@ test("the duration ignores a wall clock that moved during the game", () => {
 
 test("a suspended machine is not billed for the time it slept", () => {
   const { clocks, state } = fakeClocks(START, 1000);
-  const open = openPlaySession(7, null, clocks);
+  const open = openPlaySession(
+    { romId: 7, saveSlot: null, serverUrl: SERVER },
+    clocks,
+  );
   // Eight hours of wall clock, two minutes of monotonic: the lid was shut.
   state.now += 8 * 60 * MINUTE;
   state.tick += 2 * MINUTE;
@@ -121,10 +146,15 @@ test("a refusal about the payload is final, one about the moment is not", () => 
   assert.equal(shouldRetry(422), false);
 });
 
-function record(romId: number, startTime: string): PlaySessionRecord {
+function record(
+  romId: number,
+  startTime: string,
+  serverUrl = SERVER,
+): PlaySessionRecord {
   return {
     romId,
     saveSlot: null,
+    serverUrl,
     startTime,
     endTime: "2026-01-02T10:01:00.000Z",
     durationMs: MINUTE,
@@ -144,6 +174,7 @@ test("a backlog is split into batches the server accepts", () => {
 });
 
 test("entries are spelled the way both ingest endpoints read them", () => {
+  // serverUrl is the shell's bookkeeping and has no place on the wire.
   assert.deepEqual(toEntries([record(7, "2026-01-02T10:00:00.000Z")]), [
     {
       rom_id: 7,
@@ -163,4 +194,21 @@ test("identity matches what the server dedupes on", () => {
     identityOf(one),
     identityOf(record(7, "2026-01-02T11:00:00.000Z")),
   );
+  // The same rom id on a different server is a different game.
+  assert.notEqual(
+    identityOf(one),
+    identityOf(record(7, one.startTime, "https://other.example.com")),
+  );
+});
+
+test("a backlog is never offered to a server it was not played against", () => {
+  const mine = record(7, "2026-01-02T10:00:00.000Z");
+  const theirs = record(7, "2026-01-02T10:00:00.000Z", "https://other.example");
+
+  assert.deepEqual(forServer([mine, theirs], SERVER), [mine]);
+  // Left where it is rather than dropped, so pointing back at it finds it.
+  assert.deepEqual(forServer([mine, theirs], "https://other.example"), [
+    theirs,
+  ]);
+  assert.deepEqual(forServer([mine, theirs], "https://third.example"), []);
 });

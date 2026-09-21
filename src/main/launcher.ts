@@ -770,16 +770,18 @@ export class Launcher {
 
       // Timed from the spawn rather than from the exit backwards, so a player
       // who alt-tabs away and comes back hours later is counted for the hours.
-      const play = playTrackingEnabled(config)
-        ? openPlaySession(
-            request.romId,
-            // The slot this launch plays through, which is what pairs the
-            // session with the save it wrote. Taken from whether the launch
-            // syncs at all rather than from what the pull did: a pull that found
-            // nothing to move still leaves the emulator writing to that slot.
-            syncsSaves ? AUTOSAVE_SLOT : null,
-          )
-        : null;
+      const play =
+        playTrackingEnabled(config) && config.serverUrl
+          ? openPlaySession({
+              romId: request.romId,
+              // The slot this launch plays through, which is what pairs the
+              // session with the save it wrote. Taken from whether the launch
+              // syncs at all rather than from what the pull did: a pull that
+              // found nothing to move still leaves the emulator writing to it.
+              saveSlot: syncsSaves ? AUTOSAVE_SLOT : null,
+              serverUrl: config.serverUrl,
+            })
+          : null;
 
       child.on("exit", (code) => {
         this.active.delete(request.romId);

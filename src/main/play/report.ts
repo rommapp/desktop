@@ -10,13 +10,8 @@ import { type DesktopConfig } from "../../shared/types.ts";
 import { playQueuePath } from "../config.ts";
 import { ensureDeviceId } from "../saves/device.ts";
 import { apiRequest } from "../saves/http.ts";
-import { dequeue, readQueue } from "./queue.ts";
-import {
-  inBatches,
-  playTrackingEnabled,
-  shouldRetry,
-  toEntries,
-} from "./session.ts";
+import { dequeue, pruneQueue } from "./queue.ts";
+import { forServer, inBatches, shouldRetry, toEntries } from "./session.ts";
 
 const INGEST_PATH = "/api/play-sessions";
 
@@ -35,11 +30,15 @@ interface ReportOptions {
  */
 async function flushPlaySessions(options: ReportOptions): Promise<void> {
   const { config, session, signal } = options;
-  // The second half is the narrowing the first cannot express; they ask the
-  // same question.
-  if (!playTrackingEnabled(config) || !config.serverUrl) return;
+  // Deliberately not gated on `trackPlaySessions`. That setting decides whether
+  // a launch is recorded; turning it off is not a reason to strand the sessions
+  // recorded while it was on, which the user was told would still be sent.
+  const { serverUrl } = config;
+  if (!serverUrl) return;
 
-  const queued = await readQueue(playQueuePath());
+  // Pruned here rather than only as sessions arrive, so the age bound holds for
+  // a machine that has stopped being played on.
+  const queued = forServer(await pruneQueue(playQueuePath()), serverUrl);
   if (queued.length === 0) return;
 
   // The same id the saves sync as, so RomM attributes both to one machine and
@@ -48,7 +47,7 @@ async function flushPlaySessions(options: ReportOptions): Promise<void> {
 
   for (const batch of inBatches(queued)) {
     const response = await apiRequest({
-      serverUrl: config.serverUrl,
+      serverUrl,
       session,
       path: INGEST_PATH,
       method: "POST",
