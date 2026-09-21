@@ -25,7 +25,6 @@ import {
   type SaveSyncOutcome,
 } from "../../shared/types.ts";
 import { isSignedOut } from "../auth/status.ts";
-import { toEntries, type PlaySessionRecord } from "../play/session.ts";
 import { downloadFromServer } from "../rom-cache.ts";
 import { resolveDownloadUrl } from "../safety.ts";
 import { ensureDeviceId, forgetDeviceId } from "./device.ts";
@@ -723,11 +722,13 @@ export function watchSave(options: WatchOptions): SaveWatch {
  * this client did, reported here rather than on each upload -- the upload
  * endpoint also has a counter, and feeding both would count every save twice.
  *
- * The play session that produced these saves rides along, because this endpoint
- * is the only one that pairs the two: a session ingested here is stored against
- * the sync session, so the server can say which play wrote the save it received.
- * Reported as taken only on a 2xx, which is what lets the caller drop it from
- * the queue; anything else leaves it there for the ordinary flush.
+ * Saves only. This endpoint can ingest the play session that produced them too,
+ * and storing it against the sync session is the only way that link is ever
+ * made, but nothing reads the link and it costs the record its own delivery:
+ * a session that rode along was hostage to a sync completing, while the queue
+ * behind `reportPlaySessions` is durable and covers a launch that synced
+ * nothing. So playtime goes to /api/play-sessions, always, and a sync session
+ * is about saves.
  */
 export async function completeSync(options: {
   serverUrl: string;
@@ -736,11 +737,9 @@ export async function completeSync(options: {
   completed: number;
   failed: number;
   signal: AbortSignal;
-  play?: readonly PlaySessionRecord[];
-}): Promise<{ playAccepted: boolean }> {
-  const { serverUrl, session, sessionId, completed, failed, signal, play } =
-    options;
-  const response = await apiRequest({
+}): Promise<void> {
+  const { serverUrl, session, sessionId, completed, failed, signal } = options;
+  await apiRequest({
     serverUrl,
     session,
     path: `/api/sync/sessions/${sessionId}/complete`,
@@ -749,12 +748,7 @@ export async function completeSync(options: {
     body: JSON.stringify({
       operations_completed: completed,
       operations_failed: failed,
-      ...(play?.length ? { play_sessions: toEntries(play) } : {}),
     }),
     signal,
   }).catch(() => undefined);
-
-  return {
-    playAccepted: Boolean(play?.length && response && response.status < 300),
-  };
 }

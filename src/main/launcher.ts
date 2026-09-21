@@ -39,7 +39,7 @@ import {
 } from "./emulator/resolve.ts";
 import { syncDiscSet } from "./discs/sync.ts";
 import { reportPlaySessions } from "./play/report.ts";
-import { dequeue, enqueue } from "./play/queue.ts";
+import { enqueue } from "./play/queue.ts";
 import {
   closePlaySession,
   minimumPlayMs,
@@ -961,13 +961,9 @@ export class Launcher {
     const run = (async () => {
       // Queued before a byte is sent. Everything below can fail, and a play
       // session that is only in memory when it does is one nobody can recover.
-      //
-      // That ordering is also what lets another exit, or a window load, flush
-      // this record before the sync below offers it. The server dedupes, so the
-      // session is still recorded exactly once; what is lost is only its
-      // sync_session_id, the link saying which sync it belonged to. Holding the
-      // record back until the sync finished would trade that link for the
-      // durability this ordering exists to give it, which is the worse bargain.
+      // The queue is also the only path it takes: the flush at the end of this
+      // is what delivers it, so a launch that synced nothing, or whose sync
+      // never closed, still reports the time it was played for.
       if (played) {
         await enqueue(playQueuePath(), played).catch((error: unknown) => {
           // The queue is what makes this durable, so a write that fails leaves
@@ -977,8 +973,6 @@ export class Launcher {
           console.error("[play] could not queue a session", error);
         });
       }
-
-      let playDelivered = false;
 
       if (push) {
         // Stopped before the last reading is taken: otherwise its next tick and
@@ -1011,29 +1005,21 @@ export class Launcher {
           (outcome): outcome is SaveSyncOutcome => outcome !== null,
         );
         if (serverUrl) {
-          // The play session goes with it, which is the only way it can be
-          // stored against the saves this launch moved.
-          const { playAccepted } = await completeSync({
+          await completeSync({
             serverUrl,
             session,
             sessionId: push.sessionId,
             completed: outcomes.filter((o) => o.action !== "failed").length,
             failed: outcomes.filter((o) => o.action === "failed").length,
             signal,
-            play: played ? [played] : undefined,
           });
-          playDelivered = playAccepted;
         }
       }
 
-      if (playDelivered && played) {
-        await dequeue(playQueuePath(), [played]).catch(() => undefined);
-      }
-
-      // Whatever is still queued, this launch's session included when it did not
-      // ride along above. An exit is the moment the shell most recently had a
-      // server in front of it, so a backlog from a journey with no network is
-      // cleared here rather than waiting for a launch that thinks to ask.
+      // Whatever is queued, this launch's own session included. An exit is the
+      // moment the shell most recently had a server in front of it, so a
+      // backlog from a journey with no network is cleared here rather than
+      // waiting for a launch that thinks to ask.
       await reportPlaySessions({ config, session, signal });
     })().catch(() => undefined);
 
