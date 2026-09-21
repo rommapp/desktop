@@ -33,6 +33,7 @@ import {
   emulatorLabel,
   emulatorReadsPlaylist,
   emulatorUsesSaveFile,
+  emulatorUsesStateDir,
   findPreferredCores,
   hasPlatformSpecificEmulator,
   resolveLaunch,
@@ -50,7 +51,14 @@ import {
 } from "./play/session.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
-import { resolveSavePaths } from "./saves/paths.ts";
+import { resolveSavePaths, saveBaseName } from "./saves/paths.ts";
+import { hostFacts } from "./saves/device.ts";
+import {
+  readStateDir,
+  stateSyncEnabled,
+  type StateEntry,
+} from "./saves/states.ts";
+import { pushStates } from "./saves/state-sync.ts";
 import {
   completeSync,
   pullSave,
@@ -712,6 +720,18 @@ export class Launcher {
         await mkdir(savePaths.stateDir, { recursive: true });
       }
 
+      // What the state directory held before the emulator touched it, which is
+      // the only thing that tells a state this run wrote from one sitting
+      // there since March. Read whatever the emulator turns out to do, because
+      // the alternative is deciding after the fact what was already there.
+      const syncsStates =
+        stateSyncEnabled(config) &&
+        emulatorUsesStateDir(config, request.platformSlug);
+      const statesBefore =
+        savePaths && syncsStates
+          ? await readStateDir(savePaths.stateDir)
+          : null;
+
       // Blocking, unlike the push at the other end of the launch: what the
       // emulator boots with has to be settled before it boots, and a save
       // written underneath a running emulator is a save nobody has.
@@ -946,6 +966,15 @@ export class Launcher {
           signal: controller.signal,
           played,
           push: pushes,
+          states:
+            savePaths && statesBefore
+              ? {
+                  stateDir: savePaths.stateDir,
+                  base: saveBaseName(request.fileName),
+                  emulator: launch.core ?? launch.label,
+                  before: statesBefore,
+                }
+              : null,
         });
       });
 
@@ -998,8 +1027,17 @@ export class Launcher {
       /** The watcher this launch ran, holding what it already sent. */
       watch: SaveWatch | null;
     } | null;
+    /** Absent when this launch does not mirror its states. */
+    states: {
+      stateDir: string;
+      base: string;
+      /** What played it, for the directory RomM files these under. */
+      emulator: string | null;
+      /** The directory as it was before the emulator started. */
+      before: readonly StateEntry[];
+    } | null;
   }): void {
-    const { config, session, romId, signal, played, push } = options;
+    const { config, session, romId, signal, played, push, states } = options;
     const serverUrl = config.serverUrl;
 
     const run = (async () => {
@@ -1061,6 +1099,23 @@ export class Launcher {
             signal,
           });
         }
+      }
+
+      // After the save, which is the one the player would miss. A state is a
+      // convenience and a save is the game, so a slow pile of states does not
+      // get to sit in front of it.
+      if (states) {
+        await pushStates({
+          config,
+          session,
+          romId,
+          signal,
+          stateDir: states.stateDir,
+          base: states.base,
+          host: hostFacts().hostname,
+          emulator: states.emulator,
+          before: states.before,
+        }).catch(() => undefined);
       }
 
       // Whatever is queued, this launch's own session included. An exit is the

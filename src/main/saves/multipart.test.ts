@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { randomBoundary, saveUploadBody } from "./multipart.ts";
+import {
+  randomBoundary,
+  saveUploadBody,
+  stateUploadBody,
+} from "./multipart.ts";
 
 /** Parse a body back the way a server would, using the platform's own parser
  *  rather than this module's idea of what it wrote. */
@@ -57,4 +61,36 @@ test("the boundary is fresh and within the length the spec allows", () => {
   const first = randomBoundary();
   assert.match(first, /^[0-9a-f]{32}$/);
   assert.notEqual(first, randomBoundary());
+});
+
+test("a state goes up with the picture the emulator took beside it", async () => {
+  const state = new Uint8Array([1, 2, 3]);
+  const picture = new Uint8Array([137, 80, 78, 71]);
+  const form = await parse(
+    stateUploadBody(
+      "Game [pc slot 1].state",
+      state,
+      { fileName: "Game [pc slot 1].state.png", bytes: picture },
+      "test-boundary",
+    ),
+  );
+
+  const part = form.get("stateFile");
+  const shot = form.get("screenshotFile");
+  assert.ok(part instanceof File);
+  assert.ok(shot instanceof File);
+  assert.deepEqual(new Uint8Array(await part.arrayBuffer()), state);
+  assert.deepEqual(new Uint8Array(await shot.arrayBuffer()), picture);
+});
+
+test("a state with no picture sends one field, not an empty second", async () => {
+  // RetroArch only writes thumbnails when they are switched on, and a blank
+  // screenshotFile is not the same as leaving it out: the endpoint would take
+  // the empty part as a picture and file it.
+  const form = await parse(
+    stateUploadBody("Game [pc slot 1].state", new Uint8Array([1]), null, "b"),
+  );
+
+  assert.ok(form.get("stateFile") instanceof File);
+  assert.equal(form.get("screenshotFile"), null);
 });

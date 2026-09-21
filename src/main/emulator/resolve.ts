@@ -47,6 +47,9 @@ export interface ResolvedLaunch {
   command: string;
   args: string[];
   label: string;
+  /** The libretro core this launch runs, when it runs one. Null for a
+   *  standalone emulator, which has no core to name. */
+  core: string | null;
 }
 
 /**
@@ -245,8 +248,8 @@ export function usesBuiltInRetroArch(
  * passes -s rather than setting savefile_directory. Syncing a "{saves}" mapping
  * would pull into a name the emulator may not read and offer RomM a file it may
  * never have written. A user who wants sync on such a mapping names
- * "{savefile}" and gets it. The state tokens are not consulted either, because
- * save states are not synced.
+ * "{savefile}" and gets it. The state tokens are their own question, answered
+ * by emulatorUsesStateDir.
  */
 export function emulatorUsesSaveFile(
   config: DesktopConfig,
@@ -257,6 +260,29 @@ export function emulatorUsesSaveFile(
   // passes -s, naming the exact file.
   if (!mapping) return true;
   return mapping.args.some((arg) => arg.includes("{savefile}"));
+}
+
+/**
+ * Whether this platform's launch will write its savestates where the shell can
+ * find them.
+ *
+ * The directory is enough here, unlike the save file above, because the state
+ * mirror only ever reads it: the directory is this ROM's own, so everything in
+ * it is a state of this game, and the shell never has to predict the name the
+ * emulator will choose. A mapping that names neither state token keeps its
+ * states wherever the emulator puts them, and there is nothing to mirror.
+ */
+export function emulatorUsesStateDir(
+  config: DesktopConfig,
+  platformSlug: string,
+): boolean {
+  const mapping = findMapping(config, platformSlug);
+  // The built-in RetroArch path, whose generated config pins
+  // savestate_directory and turns the sorting options off.
+  if (!mapping) return true;
+  return mapping.args.some(
+    (arg) => arg.includes("{states}") || arg.includes("{statefile}"),
+  );
 }
 
 /** What to call the emulator this platform would use, before a launch has
@@ -512,6 +538,7 @@ export function resolveLaunch({
         biosPaths,
       }),
       label: mapping.label ?? mapping.command,
+      core: core?.name ?? null,
     };
   }
 
@@ -577,5 +604,6 @@ export function resolveLaunch({
       romPath,
     ],
     label: `RetroArch (${core.name})`,
+    core: core.name,
   };
 }
