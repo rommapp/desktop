@@ -314,3 +314,21 @@ test("a row the server would refuse whole never joins a batch", async () => {
     [2],
   );
 });
+
+test("the cap drops the oldest by when it was played, not by when it landed", async () => {
+  // Two games at once exit in whichever order they are quit, so a long session
+  // started early can be appended after a short one started later. Position is
+  // not age, and the age bound above already judges by startTime.
+  const started = (at: number) => record(at, NOW - at * 1000);
+  const shuffled = [
+    ...Array.from({ length: MAX_QUEUED }, (_, at) => started(at + 2)),
+    started(1000), // oldest by startTime, but the last to be enqueued
+  ];
+
+  const kept = prune(shuffled, NOW);
+  assert.equal(kept.length, MAX_QUEUED);
+  assert.ok(
+    !kept.some((entry) => entry.romId === 1000),
+    "the session that started first is the one dropped",
+  );
+});

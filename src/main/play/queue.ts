@@ -181,7 +181,15 @@ export function pruneQueue(
   });
 }
 
-/** Drop what is past either bound, oldest first. */
+/**
+ * Drop what is past either bound, oldest first.
+ *
+ * Both bounds judge age by `startTime`, which is not the order the records sit
+ * in: they are appended as emulators exit, and two games running at once exit in
+ * whichever order they are quit. A long session started this morning can
+ * therefore sit behind a short one started this afternoon, so the cap sorts
+ * before it slices rather than trusting position for age.
+ */
 export function prune(
   records: readonly PlaySessionRecord[],
   now: number,
@@ -189,9 +197,11 @@ export function prune(
   const fresh = records.filter(
     (record) => now - Date.parse(record.startTime) <= MAX_QUEUED_AGE_MS,
   );
-  return fresh.length > MAX_QUEUED
-    ? fresh.slice(fresh.length - MAX_QUEUED)
-    : fresh;
+  if (fresh.length <= MAX_QUEUED) return fresh;
+  const byStart = [...fresh].sort(
+    (a, b) => Date.parse(a.startTime) - Date.parse(b.startTime),
+  );
+  return byStart.slice(byStart.length - MAX_QUEUED);
 }
 
 /**
