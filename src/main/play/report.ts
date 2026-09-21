@@ -57,6 +57,13 @@ async function flushPlaySessions(options: ReportOptions): Promise<void> {
   // Who the server thinks is asking. A session is filed against whoever is
   // signed in when it arrives, not whoever played it, so this is asked before
   // anything is sent rather than after.
+  //
+  // Asking narrows the window rather than closing it: the answer describes the
+  // cookie jar as it was, and the requests below carry it as it is. Nothing
+  // here can do better, because the shell does not own that jar -- only the
+  // server refusing a mismatch would settle it, and that would mean an endpoint
+  // that takes the account the client expected. Someone would have to sign out
+  // and back in as a different person inside a single flush to land in it.
   const userId = await currentUserId({ config, session, signal });
   // No answer is not an account: what is queued stays queued.
   if (userId === null) return;

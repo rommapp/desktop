@@ -882,6 +882,13 @@ export class Launcher {
     const run = (async () => {
       // Queued before a byte is sent. Everything below can fail, and a play
       // session that is only in memory when it does is one nobody can recover.
+      //
+      // That ordering is also what lets another exit, or a window load, flush
+      // this record before the sync below offers it. The server dedupes, so the
+      // session is still recorded exactly once; what is lost is only its
+      // sync_session_id, the link saying which sync it belonged to. Holding the
+      // record back until the sync finished would trade that link for the
+      // durability this ordering exists to give it, which is the worse bargain.
       if (played) {
         await enqueue(playQueuePath(), played).catch(() => undefined);
       }
