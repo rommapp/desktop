@@ -87,7 +87,7 @@ elsewhere, comes back to a server that no longer recognises it.
 
 The shell notices this itself, because it makes requests of its own that the
 page never sees: the ROM download, the disc list, the firmware list, the save
-negotiation. RomM answers those with a 401, which is its own signal that the
+negotiation, the play session report. RomM answers those with a 401, which is its own signal that the
 caller should go and sign in -- distinct from the 403 it answers a user whose
 account simply lacks a scope, and which is not a session problem and not treated
 as one here. On a 401 the shell reloads the window and lets RomM's own frontend
@@ -96,8 +96,9 @@ this shell invented, and an OIDC server still goes to its provider.
 
 A launch that stops for this reason says so in as many words rather than
 reporting a failed download, and nothing is lost by it: a save the shell could
-not send stays on disk and is offered again the next time you launch that game.
-Sign in and press Play again.
+not send stays on disk and is offered again the next time you launch that game,
+and a play session it could not report stays queued. Sign in and press Play
+again.
 
 One reload per sign-out, not one per request: a single launch asks the server
 several times and an expired session fails all of them. A login page already on
@@ -586,57 +587,28 @@ alone.
 
 RomM keeps a playtime record per game, and a native launch is invisible to it.
 The server can see a ROM being downloaded; it cannot see the forty minutes that
-followed, so without this a game played here reads as never played at all. With
-`trackPlaySessions` on, the shell times the emulator between the spawn and the
-exit and posts that to RomM's play session list, which is what advances the
-game's last-played date, marks it as now playing, and feeds the playtime totals.
+followed. With `trackPlaySessions` on, the shell times the emulator between the
+spawn and the exit and posts that to RomM, which is what advances the game's
+last-played date, marks it as now playing, and feeds the playtime totals. Time
+the machine spent asleep with the emulator open is not counted.
 
-The clock is monotonic rather than the wall clock, which matters in two ordinary
-cases. A machine whose time is corrected mid-game would otherwise report a
-session that ran backwards, which the server rejects outright. A laptop suspended
-with the emulator open would otherwise bill you for the eight hours it spent
-asleep. Neither is counted; what is counted is time the machine was awake with
-the emulator running.
+A run shorter than `minPlaySessionSeconds` is not recorded. A launch that fails
+once the emulator has started exits in seconds, and recording those would move
+the game's last-played date and rewind a finished status back to incomplete for
+a game nobody played.
 
-A run shorter than `minPlaySessionSeconds` is not recorded. This is a floor
-rather than a rounding: a launch that fails once the process has started -- a
-core that rejects the ROM, an emulator that cannot open a display -- exits in
-seconds, and recording those would move the game's last-played date, mark it as
-now playing and rewind a finished status back to incomplete for a game nobody
-played. A minute is past any of those and under anything you would call a
-session. Setting it to `0` still refuses a sub-second run, which the server
-cannot represent.
+Sessions are queued in `play-sessions.json` beside the config and removed only
+once the server has taken them, so a weekend of playing on a train reaches RomM
+the next time the shell can see it -- at the next launch that finishes, or when
+a window loads. Each session records the server it was played against and is
+only ever offered to that one, since a rom id belongs to the server that issued
+it: point the shell elsewhere and the old backlog waits rather than being
+misfiled.
 
-Sessions are queued on disk before anything is sent, in `play-sessions.json`
-beside the config, and removed only once the server has answered about them. So a
-weekend of playing on a train reaches RomM the next time the shell has a server
-in front of it, and the backlog goes up with the next launch to finish rather
-than waiting for one per session. Delivery is therefore at least once, which is
-safe here because RomM identifies a session by device, game and start time and
-counts a resent one only once. The queue holds 500 sessions or 90 days, whichever
-comes first, dropping the oldest, and is trimmed both as sessions arrive and as
-they go out, so the age bound holds for a machine that has stopped being played
-on as well as for one in use.
-
-Each session records which server it was played against, and is only ever
-offered to that one. A rom id belongs to the server that issued it, so a backlog
-built up against one RomM would land on whatever games happen to hold those ids
-on another. Point the shell somewhere else and the old backlog waits rather than
-being misfiled; point it back and it goes up.
-
-A session played through a synced save rides along on the same call that closes
-the save sync, so RomM can say which play wrote the save it received. Everything
-else goes up on its own. A refusal that could pass -- no session, a missing
-scope, a server that is down -- leaves the record queued; one about the payload
-itself does not, so a single bad row cannot block the sessions behind it forever.
-
-Like save sync, none of this can fail a launch, and the device it reports as is
-the same `deviceId` the saves sync under. A machine that has not registered one
-still reports its sessions, unattributed, rather than holding them back.
-
-Turning `trackPlaySessions` off stops sessions being recorded at all. Anything
-already queued is still sent, since the setting is about what gets recorded and
-not about stranding what already was.
+Like save sync, none of this can fail a launch, and it reports as the same
+`deviceId` the saves sync under -- or unattributed, when this machine has never
+registered one. Turning `trackPlaySessions` off stops sessions being recorded;
+anything already queued is still sent.
 
 ### Firmware from RomM
 
