@@ -249,6 +249,11 @@ export function validateLaunchRequest(value: unknown): LaunchRequest {
     );
   }
 
+  const fullscreen = candidate.fullscreen;
+  if (fullscreen !== undefined && typeof fullscreen !== "boolean") {
+    throw new LaunchError("invalid-request", "fullscreen must be a boolean.");
+  }
+
   return {
     romId,
     downloadPath,
@@ -258,6 +263,7 @@ export function validateLaunchRequest(value: unknown): LaunchRequest {
     ...(name === undefined ? {} : { name }),
     ...(serverPath === undefined ? {} : { serverPath }),
     ...(fileSize === undefined ? {} : { fileSize }),
+    ...(fullscreen === undefined ? {} : { fullscreen }),
   };
 }
 

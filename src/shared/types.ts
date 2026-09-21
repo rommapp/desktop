@@ -65,6 +65,11 @@ export interface LaunchRequest {
   /** Size in bytes as the server reports it. Checked against a local file
    *  before it stands in for a download. */
   fileSize?: number;
+  /** Start the emulator fullscreen, for a page whose own player offers the
+   *  same choice. Only the built-in RetroArch path can honour it, since that
+   *  is the only argument list the shell writes; a mapping decides it in its
+   *  own arguments or its own config. */
+  fullscreen?: boolean;
 }
 
 export type LaunchStatus =
@@ -277,6 +282,14 @@ export interface DesktopConfig {
    *  and a slot that moved on is archived rather than overwritten. Turning it
    *  off leaves the local files exactly where they are. */
   syncSaves: boolean;
+  /** How often the built-in RetroArch launch is asked to write the save to
+   *  disk, in seconds. RetroArch otherwise writes it once, when the content
+   *  closes, which is a single moment for a crash or a launcher that exits
+   *  early to cost a whole session's progress. Asked for with --appendconfig,
+   *  so the user's own retroarch.cfg is left alone, and only on the built-in
+   *  path: a configured emulator sets its own. Zero leaves the setting
+   *  untouched. */
+  retroarchAutosaveSeconds: number;
   /** Report how long the emulator ran to RomM's play session list, so a native
    *  launch counts towards the playtime the server keeps for a game. The server
    *  can see a ROM being downloaded; it cannot see it being played, so without
@@ -342,7 +355,11 @@ export type ShellCapability =
   /** How long the emulator ran is reported to RomM's play session list, and
    *  carried on the "exited" state as `play`. A shell without this leaves a
    *  native launch out of the server's playtime entirely. */
-  | "play-sessions";
+  | "play-sessions"
+  /** `LaunchRequest.fullscreen` is honoured, so a page offering the choice for
+   *  its own player can offer it for a native launch too. Only the built-in
+   *  RetroArch path can act on it. */
+  | "launch-fullscreen";
 
 // The list itself lives in the preload, which is the only file that ships it:
 // a sandboxed preload cannot import a value, so it cannot read one from here.

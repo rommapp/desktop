@@ -7,6 +7,7 @@
 // decisions testable without a server, an emulator, or a filesystem.
 
 import { saveBaseName } from "./paths.ts";
+import { DEFAULT_RETROARCH_AUTOSAVE_SECONDS } from "./retroarch.ts";
 
 /**
  * The slot native launches share with the browser client.
@@ -228,6 +229,88 @@ export function planPull(
 }
 
 /**
+ * How often to look at the save file while the emulator runs, given how often
+ * the emulator has been asked to write it.
+ *
+ * A third of the writing cadence, never the cadence itself. Two readings have
+ * to agree before a save is offered, so looking exactly as often as the file
+ * changes is how a game that writes on every flush is never offered at all:
+ * each reading catches a different version and no two ever agree. At a third,
+ * two of the three readings between one write and the next fall in the quiet
+ * between them.
+ *
+ * Zero is the user leaving RetroArch's own interval alone, which the shell
+ * cannot read, so the default cadence stands in: whatever the emulator does,
+ * looking is cheap and finding nothing costs a hash.
+ */
+export function watchIntervalFor(autosaveSeconds: number): number {
+  const cadence =
+    Number.isFinite(autosaveSeconds) && autosaveSeconds > 0
+      ? autosaveSeconds
+      : DEFAULT_RETROARCH_AUTOSAVE_SECONDS;
+  const third = Math.round((cadence * 1000) / 3);
+  return Math.min(
+    Math.max(third, MIN_WATCH_INTERVAL_MS),
+    MAX_WATCH_INTERVAL_MS,
+  );
+}
+
+/** Floor on the above: a hash of a memory card measured in megabytes is not
+ *  free. `MIN_RETROARCH_AUTOSAVE_SECONDS` is the other half of it: the cadence
+ *  asked of the emulator is floored at three of these, so widening a third that
+ *  came out shorter cannot leave the looks further apart than the writes. */
+const MIN_WATCH_INTERVAL_MS = 2_000;
+
+/**
+ * Ceiling on it, for a cadence nobody meant.
+ *
+ * A hand-edited interval is any number a JSON file can hold, and a setInterval
+ * delay past a signed 32-bit millisecond count does not wait longer, it fires
+ * every millisecond -- which would turn the quietest possible setting into the
+ * busiest loop in the shell. Five minutes is already longer than a look is
+ * worth: the push after the exit covers whatever a look this slow would miss.
+ */
+const MAX_WATCH_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * Whether a run is one to watch at all.
+ *
+ * Only a launch that may write the shared slot. A conflicted slot holds
+ * progress this device has not seen, so what this run writes is filed as an
+ * archival save instead -- and there is one of those per launch, at the end,
+ * not one per interval: they are paired with nothing, so no slot rotates them
+ * and nothing reaps them. The push after the exit files the final state once,
+ * which is the whole of what a conflicted run has to say.
+ */
+export function watchesDuringRun(allowance: Allowance): boolean {
+  return allowance === "push" || allowance === "requested";
+}
+
+/**
+ * Whether a reading of the save file taken during a run is worth offering.
+ *
+ * Two readings have to agree before anything is sent. The emulator writes the
+ * file, not the shell, so a reading taken while that write is in progress
+ * describes half of one -- and the autosave slot is what every other device
+ * syncs from. Two identical readings an interval apart is the same rule the
+ * browser player applies to its own ticks (`createSaveSyncTracker` in RomM's
+ * `frontend/src/views/Player/EmulatorJS/utils.ts`), and it costs one interval
+ * of delay rather than a torn save on the server.
+ *
+ * Bytes the server already holds are not offered again, which is what keeps a
+ * game that writes nothing from uploading the same save every interval.
+ */
+export function planTick(
+  previous: SaveStamp | null,
+  current: SaveStamp | null,
+  baseline: SaveStamp | null,
+): boolean {
+  if (current === null || current.hash === null) return false;
+  if (previous === null || previous.hash !== current.hash) return false;
+  return baseline === null || baseline.hash !== current.hash;
+}
+
+/**
  * Whether there is anything worth sending, and in what form.
  *
  * Mostly this is "did the emulator change the file", but not always. `archive`
@@ -235,17 +318,27 @@ export function planPull(
  * device has never seen: the local copy goes up as a new null-slot save rather
  * than being written over the top of them, or dropped. And a save the server
  * asked for is sent whether or not this run touched it.
+ *
+ * `expected` is a digest the caller has already seen twice, which is how a save
+ * offered mid-run earns the right to be sent (see `planTick`). The bytes that
+ * reach the server have to be those bytes: a write landing between the reading
+ * that settled and the read that sends would otherwise put half a file in the
+ * slot every other device syncs from. Not matching is not a failure, it is a
+ * write in progress, so it waits for the next agreement.
  */
 export function planPush(
   before: SaveStamp | null,
   after: SaveStamp | null,
   allowance: Allowance,
+  expected?: string | null,
 ): PushAction {
   if (allowance === "unreachable") return "none";
 
   // Nothing on disk to send: the emulator either never made the file or removed
   // it, and a deletion is not something this shell propagates.
   if (!after) return "none";
+
+  if (expected != null && after.hash !== expected) return "none";
 
   const difference = changed(before, after);
 
@@ -254,7 +347,8 @@ export function planPush(
   // one case it can tell -- bytes the emulator demonstrably left alone -- is
   // what keeps a conflicted game from filing another archive every launch, with
   // no slot to rotate them and nothing to reap them.
-  if (allowance === "conflict") return difference === false ? "none" : "archive";
+  if (allowance === "conflict")
+    return difference === false ? "none" : "archive";
 
   // The server has nothing in this slot and said so. Whether the emulator wrote
   // anything this run is beside the point: the save exists here and nowhere

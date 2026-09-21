@@ -6,10 +6,11 @@
 // that moves bytes, and the rule that shapes all of it is that nothing here may
 // lose a save.
 //
-// Two entry points, at the two ends of a launch. `pullSave` runs before the
-// emulator starts: it asks what the server has and writes it to disk when the
-// server's copy should win. `pushSave` runs after the emulator exits and sends
-// what changed. Between them the emulator is running and none of this is.
+// Three entry points. `pullSave` runs before the emulator starts: it asks what
+// the server has and writes it to disk when the server's copy should win.
+// `pushSave` runs after the emulator exits and sends what changed. `watchSave`
+// covers the hours in between, offering what the emulator writes as it writes
+// it, so a launch does not rest on a single reading taken at one moment.
 //
 // Like the firmware mirror, none of this can fail a launch. A server that cannot
 // be reached, a user without the right scope, a device the server has forgotten
@@ -19,11 +20,14 @@
 import { type Session } from "electron";
 import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { type DesktopConfig, type SaveSyncOutcome } from "../../shared/types.ts";
+import {
+  type DesktopConfig,
+  type SaveSyncOutcome,
+} from "../../shared/types.ts";
 import { isSignedOut } from "../auth/status.ts";
-import { toEntries, type PlaySessionRecord } from "../play/session.ts";
 import { downloadFromServer } from "../rom-cache.ts";
 import { resolveDownloadUrl } from "../safety.ts";
+import { onBeat } from "./beat.ts";
 import { ensureDeviceId, forgetDeviceId } from "./device.ts";
 import { hashFile, md5Hex } from "./hash.ts";
 import { apiRequest } from "./http.ts";
@@ -36,7 +40,9 @@ import {
   MAX_SAVE_BYTES,
   planPull,
   planPush,
+  planTick,
   selectOperation,
+  watchesDuringRun,
   storedSave,
   type Allowance,
   type LocalSave,
@@ -446,6 +452,10 @@ export interface PushOptions {
   before: SaveStamp | null;
   allowance: Allowance;
   signal: AbortSignal;
+  /** A digest the caller has already seen settle, when it has one. The read
+   *  below has to still hash to it, or the emulator is mid-write and there is
+   *  nothing to send yet. */
+  expect?: string | null;
 }
 
 /**
@@ -464,7 +474,16 @@ export function pushSave(
   // launch: this reads the file to decide whether to send it and then sends
   // what it read, and a relaunch pulling in between would make those two
   // different files.
-  return inTurn(options.saveFile, () => runPush(options));
+  return inTurn(options.saveFile, () => runPush(options)).then(
+    (result) => result.outcome,
+  );
+}
+
+interface PushResult {
+  outcome: SaveSyncOutcome | null;
+  /** What the server holds because of this push, when it sent anything. The
+   *  watcher carries it forward as its baseline. */
+  sent: SaveStamp | null;
 }
 
 async function runPush({
@@ -476,9 +495,12 @@ async function runPush({
   before,
   allowance,
   signal,
-}: PushOptions): Promise<SaveSyncOutcome | null> {
+  expect,
+}: PushOptions): Promise<PushResult> {
+  const idle: PushResult = { outcome: null, sent: null };
+
   const serverUrl = config.serverUrl;
-  if (!serverUrl) return null;
+  if (!serverUrl) return idle;
 
   // Read once, so the digest that decides whether to send and the bytes that are
   // sent are the same bytes. Hashing and then re-reading could describe two
@@ -488,8 +510,21 @@ async function runPush({
     ? { hash: md5Hex(bytes), size: bytes.length }
     : null;
 
-  const action = planPush(before, after, allowance);
-  if (action === "none" || !bytes) return null;
+  // Said out loud, both of them, because declining makes no request: the
+  // server's log is silent too, and from outside "the save did not sync" and
+  // "there was no new save" look identical.
+  if (!bytes || !after) {
+    console.info(`[saves] rom ${romId}: no save on disk at ${saveFile}`);
+    return idle;
+  }
+
+  const action = planPush(before, after, allowance, expect);
+  if (action === "none") {
+    console.info(
+      `[saves] rom ${romId}: nothing to send, ${declined(after, allowance, expect)}`,
+    );
+    return idle;
+  }
 
   // A conflict already had its answer decided before the emulator ran: the
   // server's slot holds progress this device has not seen, so the local bytes
@@ -507,12 +542,20 @@ async function runPush({
       signal,
     });
 
-  if (!wantSlot) {
+  // An archival save is paired with nothing, but the server holds these bytes
+  // once it lands either way, and that is what `sent` means: not "the slot now
+  // reads this" but "there is no point offering this again".
+  const filed = async (): Promise<PushResult> => {
     const archived = await archive();
     return archived.kind === "ok"
-      ? { action: "archived" }
-      : { action: "failed", detail: describe(archived) };
-  }
+      ? { outcome: { action: "archived" }, sent: after }
+      : {
+          outcome: { action: "failed", detail: describe(archived) },
+          sent: null,
+        };
+  };
+
+  if (!wantSlot) return filed();
 
   const uploaded = await upload({
     serverUrl,
@@ -525,23 +568,136 @@ async function runPush({
     signal,
   });
   if (uploaded.kind === "ok") {
-    return { action: "uploaded", slot: AUTOSAVE_SLOT };
+    return {
+      outcome: { action: "uploaded", slot: AUTOSAVE_SLOT },
+      sent: after,
+    };
   }
   if (uploaded.kind === "conflict") {
     // The slot moved on between the negotiation and now, or this device's
     // baseline is older than what is in it. Retrying the same upload would be
     // refused identically, so the local bytes go up as an archival save, which
     // is paired with nothing and therefore replaces nothing.
-    const archived = await archive();
-    return archived.kind === "ok"
-      ? { action: "archived" }
-      : { action: "failed", detail: describe(archived) };
+    return filed();
   }
-  return { action: "failed", detail: describe(uploaded) };
+  return {
+    outcome: { action: "failed", detail: describe(uploaded) },
+    sent: null,
+  };
 }
 
 function describe(result: UploadResult): string {
   return result.kind === "failed" ? result.detail : "upload refused";
+}
+
+/** Why a push found nothing to do, for the log line that is the only trace a
+ *  declined push leaves anywhere. */
+function declined(
+  after: SaveStamp,
+  allowance: Allowance,
+  expect?: string | null,
+): string {
+  if (allowance === "unreachable") return "the negotiation never happened";
+  if (expect != null && after.hash !== expect) {
+    return "the emulator is still writing it";
+  }
+  return "the save is unchanged";
+}
+
+export interface WatchOptions extends PushOptions {
+  /** Told about each save this sends, so the renderer can say so while the game
+   *  is still running. */
+  onSent?: (outcome: SaveSyncOutcome) => void;
+  /** How often to look, which is a fraction of how often the emulator writes
+   *  (see `watchIntervalFor`) rather than a cadence of this module's own. */
+  intervalMs: number;
+}
+
+export interface SaveWatch {
+  /** Stop looking, and wait for anything in flight to finish. */
+  stop(): Promise<void>;
+  /** What the server holds now, which is what the push after the exit has to
+   *  compare against. */
+  baseline(): SaveStamp | null;
+  /** The saves sent while the emulator ran. */
+  sent(): readonly SaveSyncOutcome[];
+}
+
+/**
+ * Send what the emulator writes while it is still running.
+ *
+ * The push at the other end of a launch is one reading of one file at one
+ * moment, and everything has to line up for it: the emulator has to have
+ * flushed its save, and the process the shell spawned has to be the one that
+ * ends when the game does. A launcher script, a Flatpak wrapper and an emulator
+ * that hands the content to an instance already running all break the second
+ * half of that; a crash or a kill breaks the first.
+ *
+ * So this is the browser player's answer in the shape a shell can manage.
+ * EmulatorJS forces a flush every second and uploads what changed
+ * (`pollSaveFiles` in RomM's `frontend/src/views/Player/EmulatorJS/utils.ts`);
+ * here the flush is RetroArch's own, asked for with autosave_interval, and this
+ * watches the file it writes.
+ *
+ * It decides nothing the push does not: the same planPush against the same
+ * allowance, with the baseline moving forward as saves land. Like everything
+ * else here, it cannot fail a launch.
+ */
+export function watchSave(options: WatchOptions): SaveWatch {
+  const { saveFile, before, signal, allowance, intervalMs, onSent } = options;
+
+  // A run that cannot write the shared slot is not watched: everything it has
+  // to say is one archival save, which the push after the exit files once.
+  if (!watchesDuringRun(allowance)) {
+    return {
+      stop: () => Promise.resolve(),
+      baseline: () => before,
+      sent: () => [],
+    };
+  }
+
+  let baseline = before;
+  let previous = before;
+  /** The bytes already offered, so a refusal is not retried every interval. The
+   *  push after the exit is the retry, and it runs whatever happens here. */
+  let offered: string | null = null;
+  const sent: SaveSyncOutcome[] = [];
+
+  /** One look at the file, and whether there is any point looking again. */
+  const tick = async (): Promise<boolean> => {
+    if (signal.aborted) return false;
+
+    const reading = (await readLocal(saveFile))?.stamp ?? null;
+    const worthOffering = planTick(previous, reading, baseline);
+    previous = reading;
+    if (!worthOffering || !reading || reading.hash === offered) return true;
+    offered = reading.hash;
+
+    // The push reads the file itself, once, and sends what it read. Naming the
+    // digest that settled is what ties the two together: bytes that no longer
+    // hash to it are a write that landed in between, and waiting for the next
+    // agreement costs one interval rather than putting half a file in the slot.
+    const { outcome, sent: stored } = await inTurn(saveFile, () =>
+      runPush({ ...options, before: baseline, expect: reading.hash }),
+    );
+    if (!outcome || outcome.action === "failed") return true;
+    baseline = stored ?? reading;
+    sent.push(outcome);
+    onSent?.(outcome);
+
+    // The slot moved on under this run, so what the emulator writes from here
+    // is archival. One of those is the exit's to file: filing one per interval
+    // would leave a session's worth of saves nothing rotates or reaps.
+    return outcome.action !== "archived";
+  };
+
+  const beat = onBeat(intervalMs, tick);
+
+  return {
+    stop: () => beat.stop(),
+    baseline: () => baseline,
+    sent: () => sent,
+  };
 }
 
 /**
@@ -552,11 +708,13 @@ function describe(result: UploadResult): string {
  * this client did, reported here rather than on each upload -- the upload
  * endpoint also has a counter, and feeding both would count every save twice.
  *
- * The play session that produced these saves rides along, because this endpoint
- * is the only one that pairs the two: a session ingested here is stored against
- * the sync session, so the server can say which play wrote the save it received.
- * Reported as taken only on a 2xx, which is what lets the caller drop it from
- * the queue; anything else leaves it there for the ordinary flush.
+ * Saves only. This endpoint can ingest the play session that produced them too,
+ * and storing it against the sync session is the only way that link is ever
+ * made, but nothing reads the link and it costs the record its own delivery:
+ * a session that rode along was hostage to a sync completing, while the queue
+ * behind `reportPlaySessions` is durable and covers a launch that synced
+ * nothing. So playtime goes to /api/play-sessions, always, and a sync session
+ * is about saves.
  */
 export async function completeSync(options: {
   serverUrl: string;
@@ -565,11 +723,9 @@ export async function completeSync(options: {
   completed: number;
   failed: number;
   signal: AbortSignal;
-  play?: readonly PlaySessionRecord[];
-}): Promise<{ playAccepted: boolean }> {
-  const { serverUrl, session, sessionId, completed, failed, signal, play } =
-    options;
-  const response = await apiRequest({
+}): Promise<void> {
+  const { serverUrl, session, sessionId, completed, failed, signal } = options;
+  await apiRequest({
     serverUrl,
     session,
     path: `/api/sync/sessions/${sessionId}/complete`,
@@ -578,12 +734,7 @@ export async function completeSync(options: {
     body: JSON.stringify({
       operations_completed: completed,
       operations_failed: failed,
-      ...(play?.length ? { play_sessions: toEntries(play) } : {}),
     }),
     signal,
   }).catch(() => undefined);
-
-  return {
-    playAccepted: Boolean(play?.length && response && response.status < 300),
-  };
 }

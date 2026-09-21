@@ -21,6 +21,7 @@ import {
   resolveCore,
   resolveEmulatorCommand,
   resolveLaunch,
+  usesBuiltInRetroArch,
 } from "./resolve.ts";
 
 /** A throwaway tree standing in for a RetroArch install. */
@@ -496,6 +497,127 @@ test("a RetroArch launch is pointed at the firmware only once there is some", ()
     join(install.root, coreFileName("snes9x")),
     "/cache/1/game.sfc",
   ]);
+});
+
+test("a RetroArch launch appends the launch config beside the firmware one", () => {
+  // RetroArch takes a "|"-delimited list, so the save interval this launch asks
+  // for does not displace the firmware directory it also needs.
+  const install = fakeInstall(["mgba"]);
+  const biosRoot = mkdtempSync(join(tmpdir(), "romm-bios-"));
+  const generated = join(biosRoot, ".retroarch", "gba.cfg");
+  mkdirSync(join(biosRoot, ".retroarch"), { recursive: true });
+  writeFileSync(generated, 'system_directory = "x"');
+  const config = testConfig({
+    retroarchPath: install.binary,
+    retroarchCoresPath: install.root,
+    biosPath: biosRoot,
+  });
+
+  const withBoth = resolveLaunch({
+    config,
+    platformSlug: "gba",
+    cores: ["mgba"],
+    romPath: "/cache/1/game.gba",
+    savePaths: null,
+    launchConfig: "/save-data/.retroarch/autosave.cfg",
+  });
+  assert.equal(
+    withBoth.args[0],
+    `--appendconfig=${generated}|/save-data/.retroarch/autosave.cfg`,
+  );
+
+  // And on its own, for a platform whose firmware the mirror has nothing for.
+  const withoutFirmware = resolveLaunch({
+    config: testConfig({
+      retroarchPath: install.binary,
+      retroarchCoresPath: install.root,
+    }),
+    platformSlug: "gba",
+    cores: ["mgba"],
+    romPath: "/cache/1/game.gba",
+    savePaths: null,
+    launchConfig: "/save-data/.retroarch/autosave.cfg",
+  });
+  assert.equal(
+    withoutFirmware.args[0],
+    "--appendconfig=/save-data/.retroarch/autosave.cfg",
+  );
+});
+
+test("only the built-in path is the one the shell writes arguments for", () => {
+  // What gates generating a config: a mapping never names one, so writing it
+  // would leave a stray file no launch reads.
+  const install = fakeInstall([]);
+  const mapped = testConfig({
+    emulators: [
+      {
+        platformSlug: "ps2",
+        command: install.binary,
+        args: ["-batch", "{rom}"],
+      },
+    ],
+  });
+  assert.equal(usesBuiltInRetroArch(mapped, "ps2"), false);
+  assert.equal(usesBuiltInRetroArch(mapped, "gba"), true);
+
+  // A wildcard row covers every platform, so none of them is the built-in path.
+  const wildcard = testConfig({
+    emulators: [
+      { platformSlug: "*", command: install.binary, args: ["{rom}"] },
+    ],
+  });
+  assert.equal(usesBuiltInRetroArch(wildcard, "gba"), false);
+});
+
+test("a launch that asks for fullscreen gets RetroArch's own flag", () => {
+  const install = fakeInstall(["mgba"]);
+  const config = testConfig({
+    retroarchPath: install.binary,
+    retroarchCoresPath: install.root,
+  });
+  const launch = (fullscreen: boolean) =>
+    resolveLaunch({
+      config,
+      platformSlug: "gba",
+      cores: ["mgba"],
+      romPath: "/cache/1/game.gba",
+      savePaths: null,
+      fullscreen,
+    }).args;
+
+  // Before the content, like every other flag, and nothing at all when the
+  // launch did not ask: there is no "windowed" flag to undo the user's setting.
+  assert.deepEqual(launch(true), [
+    "-L",
+    join(install.root, coreFileName("mgba")),
+    "-f",
+    "/cache/1/game.gba",
+  ]);
+  assert.ok(!launch(false).includes("-f"));
+});
+
+test("a standalone mapping is never handed a fullscreen flag", () => {
+  // It is RetroArch's. A mapping's arguments are the user's, and its emulator's
+  // own flag is whatever that emulator calls it.
+  const install = fakeInstall([]);
+  const config = testConfig({
+    emulators: [
+      {
+        platformSlug: "ps2",
+        command: install.binary,
+        args: ["-batch", "{rom}"],
+      },
+    ],
+  });
+  const launch = resolveLaunch({
+    config,
+    platformSlug: "ps2",
+    cores: [],
+    romPath: "/cache/1/game.chd",
+    savePaths: null,
+    fullscreen: true,
+  });
+  assert.deepEqual(launch.args, ["-batch", "/cache/1/game.chd"]);
 });
 
 test("a RetroArch mapping can ask for the system directory itself", () => {

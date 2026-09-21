@@ -180,6 +180,26 @@ test("validateLaunchRequest rejects malformed library fields", () => {
   });
 });
 
+test("validateLaunchRequest carries the display choice, and only as a boolean", () => {
+  const base = {
+    romId: 7,
+    downloadPath: "/api/roms/7/content/game.gba",
+    fileName: "game.gba",
+    platformSlug: "gba",
+    cores: ["mgba"],
+  };
+  assert.equal(
+    validateLaunchRequest({ ...base, fullscreen: true }).fullscreen,
+    true,
+  );
+  // Absent, not false: a launch that says nothing leaves the user's own
+  // RetroArch setting to decide.
+  assert.equal(validateLaunchRequest(base).fullscreen, undefined);
+  assert.throws(() => validateLaunchRequest({ ...base, fullscreen: "yes" }), {
+    code: "invalid-request",
+  });
+});
+
 test("safeFileName never returns a component that addresses a directory", () => {
   // Leading whitespace used to survive the dot-stripping, so " .." came back
   // as ".." and named the parent of the ROM directory it was joined onto.

@@ -35,10 +35,11 @@ import {
   findPreferredCores,
   hasPlatformSpecificEmulator,
   resolveLaunch,
+  usesBuiltInRetroArch,
 } from "./emulator/resolve.ts";
 import { syncDiscSet } from "./discs/sync.ts";
 import { reportPlaySessions } from "./play/report.ts";
-import { dequeue, enqueue } from "./play/queue.ts";
+import { enqueue } from "./play/queue.ts";
 import {
   closePlaySession,
   minimumPlayMs,
@@ -54,9 +55,17 @@ import {
   pullSave,
   pushSave,
   saveSyncEnabled,
+  watchSave,
   type PullResult,
+  type SaveWatch,
 } from "./saves/sync.ts";
-import { AUTOSAVE_SLOT, type Allowance, type SaveStamp } from "./saves/plan.ts";
+import { autosaveSeconds, writeLaunchConfig } from "./saves/retroarch.ts";
+import {
+  AUTOSAVE_SLOT,
+  watchIntervalFor,
+  type Allowance,
+  type SaveStamp,
+} from "./saves/plan.ts";
 import { assertSeparateRoots, resolveLibraryRom } from "./safety.ts";
 
 interface ActiveLaunch {
@@ -165,9 +174,28 @@ export class Launcher {
    *  session -- so a quit can wait for it. Not keyed by rom id: it outlives the
    *  launch that started it and is deliberately not reachable from `active`. */
   private readonly pushes = new Set<Promise<void>>();
+  /** The watchers of running games, so a quit can stop them looking and then
+   *  wait for whatever one of them already has on the wire. */
+  private readonly watches = new Set<SaveWatch>();
 
   constructor(emit: (state: LaunchState) => void) {
     this.emit = emit;
+  }
+
+  /** Hold `work` open for the quit path, and forget it once it settles. */
+  private track(work: Promise<void>): void {
+    this.pushes.add(work);
+    void work.finally(() => this.pushes.delete(work));
+  }
+
+  /** Stop a watcher looking and settle what it already had on the wire. Held
+   *  open for the quit path too, since that is the caller that cannot wait for
+   *  an exit that may never come. */
+  private forget(watch: SaveWatch): Promise<void> {
+    this.watches.delete(watch);
+    const stopped = watch.stop();
+    this.track(stopped);
+    return stopped;
   }
 
   /** Whether the platform would launch, without downloading anything to find
@@ -735,6 +763,24 @@ export class Launcher {
         throwIfCancelled(controller.signal);
       }
 
+      // Asked for before the launch is resolved, so its path can be named in
+      // the arguments. Without it RetroArch writes the save once, when the
+      // content closes, and a launch that never reaches that moment has nothing
+      // for the push to find.
+      const autosave = autosaveSeconds(config.retroarchAutosaveSeconds);
+      // Only for the launch that will name it. A mapping's arguments are the
+      // user's, so a generated config would be a file nothing reads. The
+      // interval is asked for only where the shell is syncing this launch's
+      // saves; the display mode is the page's answer either way.
+      const launchConfig =
+        config.saveDataPath &&
+        usesBuiltInRetroArch(config, request.platformSlug)
+          ? await writeLaunchConfig(config.saveDataPath, request.romId, {
+              autosaveSeconds: savePaths && syncsSaves ? autosave : 0,
+              fullscreen: request.fullscreen,
+            })
+          : null;
+
       // Resolved again, and this time strictly: the validation above may have
       // assumed a core that had yet to be downloaded, and nothing is spawned
       // from an assumption.
@@ -744,6 +790,8 @@ export class Launcher {
         cores,
         romPath,
         savePaths,
+        launchConfig,
+        fullscreen: request.fullscreen,
       });
 
       // A launch cancelled while the ROM came out of the local library never
@@ -759,8 +807,36 @@ export class Launcher {
       });
       entry.child = child;
 
+      // Offers what the emulator writes while it is still running, so the launch
+      // does not rest on the single reading taken after it exits. Started from
+      // the same facts the push is gated on: a negotiation happened, and this
+      // launch owns the file the emulator was pointed at.
+      const watch: SaveWatch | null =
+        savePaths && saveSync?.deviceId && saveSync.sessionId !== null
+          ? watchSave({
+              config,
+              session,
+              romId: request.romId,
+              saveFile: savePaths.saveFile,
+              deviceId: saveSync.deviceId,
+              before: saveSync.before,
+              allowance: saveSync.allowance,
+              signal: controller.signal,
+              // Derived from how often the emulator was asked to write, never
+              // equal to it: two readings have to agree, and looking exactly as
+              // often as the file changes is how they never do.
+              intervalMs: watchIntervalFor(autosave),
+              onSent: (sync) =>
+                this.emit({ romId: request.romId, status: "sync", sync }),
+            })
+          : null;
+      if (watch) this.watches.add(watch);
+
       child.on("error", (error) => {
         this.active.delete(request.romId);
+        // A process that could not be spawned emits this and no exit, so this is
+        // the only place the watcher it started can be stopped.
+        if (watch) this.forget(watch);
         this.emit({
           romId: request.romId,
           status: "failed",
@@ -813,6 +889,7 @@ export class Launcher {
                 allowance: saveSync.allowance,
                 sessionId: saveSync.sessionId,
                 pulled: saveSync.outcome,
+                watch,
               }
             : null;
         // Runs even with nothing of its own to send. An exit is the moment the
@@ -874,6 +951,8 @@ export class Launcher {
       sessionId: number;
       /** What the pull did, so the session counts both ends. */
       pulled: SaveSyncOutcome | null;
+      /** The watcher this launch ran, holding what it already sent. */
+      watch: SaveWatch | null;
     } | null;
   }): void {
     const { config, session, romId, signal, played, push } = options;
@@ -882,13 +961,9 @@ export class Launcher {
     const run = (async () => {
       // Queued before a byte is sent. Everything below can fail, and a play
       // session that is only in memory when it does is one nobody can recover.
-      //
-      // That ordering is also what lets another exit, or a window load, flush
-      // this record before the sync below offers it. The server dedupes, so the
-      // session is still recorded exactly once; what is lost is only its
-      // sync_session_id, the link saying which sync it belonged to. Holding the
-      // record back until the sync finished would trade that link for the
-      // durability this ordering exists to give it, which is the worse bargain.
+      // The queue is also the only path it takes: the flush at the end of this
+      // is what delivers it, so a launch that synced nothing, or whose sync
+      // never closed, still reports the time it was played for.
       if (played) {
         await enqueue(playQueuePath(), played).catch((error: unknown) => {
           // The queue is what makes this durable, so a write that fails leaves
@@ -899,9 +974,14 @@ export class Launcher {
         });
       }
 
-      let playDelivered = false;
-
       if (push) {
+        // Stopped before the last reading is taken: otherwise its next tick and
+        // this push would offer the same file at the same moment. What it sent
+        // is also what the push compares against, since those bytes are already
+        // on the server.
+        if (push.watch) await this.forget(push.watch);
+        const streamed = push.watch?.sent() ?? [];
+
         const pushed = await pushSave({
           config,
           session,
@@ -909,50 +989,41 @@ export class Launcher {
           signal,
           saveFile: push.saveFile,
           deviceId: push.deviceId,
-          before: push.before,
+          before: push.watch?.baseline() ?? push.before,
           allowance: push.allowance,
         });
         if (pushed) {
           this.emit({ romId, status: "sync", sync: pushed });
         }
 
-        // Both ends of the launch, counted here rather than by the server: the
-        // upload endpoint has a counter of its own and feeding both would count
-        // every save twice. A 404 or a refusal costs a stale session row and
-        // nothing else, so this is the last thing tried and the only thing that
-        // failing is not worth acting on.
-        const outcomes = [push.pulled, pushed].filter(
+        // Every save this launch moved, both ends and the middle, counted here
+        // rather than by the server: the upload endpoint has a counter of its
+        // own and feeding both would count every save twice. A 404 or a refusal
+        // costs a stale session row and nothing else, so this is the last thing
+        // tried and the only thing that failing is not worth acting on.
+        const outcomes = [push.pulled, ...streamed, pushed].filter(
           (outcome): outcome is SaveSyncOutcome => outcome !== null,
         );
         if (serverUrl) {
-          // The play session goes with it, which is the only way it can be
-          // stored against the saves this launch moved.
-          const { playAccepted } = await completeSync({
+          await completeSync({
             serverUrl,
             session,
             sessionId: push.sessionId,
             completed: outcomes.filter((o) => o.action !== "failed").length,
             failed: outcomes.filter((o) => o.action === "failed").length,
             signal,
-            play: played ? [played] : undefined,
           });
-          playDelivered = playAccepted;
         }
       }
 
-      if (playDelivered && played) {
-        await dequeue(playQueuePath(), [played]).catch(() => undefined);
-      }
-
-      // Whatever is still queued, this launch's session included when it did not
-      // ride along above. An exit is the moment the shell most recently had a
-      // server in front of it, so a backlog from a journey with no network is
-      // cleared here rather than waiting for a launch that thinks to ask.
+      // Whatever is queued, this launch's own session included. An exit is the
+      // moment the shell most recently had a server in front of it, so a
+      // backlog from a journey with no network is cleared here rather than
+      // waiting for a launch that thinks to ask.
       await reportPlaySessions({ config, session, signal });
     })().catch(() => undefined);
 
-    this.pushes.add(run);
-    void run.finally(() => this.pushes.delete(run));
+    this.track(run);
   }
 
   /**
@@ -981,5 +1052,10 @@ export class Launcher {
       if (!entry.child) entry.controller.abort();
     }
     this.active.clear();
+    // The watchers of games still running: stopped so no further upload starts
+    // while the quit is held, and held open through `forget` so the one that may
+    // already be on the wire is what `saveSyncSettled` waits for. A running
+    // emulator is left alone, as everywhere else here.
+    for (const watch of [...this.watches]) void this.forget(watch);
   }
 }
