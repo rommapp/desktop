@@ -429,6 +429,7 @@ export function resolveLaunch({
   romPath,
   savePaths,
   launchConfig = null,
+  fullscreen = false,
   assumeMissingCoreInstalled = false,
 }: {
   config: DesktopConfig;
@@ -439,6 +440,10 @@ export function resolveLaunch({
   /** A generated RetroArch config for this run, appended after the firmware
    *  one. Null when the launch asked for nothing. */
   launchConfig?: string | null;
+  /** What the launch asked for. Honoured only on the built-in RetroArch path,
+   *  since a mapping's arguments are the user's and an emulator's fullscreen
+   *  flag is its own. */
+  fullscreen?: boolean;
   /** Treat a core that is about to be downloaded as already installed, so a
    *  launch can be validated in full before the transfer. Validation only: the
    *  result names a core that is not on disk yet and must not be spawned. */
@@ -533,6 +538,11 @@ export function resolveLaunch({
     ? ["-s", savePaths.saveFile, "-S", savePaths.statePrefix]
     : [];
 
+  // Asked for per launch, so the page offering the choice for its own player
+  // offers the same thing here. There is no opposite flag: a launch that does
+  // not ask leaves the user's own fullscreen setting to decide.
+  const displayArgs = fullscreen ? ["-f"] : [];
+
   return {
     command: config.retroarchPath,
     // The generated configs first: --appendconfig is read as RetroArch starts
@@ -542,6 +552,7 @@ export function resolveLaunch({
       "-L",
       core.path,
       ...saveArgs,
+      ...displayArgs,
       romPath,
     ],
     label: `RetroArch (${core.name})`,

@@ -65,6 +65,11 @@ export interface LaunchRequest {
   /** Size in bytes as the server reports it. Checked against a local file
    *  before it stands in for a download. */
   fileSize?: number;
+  /** Start the emulator fullscreen, for a page whose own player offers the
+   *  same choice. Only the built-in RetroArch path can honour it, since that
+   *  is the only argument list the shell writes; a mapping decides it in its
+   *  own arguments or its own config. */
+  fullscreen?: boolean;
 }
 
 export type LaunchStatus =
@@ -350,7 +355,11 @@ export type ShellCapability =
   /** How long the emulator ran is reported to RomM's play session list, and
    *  carried on the "exited" state as `play`. A shell without this leaves a
    *  native launch out of the server's playtime entirely. */
-  | "play-sessions";
+  | "play-sessions"
+  /** `LaunchRequest.fullscreen` is honoured, so a page offering the choice for
+   *  its own player can offer it for a native launch too. Only the built-in
+   *  RetroArch path can act on it. */
+  | "launch-fullscreen";
 
 // The list itself lives in the preload, which is the only file that ships it:
 // a sandboxed preload cannot import a value, so it cannot read one from here.

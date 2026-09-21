@@ -32,6 +32,7 @@ const ALL_CAPABILITIES = {
   "multi-disc": true,
   "save-sync": true,
   "play-sessions": true,
+  "launch-fullscreen": true,
 } satisfies Record<ShellCapability, true>;
 
 // Object.keys loses the key type, and the satisfies above is what makes this

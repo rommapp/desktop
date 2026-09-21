@@ -543,6 +543,57 @@ test("a RetroArch launch appends the launch config beside the firmware one", () 
   );
 });
 
+test("a launch that asks for fullscreen gets RetroArch's own flag", () => {
+  const install = fakeInstall(["mgba"]);
+  const config = testConfig({
+    retroarchPath: install.binary,
+    retroarchCoresPath: install.root,
+  });
+  const launch = (fullscreen: boolean) =>
+    resolveLaunch({
+      config,
+      platformSlug: "gba",
+      cores: ["mgba"],
+      romPath: "/cache/1/game.gba",
+      savePaths: null,
+      fullscreen,
+    }).args;
+
+  // Before the content, like every other flag, and nothing at all when the
+  // launch did not ask: there is no "windowed" flag to undo the user's setting.
+  assert.deepEqual(launch(true), [
+    "-L",
+    join(install.root, coreFileName("mgba")),
+    "-f",
+    "/cache/1/game.gba",
+  ]);
+  assert.ok(!launch(false).includes("-f"));
+});
+
+test("a standalone mapping is never handed a fullscreen flag", () => {
+  // It is RetroArch's. A mapping's arguments are the user's, and its emulator's
+  // own flag is whatever that emulator calls it.
+  const install = fakeInstall([]);
+  const config = testConfig({
+    emulators: [
+      {
+        platformSlug: "ps2",
+        command: install.binary,
+        args: ["-batch", "{rom}"],
+      },
+    ],
+  });
+  const launch = resolveLaunch({
+    config,
+    platformSlug: "ps2",
+    cores: [],
+    romPath: "/cache/1/game.chd",
+    savePaths: null,
+    fullscreen: true,
+  });
+  assert.deepEqual(launch.args, ["-batch", "/cache/1/game.chd"]);
+});
+
 test("a RetroArch mapping can ask for the system directory itself", () => {
   // The automatic flag is only for the built-in RetroArch path, since a
   // mapping's arguments are the user's and "flatpak run org.libretro.RetroArch"

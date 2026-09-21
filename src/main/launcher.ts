@@ -760,6 +760,7 @@ export class Launcher {
         romPath,
         savePaths,
         launchConfig,
+        fullscreen: request.fullscreen,
       });
 
       // A launch cancelled while the ROM came out of the local library never
