@@ -385,6 +385,13 @@ async function runPull({
 
   const { sessionId, operation } = negotiation;
   const plan = planPull(operation, local?.stamp ?? null);
+  // What the run is allowed to do, and why, said before the emulator starts:
+  // every decision the push makes later is this answer plus what the file did.
+  console.info(
+    `[saves] rom ${romId}: server says ${operation?.action ?? "nothing"}` +
+      `${operation?.slot ? ` for the ${operation.slot} slot` : ""}, ` +
+      `this run may ${plan.allowance}`,
+  );
   // Recomputed here rather than reused, because the emulator is about to start
   // against whatever is on disk now, and that is what the push has to compare
   // against.
@@ -520,8 +527,15 @@ async function runPush({
 
   const action = planPush(before, after, allowance, expect);
   if (action === "none") {
+    // The file's own timestamp goes with the reason: "unchanged" is the shell
+    // and the emulator disagreeing about which file the run was about, and a
+    // mtime from before the launch is what says so.
+    const touched = await stat(saveFile)
+      .then((info) => info.mtime.toISOString())
+      .catch(() => "unknown");
     console.info(
-      `[saves] rom ${romId}: nothing to send, ${declined(after, allowance, expect)}`,
+      `[saves] rom ${romId}: nothing to send, ${declined(after, allowance, expect)}` +
+        ` (${after.size} bytes, last written ${touched})`,
     );
     return idle;
   }
@@ -547,12 +561,19 @@ async function runPush({
   // reads this" but "there is no point offering this again".
   const filed = async (): Promise<PushResult> => {
     const archived = await archive();
-    return archived.kind === "ok"
-      ? { outcome: { action: "archived" }, sent: after }
-      : {
-          outcome: { action: "failed", detail: describe(archived) },
-          sent: null,
-        };
+    if (archived.kind === "ok") {
+      console.info(
+        `[saves] rom ${romId}: filed ${after.size} bytes as an archival save`,
+      );
+      return { outcome: { action: "archived" }, sent: after };
+    }
+    console.warn(
+      `[saves] rom ${romId}: could not file an archival save, ${describe(archived)}`,
+    );
+    return {
+      outcome: { action: "failed", detail: describe(archived) },
+      sent: null,
+    };
   };
 
   if (!wantSlot) return filed();
@@ -568,18 +589,25 @@ async function runPush({
     signal,
   });
   if (uploaded.kind === "ok") {
+    console.info(
+      `[saves] rom ${romId}: sent ${after.size} bytes to the ${AUTOSAVE_SLOT} slot`,
+    );
     return {
       outcome: { action: "uploaded", slot: AUTOSAVE_SLOT },
       sent: after,
     };
   }
   if (uploaded.kind === "conflict") {
+    console.info(
+      `[saves] rom ${romId}: the ${AUTOSAVE_SLOT} slot moved on, filing this run's save instead`,
+    );
     // The slot moved on between the negotiation and now, or this device's
     // baseline is older than what is in it. Retrying the same upload would be
     // refused identically, so the local bytes go up as an archival save, which
     // is paired with nothing and therefore replaces nothing.
     return filed();
   }
+  console.warn(`[saves] rom ${romId}: upload refused, ${describe(uploaded)}`);
   return {
     outcome: { action: "failed", detail: describe(uploaded) },
     sent: null,
@@ -649,6 +677,9 @@ export function watchSave(options: WatchOptions): SaveWatch {
   // A run that cannot write the shared slot is not watched: everything it has
   // to say is one archival save, which the push after the exit files once.
   if (!watchesDuringRun(allowance)) {
+    console.info(
+      `[saves] rom ${options.romId}: not watching this run, it may only ${allowance}`,
+    );
     return {
       stop: () => Promise.resolve(),
       baseline: () => before,
@@ -691,6 +722,9 @@ export function watchSave(options: WatchOptions): SaveWatch {
     return outcome.action !== "archived";
   };
 
+  console.info(
+    `[saves] rom ${options.romId}: watching ${saveFile} every ${intervalMs}ms`,
+  );
   const beat = onBeat(intervalMs, tick);
 
   return {

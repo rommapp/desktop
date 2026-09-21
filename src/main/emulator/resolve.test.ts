@@ -596,6 +596,31 @@ test("a launch that asks for fullscreen gets RetroArch's own flag", () => {
   assert.ok(!launch(false).includes("-f"));
 });
 
+test("asking to read the emulator's output asks RetroArch to produce some", () => {
+  // RetroArch names the save file it resolved and whether it wrote one at this
+  // level, which is the account no amount of watching a file produces.
+  const install = fakeInstall(["mgba"]);
+  const args = (logEmulatorOutput: boolean) =>
+    resolveLaunch({
+      config: testConfig({
+        retroarchPath: install.binary,
+        retroarchCoresPath: install.root,
+        logEmulatorOutput,
+      }),
+      platformSlug: "gba",
+      cores: ["mgba"],
+      romPath: "/cache/1/game.gba",
+      savePaths: null,
+    }).args;
+
+  assert.ok(args(true).includes("--verbose"));
+  assert.ok(!args(false).includes("--verbose"));
+  // Before the content, like every other flag.
+  assert.ok(
+    args(true).indexOf("--verbose") < args(true).indexOf("/cache/1/game.gba"),
+  );
+});
+
 test("a standalone mapping is never handed a fullscreen flag", () => {
   // It is RetroArch's. A mapping's arguments are the user's, and its emulator's
   // own flag is whatever that emulator calls it.

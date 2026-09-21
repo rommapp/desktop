@@ -39,6 +39,7 @@ function emptyConfig(): DesktopConfig {
     // launch, so the cost of the default being wrong is one setting away.
     syncSaves: true,
     retroarchAutosaveSeconds: DEFAULT_RETROARCH_AUTOSAVE_SECONDS,
+    logEmulatorOutput: false,
     // On for the same reason: the server already keeps playtime, a native launch
     // is the one play it cannot see, and a failure costs a queued row rather
     // than a launch.

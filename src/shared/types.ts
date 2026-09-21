@@ -290,6 +290,12 @@ export interface DesktopConfig {
    *  path: a configured emulator sets its own. Zero leaves the setting
    *  untouched. */
   retroarchAutosaveSeconds: number;
+  /** Repeat the emulator's own output in the shell's log, and ask the built-in
+   *  RetroArch launch to be verbose. Off by default: an emulator is chatty, and
+   *  this is for the launch nobody can explain, where RetroArch naming the save
+   *  file it resolved and whether it wrote one is the answer the shell cannot
+   *  work out by watching a file. */
+  logEmulatorOutput: boolean;
   /** Report how long the emulator ran to RomM's play session list, so a native
    *  launch counts towards the playtime the server keeps for a game. The server
    *  can see a ROM being downloaded; it cannot see it being played, so without

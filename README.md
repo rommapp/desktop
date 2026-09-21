@@ -145,6 +145,7 @@ launch attempt without a restart.
 | `saveDataPath`           | `save-data`        | [Save and state](#save-data) directories                                |
 | `syncSaves`              | `true`             | [Move saves to and from RomM](#saves-synced-with-romm) around a launch  |
 | `retroarchAutosaveSeconds` | `10`             | How often RetroArch is asked to write the save, at least 6s; `0` leaves it alone |
+| `logEmulatorOutput`      | `false`            | [Repeat the emulator's own log](#when-a-save-does-not-sync) in the shell's      |
 | `trackPlaySessions`      | `true`             | [Report how long you played](#play-sessions-reported-to-romm) to RomM   |
 | `minPlaySessionSeconds`  | `60`               | Shortest run that counts as having played something                     |
 | `deviceId`               | set by the shell   | This machine's row in RomM's device list                                |
@@ -482,6 +483,23 @@ configured emulator is handed neither: its arguments and its config are yours.
 
 Nothing here can fail a launch. One limit remains: save states are not synced at
 all, since RomM's API has no slot or device tracking for them.
+
+### When a save does not sync
+
+Every decision a launch makes about saves is logged. A run says what the server
+answered and what it is allowed to do, whether it is watching the file and how
+often, and the outcome of each transfer: bytes sent to the slot, an archival
+save filed, a refusal with the server's reason, or nothing to send with the
+file's size and the time it was last written. A save that never arrives is one
+of those lines.
+
+What the shell cannot see is the emulator's own reasoning, and "nothing to send,
+the save is unchanged" is usually about that: the file the shell handed over
+came back untouched, so the emulator wrote its save somewhere else or did not
+write one. Set `logEmulatorOutput` to `true` and the emulator's output is
+repeated in the shell's log, capped per launch, with the built-in RetroArch
+launch asked to be verbose. RetroArch then names the configs it appended and the
+save file it resolved, which is what settles where a save went.
 
 ### Play sessions reported to RomM
 

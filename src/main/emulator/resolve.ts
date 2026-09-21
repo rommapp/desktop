@@ -558,6 +558,11 @@ export function resolveLaunch({
   // not ask leaves the user's own fullscreen setting to decide.
   const displayArgs = fullscreen ? ["-f"] : [];
 
+  // Only worth asking for when someone is reading it: RetroArch names the save
+  // file it resolved and whether it wrote one at this level, which is the
+  // account the shell cannot produce by watching a file.
+  const logArgs = config.logEmulatorOutput ? ["--verbose"] : [];
+
   return {
     command: config.retroarchPath,
     // The generated configs first: --appendconfig is read as RetroArch starts
@@ -568,6 +573,7 @@ export function resolveLaunch({
       core.path,
       ...saveArgs,
       ...displayArgs,
+      ...logArgs,
       romPath,
     ],
     label: `RetroArch (${core.name})`,

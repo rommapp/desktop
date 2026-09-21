@@ -34,6 +34,7 @@ export function testConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     // that wants it says so.
     syncSaves: false,
     retroarchAutosaveSeconds: DEFAULT_RETROARCH_AUTOSAVE_SECONDS,
+    logEmulatorOutput: false,
     // Off by default: reporting a play session reaches the network, so a test
     // that wants it says so.
     trackPlaySessions: false,
