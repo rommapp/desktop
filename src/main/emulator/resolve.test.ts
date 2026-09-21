@@ -21,6 +21,7 @@ import {
   resolveCore,
   resolveEmulatorCommand,
   resolveLaunch,
+  usesBuiltInRetroArch,
 } from "./resolve.ts";
 
 /** A throwaway tree standing in for a RetroArch install. */
@@ -541,6 +542,31 @@ test("a RetroArch launch appends the launch config beside the firmware one", () 
     withoutFirmware.args[0],
     "--appendconfig=/save-data/.retroarch/autosave.cfg",
   );
+});
+
+test("only the built-in path is the one the shell writes arguments for", () => {
+  // What gates generating a config: a mapping never names one, so writing it
+  // would leave a stray file no launch reads.
+  const install = fakeInstall([]);
+  const mapped = testConfig({
+    emulators: [
+      {
+        platformSlug: "ps2",
+        command: install.binary,
+        args: ["-batch", "{rom}"],
+      },
+    ],
+  });
+  assert.equal(usesBuiltInRetroArch(mapped, "ps2"), false);
+  assert.equal(usesBuiltInRetroArch(mapped, "gba"), true);
+
+  // A wildcard row covers every platform, so none of them is the built-in path.
+  const wildcard = testConfig({
+    emulators: [
+      { platformSlug: "*", command: install.binary, args: ["{rom}"] },
+    ],
+  });
+  assert.equal(usesBuiltInRetroArch(wildcard, "gba"), false);
 });
 
 test("a launch that asks for fullscreen gets RetroArch's own flag", () => {

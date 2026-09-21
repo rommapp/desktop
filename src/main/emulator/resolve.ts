@@ -212,6 +212,21 @@ export function emulatorReadsPlaylist(
 }
 
 /**
+ * Whether this platform would launch through the built-in RetroArch path, whose
+ * argument list the shell writes itself.
+ *
+ * Asked before a launch generates a config for itself: a mapping's arguments
+ * are the user's, so nothing generated is ever named on that path, and writing
+ * a file no launch reads would leave the user a stray config to wonder about.
+ */
+export function usesBuiltInRetroArch(
+  config: DesktopConfig,
+  platformSlug: string,
+): boolean {
+  return findMapping(config, platformSlug) === null;
+}
+
+/**
  * Whether this platform's launch will actually read and write the save file the
  * shell owns.
  *

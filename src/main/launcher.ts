@@ -35,6 +35,7 @@ import {
   findPreferredCores,
   hasPlatformSpecificEmulator,
   resolveLaunch,
+  usesBuiltInRetroArch,
 } from "./emulator/resolve.ts";
 import { syncDiscSet } from "./discs/sync.ts";
 import { reportPlaySessions } from "./play/report.ts";
@@ -748,8 +749,13 @@ export class Launcher {
       // content closes, and a launch that never reaches that moment has nothing
       // for the push to find.
       const autosave = autosaveSeconds(config.retroarchAutosaveSeconds);
+      // Only for the launch that will name it. A mapping's arguments are the
+      // user's, so a generated config would be a file nothing reads.
       const launchConfig =
-        savePaths && syncsSaves && config.saveDataPath
+        savePaths &&
+        syncsSaves &&
+        config.saveDataPath &&
+        usesBuiltInRetroArch(config, request.platformSlug)
           ? await writeAutosaveConfig(config.saveDataPath, autosave)
           : null;
 
