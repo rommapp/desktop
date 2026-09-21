@@ -1,9 +1,11 @@
 import { BrowserWindow, app } from "electron";
+import { type DesktopConfig } from "../shared/types.ts";
 import { isSetupMode } from "./argv.ts";
 import { loadConfig } from "./config.ts";
 import { offerRetroArchInstall } from "./emulator/bootstrap.ts";
 import { broadcastLaunchState, registerIpc } from "./ipc.ts";
 import { Launcher } from "./launcher.ts";
+import { reportPlaySessions } from "./play/report.ts";
 import {
   createMainWindow,
   createSetupWindow,
@@ -62,23 +64,67 @@ if (!app.requestSingleInstanceLock()) {
   void start();
 }
 
+/** The backlog belongs to the machine rather than to any one launch, so nothing
+ *  cancels it. */
+const NEVER_CANCELLED = new AbortController().signal;
+
+/**
+ * Offer the server whatever play sessions it has not been told about.
+ *
+ * Every other attempt happens when an emulator exits, which is enough for a
+ * machine that is used again. It is not enough for one that was played offline
+ * and then set down: without this, that session waits for a launch that may
+ * never come.
+ *
+ * Every load rather than the first, because the first is the one least likely to
+ * be signed in. A shell opened after its session expired lands on the login page,
+ * and the load that matters is the one after the user has signed back in. An
+ * empty queue costs a file that is not on disk, so the repeats are cheap.
+ *
+ * This cannot become a reload cycle with the sign-out nudge, which reloads the
+ * window on a 401: the second load is the login page, and a window already there
+ * is one the nudge leaves alone.
+ */
+function reportBacklog(config: DesktopConfig, window: BrowserWindow): void {
+  window.webContents.on("did-finish-load", () => {
+    void reportPlaySessions({
+      config,
+      session: window.webContents.session,
+      signal: NEVER_CANCELLED,
+    });
+  });
+}
+
 async function openInitialWindow(): Promise<void> {
   const config = await loadConfig();
   if (config.serverUrl && !forceSetup) {
     const window = createMainWindow(config.serverUrl, config.fullscreen);
     // After the page, not beside it: see offerEmulatorOnce.
     offerEmulatorOnce(config, window);
+    reportBacklog(config, window);
     return;
   }
   forceSetup = false;
   // Setup stays windowed whatever the setting says: filling a screen to ask
   // for one address is hostile, and it is the one screen needing a keyboard.
   createSetupWindow((serverUrl) => {
-    const window = createMainWindow(serverUrl, config.fullscreen);
-    // Re-read rather than reuse: the config in hand predates the address just
-    // saved, and the offer is gated on that being set. This is the true first
-    // run, so it is the one time the offer matters most.
-    void loadConfig().then((saved) => offerEmulatorOnce(saved, window));
+    void (async () => {
+      // Re-read rather than reuse: the config in hand predates the address just
+      // saved, and the offer is gated on that being set. This is the true first
+      // run, so it is the one time the offer matters most. Read before the
+      // window exists, not after: createMainWindow starts navigating
+      // immediately, and a local server can finish loading before an awaited
+      // read resolves, which would leave the listeners below with no load left
+      // to hear.
+      const saved = await loadConfig();
+      const window = createMainWindow(serverUrl, saved.fullscreen);
+      offerEmulatorOnce(saved, window);
+      // --setup on a shell that has been used before reaches here with a
+      // backlog behind it. Safe whether or not the address just typed is the
+      // same one: a session is only ever offered to the server it was played
+      // against.
+      reportBacklog(saved, window);
+    })();
   });
 }
 

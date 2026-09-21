@@ -80,24 +80,22 @@ RomM's session lasts fourteen days by default and is renewed by use, so a shell
 opened regularly stays signed in. One left alone for longer, or signed out from
 elsewhere, comes back to a server that no longer recognises it.
 
-The shell notices this itself, because it makes requests of its own that the
-page never sees: the ROM download, the disc list, the firmware list, the save
-negotiation. RomM answers those with a 401, which is its own signal that the
-caller should go and sign in -- distinct from the 403 it answers a user whose
-account simply lacks a scope, and which is not a session problem and not treated
-as one here. On a 401 the shell reloads the window and lets RomM's own frontend
-take it from there, so you get the login your server ships rather than a form
-this shell invented, and an OIDC server still goes to its provider.
+The shell notices, because it makes requests the page never sees: the ROM
+download, the disc list, the firmware list, the save negotiation, the play
+session report. RomM answers those with a 401 -- its signal to go and sign in,
+distinct from the 403 it gives an account that simply lacks a scope. On a 401
+the shell reloads the window and lets RomM's own frontend take it from there, so
+you get the login your server ships, and an OIDC server still goes to its
+provider.
 
-A launch that stops for this reason says so in as many words rather than
-reporting a failed download, and nothing is lost by it: a save the shell could
-not send stays on disk and is offered again the next time you launch that game.
-Sign in and press Play again.
+A launch that stops for this says so rather than reporting a failed download,
+and nothing is lost: a save the shell could not send stays on disk for the next
+launch of that game, and a play session it could not report stays queued. Sign
+in and press Play again.
 
-One reload per sign-out, not one per request: a single launch asks the server
-several times and an expired session fails all of them. A login page already on
-screen is left alone, and so is a window opened for an identity provider, since
-that is a sign-in already happening.
+One reload per sign-out, not one per request. A login page already on screen is
+left alone, and so is a window opened for an identity provider, which is a
+sign-in already under way.
 
 ## Using a controller
 
@@ -146,6 +144,8 @@ launch attempt without a restart.
 | `cacheLimitBytes`        | 20 GB              | Cache size before LRU eviction                                          |
 | `saveDataPath`           | `save-data`        | [Save and state](#save-data) directories                                |
 | `syncSaves`              | `true`             | [Move saves to and from RomM](#saves-synced-with-romm) around a launch  |
+| `trackPlaySessions`      | `true`             | [Report how long you played](#play-sessions-reported-to-romm) to RomM   |
+| `minPlaySessionSeconds`  | `60`               | Shortest run that counts as having played something                     |
 | `deviceId`               | set by the shell   | This machine's row in RomM's device list                                |
 | `useRommFirmware`        | `true`             | [Mirror RomM's firmware library](#firmware-from-romm)                   |
 | `biosPath`               | `bios`             | Where that mirror lives                                                 |
@@ -469,6 +469,40 @@ exits, so closing the window mid-game on Windows or Linux quits the shell and
 that save waits for the next launch; and save states are not synced at all,
 since RomM's API has no slot or device tracking for them.
 
+### Play sessions reported to RomM
+
+RomM keeps a playtime record per game, and a native launch is invisible to it.
+The server can see a ROM being downloaded; it cannot see the forty minutes that
+followed. With `trackPlaySessions` on, the shell times the emulator between the
+spawn and the exit and posts that to RomM, which is what advances the game's
+last-played date, marks it as now playing, and feeds the playtime totals. Time
+the machine spent asleep with the emulator open is not counted.
+
+A run shorter than `minPlaySessionSeconds` is not recorded. A launch that fails
+once the emulator has started exits in seconds, and recording those would move
+the game's last-played date and rewind a finished status back to incomplete for
+a game nobody played.
+
+Sessions are queued in `play-sessions.json` beside the config and removed only
+once the server has taken them, so a weekend of playing on a train reaches RomM
+the next time the shell can see it -- at the next launch that finishes, or when
+a window loads. Each session records the server it was played against and is
+only ever offered to that one, since a rom id belongs to the server that issued
+it: point the shell elsewhere and the old backlog waits rather than being
+misfiled.
+
+A session is filed against whoever is signed in when it arrives, not whoever
+played it, so the queue is bound to an account as well. Sign a different account
+into the same server while a backlog is waiting and the backlog is discarded
+rather than landing on them. Losing a play record is the lesser of the two, and
+the only one that is not also someone else's business.
+
+Like save sync, none of this can fail a launch, and it reports as the same
+`deviceId` the saves sync under. A machine that could not register one sends
+nothing and waits, rather than filing playtime against no machine at all.
+Turning `trackPlaySessions` off stops sessions being recorded; anything already
+queued is still sent.
+
 ### Firmware from RomM
 
 RomM has a firmware library of its own: BIOS files uploaded per platform, served
@@ -609,6 +643,8 @@ src/
     discs/          Multi-disc sets: disc selection and the .m3u that boots
                     them
     firmware/       Mirroring RomM's own BIOS library, per platform
+    play/           Timing a launch and reporting it to RomM's play sessions,
+                    queued on disk until the server takes it
     safety.ts       Validation of everything the renderer sends
     window.ts       Window creation and navigation policy
     index.ts        App lifecycle, single-instance lock, initial window
