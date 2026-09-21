@@ -15,6 +15,7 @@ import {
   emulatorLabel,
   emulatorReadsPlaylist,
   emulatorUsesSaveFile,
+  emulatorUsesStateDir,
   hasPlatformSpecificEmulator,
   isSafeCoreName,
   requiresCore,
@@ -1190,8 +1191,8 @@ test("emulatorUsesSaveFile answers for the emulator a platform would use", () =>
         command: "/usr/bin/mgba",
         args: ["--savedir", "{saves}", "{rom}"],
       },
-      // Save states are not synced, so naming only those is not consuming the
-      // save file.
+      // Naming only the state tokens is not consuming the save file, though
+      // it is what emulatorUsesStateDir is looking for.
       {
         platformSlug: "n64",
         command: "/usr/bin/mupen64plus",
@@ -1211,4 +1212,39 @@ test("emulatorUsesSaveFile answers for the emulator a platform would use", () =>
   assert.equal(emulatorUsesSaveFile(config, "gba"), false);
   assert.equal(emulatorUsesSaveFile(config, "n64"), false);
   assert.equal(emulatorUsesSaveFile(config, "ps2"), false);
+});
+
+test("emulatorUsesStateDir answers for where the states will land", () => {
+  // No mapping: the built-in RetroArch path, whose generated config pins
+  // savestate_directory and turns RetroArch's own sorting off.
+  assert.ok(emulatorUsesStateDir(testConfig(), "psx"));
+
+  const config = testConfig({
+    emulators: [
+      // The directory is enough, unlike the save file: the mirror only reads
+      // it, and it belongs to this ROM alone.
+      {
+        platformSlug: "n64",
+        command: "/usr/bin/mupen64plus",
+        args: ["--statedir", "{states}", "{rom}"],
+      },
+      // Naming the file pins it just as well.
+      {
+        platformSlug: "snes",
+        command: "/usr/bin/retroarch",
+        args: ["-L", "{core}", "-S", "{statefile}", "{rom}"],
+      },
+      // Saves pinned, states left wherever the emulator puts them: there is
+      // nothing of this game's states to find, so nothing to mirror.
+      {
+        platformSlug: "gba",
+        command: "/usr/bin/mgba",
+        args: ["-s", "{savefile}", "{rom}"],
+      },
+    ],
+  });
+
+  assert.ok(emulatorUsesStateDir(config, "n64"));
+  assert.ok(emulatorUsesStateDir(config, "snes"));
+  assert.equal(emulatorUsesStateDir(config, "gba"), false);
 });

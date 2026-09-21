@@ -144,6 +144,7 @@ launch attempt without a restart.
 | `cacheLimitBytes`          | 20 GB              | Cache size before LRU eviction                                                   |
 | `saveDataPath`             | `save-data`        | [Save and state](#save-data) directories                                         |
 | `syncSaves`                | `true`             | [Move saves to and from RomM](#saves-synced-with-romm) around a launch           |
+| `syncStates`               | `true`             | [Send savestates to RomM](#savestates-mirrored-to-romm) after a launch           |
 | `retroarchAutosaveSeconds` | `10`               | How often RetroArch is asked to write the save, at least 6s; `0` leaves it alone |
 | `logEmulatorOutput`        | `false`            | [Repeat the emulator's own log](#when-a-save-does-not-sync) in the shell's       |
 | `trackPlaySessions`        | `true`             | [Report how long you played](#play-sessions-reported-to-romm) to RomM            |
@@ -505,8 +506,7 @@ were emptied, so a negotiation can tell a save nobody ever uploaded from one its
 owner removed, and the next launch drops the local copy instead of offering it
 back. A save written after the deletion is new progress and is still sent.
 
-Nothing here can fail a launch. One limit remains: save states are not synced at
-all, since RomM's API has no slot or device tracking for them.
+Nothing here can fail a launch.
 
 ### When a save does not sync
 
@@ -524,6 +524,34 @@ write one. Set `logEmulatorOutput` to `true` and the emulator's output is
 repeated in the shell's log, capped per launch, with the built-in RetroArch
 launch asked to be verbose. RetroArch then names the configs it appended and the
 save file it resolved, which is what settles where a save went.
+
+### Savestates mirrored to RomM
+
+With `syncStates` on, the savestates a launch writes are sent to RomM once the
+emulator exits. One way only: nothing is downloaded, nothing is deleted, and no
+state in RomM is written over a local file. A savestate belongs to the core and
+the build that wrote it, so these are for browsing and fetching by hand, not for
+resuming a game on another machine.
+
+Each slot keeps one entry, named for the game, this machine and the slot.
+Playing that slot again replaces it:
+
+```
+Chrono Trigger (USA) [study-pc slot 3].state
+```
+
+Naming the machine keeps two of them from overwriting each other's slots.
+RetroArch's automatic state is `[... auto]`, its `.bak` copies are skipped, and
+savestate thumbnails go up with the state if you have them switched on.
+
+Only the slots a run actually wrote are sent, and anything over 128 MiB is
+logged rather than sent: a state and the request framing it are both in memory
+while it uploads, and the heaviest state a real core writes is far below that.
+
+Mirroring needs the states to land where the shell can find them: the built-in
+RetroArch path, which pins `savestate_directory`, or a mapping naming
+`{states}` or `{statefile}`. Turn `syncStates` off to stop; the local files stay
+where they are.
 
 ### Play sessions reported to RomM
 

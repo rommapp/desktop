@@ -285,6 +285,12 @@ export interface DesktopConfig {
    *  and a slot that moved on is archived rather than overwritten. Turning it
    *  off leaves the local files exactly where they are. */
   syncSaves: boolean;
+  /** Mirror the savestates a native launch writes into RomM, after it exits.
+   *  One way only: states go up, nothing comes down and nothing is deleted,
+   *  because a state belongs to the core and build that wrote it and is not
+   *  something to resume from on another machine. Each slot lands under a name
+   *  of its own, so a run rewrites that slot rather than adding to a pile. */
+  syncStates: boolean;
   /** How often the built-in RetroArch launch is asked to write the save to
    *  disk, in seconds. RetroArch otherwise writes it once, when the content
    *  closes, which is a single moment for a crash or a launcher that exits
@@ -357,9 +363,9 @@ export type ShellCapability =
   | "multi-disc"
   /** Saves are moved between the server and the emulator around a native
    *  launch: the save pull is reported as the "save" launch stage, and what
-   *  happened to a save afterwards as a "sync" status carrying `sync`. Save
-   *  states are not synced, and a shell without this capability leaves both
-   *  sides of it undone. */
+   *  happened to a save afterwards as a "sync" status carrying `sync`. A shell
+   *  without this capability leaves both sides of it undone. Savestates are a
+   *  separate setting and travel one way, so they report nothing here. */
   | "save-sync"
   /** How long the emulator ran is reported to RomM's play session list, and
    *  carried on the "exited" state as `play`. A shell without this leaves a
