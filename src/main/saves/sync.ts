@@ -19,7 +19,11 @@
 import { type Session } from "electron";
 import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { type DesktopConfig, type SaveSyncOutcome } from "../../shared/types.ts";
+import {
+  type DesktopConfig,
+  type SaveSyncOutcome,
+} from "../../shared/types.ts";
+import { toEntries, type PlaySessionRecord } from "../play/session.ts";
 import { downloadFromServer } from "../rom-cache.ts";
 import { resolveDownloadUrl } from "../safety.ts";
 import { ensureDeviceId, forgetDeviceId } from "./device.ts";
@@ -114,9 +118,10 @@ async function negotiate(options: {
   if (response.status === 404) return { kind: "unknown-device" };
   if (response.status >= 300) return { kind: "unreachable" };
 
-  const body = response.body as
-    | { session_id?: unknown; operations?: unknown }
-    | null;
+  const body = response.body as {
+    session_id?: unknown;
+    operations?: unknown;
+  } | null;
   const sessionId = body?.session_id;
   if (typeof sessionId !== "number" || !Array.isArray(body?.operations)) {
     return { kind: "unreachable" };
@@ -399,7 +404,13 @@ async function runPull({
     if (!archived || archived.kind !== "ok") {
       // Nothing was pulled, so the local copy is still the one on disk and the
       // push after exit is still free to send it.
-      return { allowance: plan.allowance, before, deviceId, sessionId, outcome };
+      return {
+        allowance: plan.allowance,
+        before,
+        deviceId,
+        sessionId,
+        outcome,
+      };
     }
   }
 
@@ -443,7 +454,9 @@ export interface PushOptions {
  * reporting, which is the common case, because most launches end with the
  * emulator having written nothing.
  */
-export function pushSave(options: PushOptions): Promise<SaveSyncOutcome | null> {
+export function pushSave(
+  options: PushOptions,
+): Promise<SaveSyncOutcome | null> {
   // The same turn the pull takes, for the same reason and against the same
   // launch: this reads the file to decide whether to send it and then sends
   // what it read, and a relaunch pulling in between would make those two
@@ -535,6 +548,12 @@ function describe(result: UploadResult): string {
  * fails to close is a stale row rather than a lost save. The counts are what
  * this client did, reported here rather than on each upload -- the upload
  * endpoint also has a counter, and feeding both would count every save twice.
+ *
+ * The play session that produced these saves rides along, because this endpoint
+ * is the only one that pairs the two: a session ingested here is stored against
+ * the sync session, so the server can say which play wrote the save it received.
+ * Reported as taken only on a 2xx, which is what lets the caller drop it from
+ * the queue; anything else leaves it there for the ordinary flush.
  */
 export async function completeSync(options: {
   serverUrl: string;
@@ -543,9 +562,11 @@ export async function completeSync(options: {
   completed: number;
   failed: number;
   signal: AbortSignal;
-}): Promise<void> {
-  const { serverUrl, session, sessionId, completed, failed, signal } = options;
-  await apiRequest({
+  play?: readonly PlaySessionRecord[];
+}): Promise<{ playAccepted: boolean }> {
+  const { serverUrl, session, sessionId, completed, failed, signal, play } =
+    options;
+  const response = await apiRequest({
     serverUrl,
     session,
     path: `/api/sync/sessions/${sessionId}/complete`,
@@ -554,7 +575,12 @@ export async function completeSync(options: {
     body: JSON.stringify({
       operations_completed: completed,
       operations_failed: failed,
+      ...(play?.length ? { play_sessions: toEntries(play) } : {}),
     }),
     signal,
   }).catch(() => undefined);
+
+  return {
+    playAccepted: Boolean(play?.length && response && response.status < 300),
+  };
 }

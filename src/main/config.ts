@@ -12,6 +12,8 @@ import {
   DEFAULT_CACHE_LIMIT_BYTES,
   type DesktopConfig,
 } from "../shared/types.ts";
+import { DEFAULT_MINIMUM_PLAY_SECONDS } from "./play/session.ts";
+import { QUEUE_FILE } from "./play/queue.ts";
 
 const CONFIG_FILE = "desktop-config.json";
 
@@ -35,6 +37,11 @@ function emptyConfig(): DesktopConfig {
     // already knows how to do, and both fail quietly rather than failing a
     // launch, so the cost of the default being wrong is one setting away.
     syncSaves: true,
+    // On for the same reason: the server already keeps playtime, a native launch
+    // is the one play it cannot see, and a failure costs a queued row rather
+    // than a launch.
+    trackPlaySessions: true,
+    minPlaySessionSeconds: DEFAULT_MINIMUM_PLAY_SECONDS,
     deviceId: null,
     libraryPath: null,
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
@@ -75,6 +82,13 @@ export function withDetectedDefaults(config: DesktopConfig): DesktopConfig {
 
 export function configPath(): string {
   return join(app.getPath("userData"), CONFIG_FILE);
+}
+
+/** Where play sessions wait for a server that will take them. Beside the config
+ *  rather than under a configurable root: it is bookkeeping the shell owns, not
+ *  content a user would want to place. */
+export function playQueuePath(): string {
+  return join(app.getPath("userData"), QUEUE_FILE);
 }
 
 let cached: DesktopConfig | null = null;

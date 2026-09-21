@@ -1,9 +1,11 @@
 import { BrowserWindow, app } from "electron";
+import { type DesktopConfig } from "../shared/types.ts";
 import { isSetupMode } from "./argv.ts";
 import { loadConfig } from "./config.ts";
 import { offerRetroArchInstall } from "./emulator/bootstrap.ts";
 import { broadcastLaunchState, registerIpc } from "./ipc.ts";
 import { Launcher } from "./launcher.ts";
+import { reportPlaySessions } from "./play/report.ts";
 import {
   createMainWindow,
   createSetupWindow,
@@ -62,12 +64,40 @@ if (!app.requestSingleInstanceLock()) {
   void start();
 }
 
+/** The backlog belongs to the machine rather than to any one launch, so nothing
+ *  cancels it. */
+const NEVER_CANCELLED = new AbortController().signal;
+
+/**
+ * Offer the server whatever play sessions it has not been told about.
+ *
+ * Every other attempt happens when an emulator exits, which is enough for a
+ * machine that is used again. It is not enough for one that was played offline
+ * and then set down: without this, that session waits for a launch that may
+ * never come. Unlike the emulator offer, this runs for every window rather than
+ * once per run: a reopen is another chance at a server that was not there
+ * before, and an empty queue costs a file that is not on disk.
+ *
+ * Held until the page has loaded, so it goes out over a session the user has had
+ * the chance to sign back into.
+ */
+function reportBacklog(config: DesktopConfig, window: BrowserWindow): void {
+  window.webContents.once("did-finish-load", () => {
+    void reportPlaySessions({
+      config,
+      session: window.webContents.session,
+      signal: NEVER_CANCELLED,
+    });
+  });
+}
+
 async function openInitialWindow(): Promise<void> {
   const config = await loadConfig();
   if (config.serverUrl && !forceSetup) {
     const window = createMainWindow(config.serverUrl, config.fullscreen);
     // After the page, not beside it: see offerEmulatorOnce.
     offerEmulatorOnce(config, window);
+    reportBacklog(config, window);
     return;
   }
   forceSetup = false;

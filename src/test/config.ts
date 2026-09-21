@@ -2,6 +2,7 @@ import {
   DEFAULT_CACHE_LIMIT_BYTES,
   type DesktopConfig,
 } from "../shared/types.ts";
+import { DEFAULT_MINIMUM_PLAY_SECONDS } from "../main/play/session.ts";
 
 /** A complete DesktopConfig for a test to spread its own fields over. Every
  *  field is listed so that adding one to DesktopConfig fails the typecheck
@@ -31,6 +32,10 @@ export function testConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     // Off and unset by default: save sync negotiates with the server, so a test
     // that wants it says so.
     syncSaves: false,
+    // Off by default: reporting a play session reaches the network, so a test
+    // that wants it says so.
+    trackPlaySessions: false,
+    minPlaySessionSeconds: DEFAULT_MINIMUM_PLAY_SECONDS,
     deviceId: null,
     libraryPath: null,
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,

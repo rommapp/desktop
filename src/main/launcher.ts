@@ -12,7 +12,7 @@ import {
   type PlatformSupportQuery,
   type SaveSyncOutcome,
 } from "../shared/types.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, playQueuePath } from "./config.ts";
 import {
   canInstallCore,
   firstInstallableCore,
@@ -37,6 +37,15 @@ import {
   resolveLaunch,
 } from "./emulator/resolve.ts";
 import { syncDiscSet } from "./discs/sync.ts";
+import { reportPlaySessions } from "./play/report.ts";
+import { dequeue, enqueue } from "./play/queue.ts";
+import {
+  closePlaySession,
+  minimumPlayMs,
+  openPlaySession,
+  playTrackingEnabled,
+  type PlaySessionRecord,
+} from "./play/session.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
 import { resolveSavePaths } from "./saves/paths.ts";
@@ -47,7 +56,7 @@ import {
   saveSyncEnabled,
   type PullResult,
 } from "./saves/sync.ts";
-import type { Allowance, SaveStamp } from "./saves/plan.ts";
+import { AUTOSAVE_SLOT, type Allowance, type SaveStamp } from "./saves/plan.ts";
 import { assertSeparateRoots, resolveLibraryRom } from "./safety.ts";
 
 interface ActiveLaunch {
@@ -152,9 +161,9 @@ function describeInstallableEmulator(
 export class Launcher {
   private readonly active = new Map<number, ActiveLaunch>();
   private readonly emit: (state: LaunchState) => void;
-  /** Save uploads still in flight, so a quit can wait for them. Not keyed by
-   *  rom id: a push outlives the launch that started it and is deliberately not
-   *  reachable from `active`. */
+  /** Work still on its way to the server after an exit -- a save upload, a play
+   *  session -- so a quit can wait for it. Not keyed by rom id: it outlives the
+   *  launch that started it and is deliberately not reachable from `active`. */
   private readonly pushes = new Set<Promise<void>>();
 
   constructor(emit: (state: LaunchState) => void) {
@@ -759,26 +768,60 @@ export class Launcher {
         });
       });
 
+      // Timed from the spawn rather than from the exit backwards, so a player
+      // who alt-tabs away and comes back hours later is counted for the hours.
+      const play = playTrackingEnabled(config)
+        ? openPlaySession(
+            request.romId,
+            // The slot this launch plays through, which is what pairs the
+            // session with the save it wrote. Taken from whether the launch
+            // syncs at all rather than from what the pull did: a pull that found
+            // nothing to move still leaves the emulator writing to that slot.
+            syncsSaves ? AUTOSAVE_SLOT : null,
+          )
+        : null;
+
       child.on("exit", (code) => {
         this.active.delete(request.romId);
-        this.emit({ romId: request.romId, status: "exited", exitCode: code });
+        const played = play
+          ? closePlaySession(play, minimumPlayMs(config.minPlaySessionSeconds))
+          : null;
+        this.emit({
+          romId: request.romId,
+          status: "exited",
+          exitCode: code,
+          ...(played
+            ? {
+                play: {
+                  startedAt: played.startTime,
+                  durationMs: played.durationMs,
+                },
+              }
+            : {}),
+        });
         // A session is the only thing that says a negotiation happened, and a
         // negotiation is what the push is allowed to act on. Without one there
         // is nothing to offer the server and nothing to close.
-        if (savePaths && saveSync?.deviceId && saveSync.sessionId !== null) {
-          this.settlePush({
-            config,
-            session,
-            romId: request.romId,
-            saveFile: savePaths.saveFile,
-            deviceId: saveSync.deviceId,
-            before: saveSync.before,
-            allowance: saveSync.allowance,
-            signal: controller.signal,
-            sessionId: saveSync.sessionId,
-            pulled: saveSync.outcome,
-          });
-        }
+        const pushes =
+          savePaths && saveSync?.deviceId && saveSync.sessionId !== null
+            ? {
+                saveFile: savePaths.saveFile,
+                deviceId: saveSync.deviceId,
+                before: saveSync.before,
+                allowance: saveSync.allowance,
+                sessionId: saveSync.sessionId,
+                pulled: saveSync.outcome,
+              }
+            : null;
+        if (!pushes && !played) return;
+        this.settleExit({
+          config,
+          session,
+          romId: request.romId,
+          signal: controller.signal,
+          played,
+          push: pushes,
+        });
       });
 
       this.emit({ romId: request.romId, status: "running" });
@@ -804,51 +847,91 @@ export class Launcher {
   }
 
   /**
-   * Send what the emulator left behind, then close the sync session.
+   * Send what the emulator left behind, and report how long it ran.
    *
    * Detached from the exit, which has already been reported: the exit is what
    * brings the window back, and holding it until a body had finished uploading
    * would make a player wait on the network for a game they have stopped
    * playing. What happened arrives as its own status instead.
    */
-  private settlePush(options: {
+  private settleExit(options: {
     config: DesktopConfig;
     session: Session;
     romId: number;
-    saveFile: string;
-    deviceId: string;
-    before: SaveStamp | null;
-    allowance: Allowance;
     signal: AbortSignal;
-    sessionId: number;
-    /** What the pull did, so the session counts both ends. */
-    pulled: SaveSyncOutcome | null;
+    /** The session just played, when the run was long enough to be one. */
+    played: PlaySessionRecord | null;
+    /** Absent when this launch never negotiated a save. */
+    push: {
+      saveFile: string;
+      deviceId: string;
+      before: SaveStamp | null;
+      allowance: Allowance;
+      sessionId: number;
+      /** What the pull did, so the session counts both ends. */
+      pulled: SaveSyncOutcome | null;
+    } | null;
   }): void {
+    const { config, session, romId, signal, played, push } = options;
+    const serverUrl = config.serverUrl;
+
     const run = (async () => {
-      const pushed = await pushSave(options);
-      if (pushed) {
-        this.emit({ romId: options.romId, status: "sync", sync: pushed });
+      // Queued before a byte is sent. Everything below can fail, and a play
+      // session that is only in memory when it does is one nobody can recover.
+      if (played) {
+        await enqueue(playQueuePath(), played).catch(() => undefined);
       }
 
-      // Both ends of the launch, counted here rather than by the server: the
-      // upload endpoint has a counter of its own and feeding both would count
-      // every save twice. A 404 or a refusal costs a stale session row and
-      // nothing else, so this is the last thing tried and the only thing that
-      // failing is not worth acting on.
-      const outcomes = [options.pulled, pushed].filter(
-        (outcome): outcome is SaveSyncOutcome => outcome !== null,
-      );
-      const serverUrl = options.config.serverUrl;
-      if (serverUrl) {
-        await completeSync({
-          serverUrl,
-          session: options.session,
-          sessionId: options.sessionId,
-          completed: outcomes.filter((o) => o.action !== "failed").length,
-          failed: outcomes.filter((o) => o.action === "failed").length,
-          signal: options.signal,
+      let playDelivered = false;
+
+      if (push) {
+        const pushed = await pushSave({
+          config,
+          session,
+          romId,
+          signal,
+          saveFile: push.saveFile,
+          deviceId: push.deviceId,
+          before: push.before,
+          allowance: push.allowance,
         });
+        if (pushed) {
+          this.emit({ romId, status: "sync", sync: pushed });
+        }
+
+        // Both ends of the launch, counted here rather than by the server: the
+        // upload endpoint has a counter of its own and feeding both would count
+        // every save twice. A 404 or a refusal costs a stale session row and
+        // nothing else, so this is the last thing tried and the only thing that
+        // failing is not worth acting on.
+        const outcomes = [push.pulled, pushed].filter(
+          (outcome): outcome is SaveSyncOutcome => outcome !== null,
+        );
+        if (serverUrl) {
+          // The play session goes with it, which is the only way it can be
+          // stored against the saves this launch moved.
+          const { playAccepted } = await completeSync({
+            serverUrl,
+            session,
+            sessionId: push.sessionId,
+            completed: outcomes.filter((o) => o.action !== "failed").length,
+            failed: outcomes.filter((o) => o.action === "failed").length,
+            signal,
+            play: played ? [played] : undefined,
+          });
+          playDelivered = playAccepted;
+        }
       }
+
+      if (playDelivered && played) {
+        await dequeue(playQueuePath(), [played]).catch(() => undefined);
+      }
+
+      // Whatever is still queued, this launch's session included when it did not
+      // ride along above. An exit is the moment the shell most recently had a
+      // server in front of it, so a backlog from a journey with no network is
+      // cleared here rather than waiting for a launch that thinks to ask.
+      await reportPlaySessions({ config, session, signal });
     })().catch(() => undefined);
 
     this.pushes.add(run);

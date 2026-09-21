@@ -126,6 +126,8 @@ next launch attempt without a restart and is not overwritten by the next save.
 | `cacheLimitBytes`        | 20 GB              | Cache size before LRU eviction                                          |
 | `saveDataPath`           | `save-data`        | [Save and state](#save-data) directories                                |
 | `syncSaves`              | `true`             | [Move saves to and from RomM](#saves-synced-with-romm) around a launch  |
+| `trackPlaySessions`      | `true`             | [Report how long you played](#play-sessions-reported-to-romm) to RomM   |
+| `minPlaySessionSeconds`  | `60`               | Shortest run that counts as having played something                     |
 | `deviceId`               | set by the shell   | This machine's row in RomM's device list                                |
 | `useRommFirmware`        | `true`             | [Mirror RomM's firmware library](#firmware-from-romm)                   |
 | `biosPath`               | `bios`             | Where that mirror lives                                                 |
@@ -555,6 +557,50 @@ Save states are not synced. RomM's API has no slot, content hash or device
 tracking for them, so `<saveDataPath>/<romId>/states/` belongs to this machine
 alone.
 
+### Play sessions reported to RomM
+
+RomM keeps a playtime record per game, and a native launch is invisible to it.
+The server can see a ROM being downloaded; it cannot see the forty minutes that
+followed, so without this a game played here reads as never played at all. With
+`trackPlaySessions` on, the shell times the emulator between the spawn and the
+exit and posts that to RomM's play session list, which is what advances the
+game's last-played date, marks it as now playing, and feeds the playtime totals.
+
+The clock is monotonic rather than the wall clock, which matters in two ordinary
+cases. A machine whose time is corrected mid-game would otherwise report a
+session that ran backwards, which the server rejects outright. A laptop suspended
+with the emulator open would otherwise bill you for the eight hours it spent
+asleep. Neither is counted; what is counted is time the machine was awake with
+the emulator running.
+
+A run shorter than `minPlaySessionSeconds` is not recorded. This is a floor
+rather than a rounding: a launch that fails once the process has started -- a
+core that rejects the ROM, an emulator that cannot open a display -- exits in
+seconds, and recording those would move the game's last-played date, mark it as
+now playing and rewind a finished status back to incomplete for a game nobody
+played. A minute is past any of those and under anything you would call a
+session. Setting it to `0` still refuses a sub-second run, which the server
+cannot represent.
+
+Sessions are queued on disk before anything is sent, in `play-sessions.json`
+beside the config, and removed only once the server has answered about them. So a
+weekend of playing on a train reaches RomM the next time the shell has a server
+in front of it, and the backlog goes up with the next launch to finish rather
+than waiting for one per session. Delivery is therefore at least once, which is
+safe here because RomM identifies a session by device, game and start time and
+counts a resent one only once. The queue holds 500 sessions or 90 days, whichever
+comes first, dropping the oldest.
+
+A session played through a synced save rides along on the same call that closes
+the save sync, so RomM can say which play wrote the save it received. Everything
+else goes up on its own. A refusal that could pass -- no session, a missing
+scope, a server that is down -- leaves the record queued; one about the payload
+itself does not, so a single bad row cannot block the sessions behind it forever.
+
+Like save sync, none of this can fail a launch, and the device it reports as is
+the same `deviceId` the saves sync under. Turning `trackPlaySessions` off stops
+sessions being recorded at all; anything already queued is still sent.
+
 ### Firmware from RomM
 
 RomM has a firmware library of its own: BIOS files uploaded per platform,
@@ -730,6 +776,8 @@ src/
     discs/          Multi-disc sets: disc selection and the .m3u that boots
                     them
     firmware/       Mirroring RomM's own BIOS library, per platform
+    play/           Timing a launch and reporting it to RomM's play sessions,
+                    queued on disk until the server takes it
     safety.ts       Validation of everything the renderer sends
     window.ts       Window creation and navigation policy
     index.ts        App lifecycle, single-instance lock, initial window

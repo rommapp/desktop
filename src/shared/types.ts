@@ -97,6 +97,13 @@ export interface SaveSyncOutcome {
   detail?: string;
 }
 
+/** What was recorded for one finished play session. */
+export interface PlaySessionSummary {
+  /** ISO 8601 in UTC, as the server is told it. */
+  startedAt: string;
+  durationMs: number;
+}
+
 export interface LaunchState {
   romId: number;
   status: LaunchStatus;
@@ -137,6 +144,10 @@ export interface LaunchState {
   error?: { code: LaunchErrorCode; message: string };
   /** Process exit code, set when status is "exited". */
   exitCode?: number | null;
+  /** The play session this launch just finished, set when status is "exited"
+   *  and the run was long enough to count as one. Absent means nothing was
+   *  recorded: tracking off, or an emulator that exited too quickly. */
+  play?: PlaySessionSummary;
   /** What happened to a save, set when status is "sync". */
   sync?: SaveSyncOutcome;
 }
@@ -262,6 +273,18 @@ export interface DesktopConfig {
    *  and a slot that moved on is archived rather than overwritten. Turning it
    *  off leaves the local files exactly where they are. */
   syncSaves: boolean;
+  /** Report how long the emulator ran to RomM's play session list, so a native
+   *  launch counts towards the playtime the server keeps for a game. The server
+   *  can see a ROM being downloaded; it cannot see it being played, so without
+   *  this a game played here reads as never played at all. A session that cannot
+   *  be sent is queued and offered again later, so turning this off is the only
+   *  thing that stops one being recorded. */
+  trackPlaySessions: boolean;
+  /** Shortest run that counts as having played something. A launch that fails
+   *  after the emulator starts exits in seconds, and recording those would move
+   *  the ROM's "last played", mark it as now playing, and rewind a finished
+   *  status back to incomplete for a game nobody played. */
+  minPlaySessionSeconds: number;
   /** This machine's id in the user's RomM device list, written by the shell the
    *  first time it syncs and never typed by hand. Clearing it makes the next
    *  launch register a new device, which starts with no sync history: nothing is
@@ -311,7 +334,11 @@ export type ShellCapability =
    *  happened to a save afterwards as a "sync" status carrying `sync`. Save
    *  states are not synced, and a shell without this capability leaves both
    *  sides of it undone. */
-  | "save-sync";
+  | "save-sync"
+  /** How long the emulator ran is reported to RomM's play session list, and
+   *  carried on the "exited" state as `play`. A shell without this leaves a
+   *  native launch out of the server's playtime entirely. */
+  | "play-sessions";
 
 // The list itself lives in the preload, which is the only file that ships it:
 // a sandboxed preload cannot import a value, so it cannot read one from here.
