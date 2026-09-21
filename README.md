@@ -508,50 +508,6 @@ back. A save written after the deletion is new progress and is still sent.
 
 Nothing here can fail a launch.
 
-### Savestates mirrored to RomM
-
-Savestates go up too, with `syncStates` on. It is a much smaller thing than the
-save sync above, because RomM's state API is a much smaller surface: `POST
-/api/states` takes a ROM, an emulator and a file, and there is no slot, no
-content hash and no record of which device holds what. So the mirror is one
-way.
-
-```
-<saveDataPath>/<romId>/states/  ──push──▶  RomM
-```
-
-After the emulator exits, each slot this run wrote is sent. Nothing is ever
-downloaded, nothing is deleted, and no state in RomM is written over a local
-file. A savestate belongs to the core and the build that wrote it, so what
-lands in RomM is for browsing and for fetching by hand, not for resuming a game
-on another machine.
-
-Each slot keeps one entry rather than growing one per run. A state is named for
-the game, this machine and the slot:
-
-```
-Chrono Trigger (USA) [study-pc slot 3].state
-```
-
-RomM updates the entry already at that name, so playing the same slot again
-replaces it. The machine is in the name because RomM finds that entry by
-filename alone: without it, a desktop and a laptop mirroring their own slot 3
-would take turns overwriting each other, and a state from the wrong machine
-will not load. RetroArch's automatic state is `[... auto]`, and its `.bak`
-copies are left alone. If you have savestate thumbnails switched on, the
-picture goes up with the state.
-
-Only the slots a run actually wrote are sent, compared against a reading taken
-before the emulator started, so nine untouched slots cost nothing at every
-launch. Anything above the server's 512 MiB asset limit is named in the log
-rather than sent.
-
-Only a launch whose states land where the shell can find them is mirrored: the
-built-in RetroArch path, which pins `savestate_directory`, or a mapping whose
-arguments name `{states}` or `{statefile}`. Unlike the save file, the directory
-alone is enough here, since the mirror only reads it and it belongs to this ROM
-alone. Turn `syncStates` off to stop; the local files stay where they are.
-
 ### When a save does not sync
 
 Every decision a launch makes about saves is logged. A run says what the server
@@ -568,6 +524,50 @@ write one. Set `logEmulatorOutput` to `true` and the emulator's output is
 repeated in the shell's log, capped per launch, with the built-in RetroArch
 launch asked to be verbose. RetroArch then names the configs it appended and the
 save file it resolved, which is what settles where a save went.
+
+### Savestates mirrored to RomM
+
+Savestates go up too, with `syncStates` on. It is a much smaller thing than the
+save sync above, because RomM's state API is a much smaller surface: `POST
+/api/states` takes a ROM, an emulator and a file, and there is no slot, no
+content hash and no record of which device holds what. So the mirror runs one
+way only.
+
+```
+<saveDataPath>/<romId>/states/  ──push──▶  RomM
+```
+
+After the emulator exits, each slot this run wrote is sent. Nothing is ever
+downloaded, nothing is deleted, and no state in RomM is written over a local
+file. A savestate belongs to the core and the build that wrote it, so what lands
+in RomM is for browsing and for fetching by hand, not for resuming a game on
+another machine.
+
+Each slot keeps one entry rather than growing one per run. A state is named for
+the game, this machine and the slot:
+
+```
+Chrono Trigger (USA) [study-pc slot 3].state
+```
+
+RomM updates the entry already at that name, so playing the same slot again
+replaces it. The machine is in the name because RomM finds that entry by
+filename alone: without it, a desktop and a laptop mirroring their own slot 3
+would take turns overwriting each other, and a state from the wrong machine will
+not load. RetroArch's automatic state is `[... auto]`, and its `.bak` copies are
+left alone. If you have savestate thumbnails switched on, the picture goes up
+with the state.
+
+Only the slots a run actually wrote are sent, compared against a reading taken
+before the emulator started, so nine untouched slots cost nothing at every
+launch. Anything above the server's 512 MiB asset limit is named in the log
+rather than sent.
+
+Only a launch whose states land where the shell can find them is mirrored: the
+built-in RetroArch path, which pins `savestate_directory`, or a mapping whose
+arguments name `{states}` or `{statefile}`. Unlike the save file, the directory
+alone is enough here, since the mirror only reads it and it belongs to this ROM
+alone. Turn `syncStates` off to stop; the local files stay where they are.
 
 ### Play sessions reported to RomM
 
