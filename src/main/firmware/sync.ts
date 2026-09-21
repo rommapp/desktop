@@ -13,6 +13,7 @@ import { type Session } from "electron";
 import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { type DesktopConfig } from "../../shared/types.ts";
+import { noteSignedOut } from "../auth/recover.ts";
 import { downloadFromServer } from "../rom-cache.ts";
 import { resolveDownloadUrl } from "../safety.ts";
 import {
@@ -69,6 +70,7 @@ async function getJson(
       credentials: "include",
       signal,
     });
+    noteSignedOut(serverUrl, response.status);
     if (!response.ok) return undefined;
     return await response.json();
   } catch {

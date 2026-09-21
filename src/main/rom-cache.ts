@@ -3,6 +3,8 @@ import { createWriteStream } from "node:fs";
 import { mkdir, rename, rm, stat, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { type DesktopConfig, LaunchError } from "../shared/types.ts";
+import { noteSignedOut } from "./auth/recover.ts";
+import { isSignedOut, SIGNED_OUT_MESSAGE } from "./auth/status.ts";
 import { evictToLimit } from "./cache/evict.ts";
 import { resolveDownloadUrl, safeFileName } from "./safety.ts";
 
@@ -113,11 +115,16 @@ export function downloadFromServer({
     request.on("response", (incoming) => {
       const response = incoming as FlowControlledResponse;
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        // The URL was built against the server origin by resolveDownloadUrl, so
+        // this is that origin.
+        noteSignedOut(url.origin, response.statusCode);
         fail(
-          new LaunchError(
-            "download-failed",
-            `Server returned ${response.statusCode} for ${url.pathname}`,
-          ),
+          isSignedOut(response.statusCode)
+            ? new LaunchError("session-expired", SIGNED_OUT_MESSAGE)
+            : new LaunchError(
+                "download-failed",
+                `Server returned ${response.statusCode} for ${url.pathname}`,
+              ),
         );
         return;
       }

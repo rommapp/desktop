@@ -8,6 +8,10 @@ export type LaunchErrorCode =
   | "no-emulator-configured"
   | "emulator-not-found"
   | "download-failed"
+  /** The server no longer recognises the session the window holds. Its own code
+   *  because it is the one launch failure the user can fix, and the fix is not
+   *  the one every other download failure asks for. */
+  | "session-expired"
   | "already-running"
   | "invalid-request"
   | "launch-failed";
