@@ -500,6 +500,11 @@ rotate past it, and the next save opens another. The save the launch started
 from is never written over: it stays in the slot's history, which is what a
 second device's progress is recovered from.
 
+Deleting a save in RomM deletes it here too. The server remembers which slots
+were emptied, so a negotiation can tell a save nobody ever uploaded from one its
+owner removed, and the next launch drops the local copy instead of offering it
+back. A save written after the deletion is new progress and is still sent.
+
 Nothing here can fail a launch. One limit remains: save states are not synced at
 all, since RomM's API has no slot or device tracking for them.
 

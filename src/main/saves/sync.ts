@@ -459,6 +459,28 @@ async function runPull({
   let before = local?.stamp ?? null;
   let outcome: SaveSyncOutcome | null = null;
 
+  if (plan.removeLocal) {
+    // Nothing is archived first: the bytes being removed are the ones the
+    // server held and their owner deleted, so keeping a copy here is the
+    // deletion not happening. A removal that fails leaves the baseline where it
+    // was, which is what keeps the push from offering the file back.
+    const removed = await rm(saveFile, { force: true })
+      .then(() => true)
+      .catch(() => false);
+    if (removed) {
+      before = null;
+      outcome = { action: "deleted", slot: operation?.slot ?? null };
+      console.info(
+        `[saves] rom ${romId}: deleted locally, emptied on the server`,
+      );
+    } else {
+      console.warn(
+        `[saves] rom ${romId}: could not delete ${saveFile}, which the server says was emptied`,
+      );
+    }
+    return { allowance: plan.allowance, before, deviceId, sessionId, outcome };
+  }
+
   if (plan.archiveFirst && local) {
     // The server's copy is about to be written over bytes whose content it does
     // not already hold. Unless those bytes go somewhere first, the pull does not

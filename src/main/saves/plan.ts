@@ -47,7 +47,7 @@ export interface LocalSave {
 
 /** One operation from the negotiate response, for the ROM being launched. */
 export interface SyncOperation {
-  action: "upload" | "download" | "conflict" | "no_op";
+  action: "upload" | "download" | "conflict" | "no_op" | "delete";
   rom_id: number;
   save_id: number | null;
   file_name: string;
@@ -69,6 +69,9 @@ export type PushAction = "none" | "push" | "archive";
 export interface PullPlan {
   /** Download the server's save over the local one. */
   pull: boolean;
+  /** Delete the local save: the slot it came from was emptied on the server,
+   *  and holding on to it is how a deletion undoes itself. */
+  removeLocal: boolean;
   /** Send the local bytes up as a null-slot save before that happens. */
   archiveFirst: boolean;
   allowance: Allowance;
@@ -169,6 +172,7 @@ function toOperation(raw: unknown): SyncOperation {
       action === "upload" ||
       action === "download" ||
       action === "conflict" ||
+      action === "delete" ||
       action === "no_op"
         ? action
         : "no_op",
@@ -197,7 +201,27 @@ export function planPull(
   op: SyncOperation | null,
   local: SaveStamp | null,
 ): PullPlan {
-  if (!op) return { pull: false, archiveFirst: false, allowance: "push" };
+  if (!op) {
+    return {
+      pull: false,
+      removeLocal: false,
+      archiveFirst: false,
+      allowance: "push",
+    };
+  }
+
+  // The server remembers this slot being emptied and the client still has what
+  // was in it. Keeping the file would offer it back on the next launch, which
+  // is the deletion undoing itself; what the emulator writes from here is new
+  // and still the shell's to send.
+  if (op.action === "delete") {
+    return {
+      pull: false,
+      removeLocal: true,
+      archiveFirst: false,
+      allowance: "push",
+    };
+  }
 
   // `upload` is the server saying it has nothing paired with this slot and
   // wants what the client holds. That is a request, not a permission, and the
@@ -228,7 +252,7 @@ export function planPull(
   const archiveFirst =
     pull && local !== null && local.hash !== op.server_content_hash;
 
-  return { pull, archiveFirst, allowance };
+  return { pull, removeLocal: false, archiveFirst, allowance };
 }
 
 /**

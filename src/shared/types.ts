@@ -93,6 +93,9 @@ export type SaveSyncAction =
   /** Nothing was replaced. The local bytes were kept as an archival save
    *  because the slot held progress this device had not seen. */
   | "archived"
+  /** The slot it came from was emptied on the server, so the local copy went
+   *  with it. Nothing was sent: the save is gone because its owner said so. */
+  | "deleted"
   /** It was tried and did not work. The local file is untouched. */
   | "failed";
 

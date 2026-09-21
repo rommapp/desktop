@@ -146,6 +146,7 @@ test("an answer with nothing in it still permits the push", () => {
   // ask: the save the emulator is about to make is the shell's to offer.
   assert.deepEqual(planPull(null, stamp()), {
     pull: false,
+    removeLocal: false,
     archiveFirst: false,
     allowance: "push",
   });
@@ -160,6 +161,7 @@ test("a download is taken, and the server's own bytes are not archived", () => {
   );
   assert.deepEqual(plan, {
     pull: true,
+    removeLocal: false,
     archiveFirst: false,
     allowance: "push",
   });
@@ -182,6 +184,7 @@ test("a download onto nothing needs no archive first", () => {
   });
   assert.deepEqual(planPull(download, null), {
     pull: true,
+    removeLocal: false,
     archiveFirst: false,
     allowance: "push",
   });
@@ -220,6 +223,7 @@ test("a download with no server save id pulls nothing", () => {
 test("a no-op pulls nothing and leaves the push allowed", () => {
   assert.deepEqual(planPull(op({ action: "no_op" }), stamp()), {
     pull: false,
+    removeLocal: false,
     archiveFirst: false,
     allowance: "push",
   });
@@ -228,6 +232,7 @@ test("a no-op pulls nothing and leaves the push allowed", () => {
 test("an upload is the server asking for the save, not permitting it", () => {
   assert.deepEqual(planPull(op({ action: "upload" }), stamp()), {
     pull: false,
+    removeLocal: false,
     archiveFirst: false,
     allowance: "requested",
   });
@@ -535,4 +540,39 @@ test("a 2xx that is not a save is not an accepted upload", () => {
   ]) {
     assert.equal(storedSave(body), null, JSON.stringify(body) ?? "undefined");
   }
+});
+
+test("a slot emptied on the server takes the local save with it", () => {
+  // Keeping the file would offer it back on the next launch, which is the
+  // deletion undoing itself. What the emulator writes from here is new, so the
+  // run may still push.
+  const plan = planPull(op({ action: "delete", slot: AUTOSAVE_SLOT }), stamp());
+
+  assert.equal(plan.removeLocal, true);
+  assert.equal(plan.pull, false);
+  assert.equal(plan.archiveFirst, false);
+  assert.equal(plan.allowance, "push");
+});
+
+test("no other answer removes anything", () => {
+  for (const action of ["upload", "download", "conflict", "no_op"] as const) {
+    assert.equal(
+      planPull(op({ action, save_id: 1, server_content_hash: "aaaa" }), stamp())
+        .removeLocal,
+      false,
+      action,
+    );
+  }
+  assert.equal(planPull(null, stamp()).removeLocal, false);
+});
+
+test("an answer naming an action this shell does not know is a no-op", () => {
+  // A newer server can name an operation this build has never heard of, and
+  // guessing at one is how a save gets moved by a rule nobody wrote.
+  const unknown = selectOperation(
+    [{ action: "teleport", rom_id: 7, slot: AUTOSAVE_SLOT }],
+    7,
+  );
+
+  assert.equal(unknown?.action, "no_op");
 });
