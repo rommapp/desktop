@@ -70,7 +70,12 @@ async function flushPlaySessions(options: ReportOptions): Promise<void> {
 
   // Recorded even with nothing to send, so the account is known before the
   // first offline session is queued against it rather than after.
-  const discarded = await claimQueue(playQueuePath(), serverUrl, userId);
+  const discarded = await claimQueue(
+    playQueuePath(),
+    serverUrl,
+    userId,
+    queued,
+  );
   if (discarded > 0) return;
   if (queued.length === 0) return;
 

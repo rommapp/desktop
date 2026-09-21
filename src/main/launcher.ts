@@ -890,7 +890,13 @@ export class Launcher {
       // record back until the sync finished would trade that link for the
       // durability this ordering exists to give it, which is the worse bargain.
       if (played) {
-        await enqueue(playQueuePath(), played).catch(() => undefined);
+        await enqueue(playQueuePath(), played).catch((error: unknown) => {
+          // The queue is what makes this durable, so a write that fails leaves
+          // the session riding on whatever delivery happens next and nothing
+          // after that. Said out loud rather than swallowed: playtime going
+          // missing with no trace is worse than the disk fault behind it.
+          console.error("[play] could not queue a session", error);
+        });
       }
 
       let playDelivered = false;

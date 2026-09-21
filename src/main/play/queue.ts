@@ -134,6 +134,12 @@ export async function ownerOf(
  * -- losing a play record is the lesser of the two, and the only one that is not
  * also someone else's business.
  *
+ * `seen` is what the caller read before it went and asked who was signed in, and
+ * only those records are discarded. An exit landing during that question queues
+ * a record belonging to the account now answering, and sweeping the server's
+ * rows as they stand would take it too. `dequeue` matches on identity for the
+ * same reason.
+ *
  * Returns how many were discarded, so the caller can tell an ordinary flush from
  * one that found the queue belonged to somebody else.
  */
@@ -141,21 +147,26 @@ export function claimQueue(
   path: string,
   serverUrl: string,
   userId: number,
+  seen: readonly PlaySessionRecord[],
 ): Promise<number> {
   return inTurn(path, async () => {
     const state = await readFileState(path);
     const known = state.owners[serverUrl];
     if (known === userId) return 0;
 
-    const theirs =
-      known === undefined
-        ? []
-        : state.sessions.filter((s) => s.serverUrl === serverUrl);
+    // Nothing recorded yet means nothing to contradict, so the queue is adopted
+    // rather than thrown away: discarding here would cost the sessions of
+    // someone who has simply never been online since installing.
+    const gone =
+      known === undefined ? new Set<string>() : new Set(seen.map(identityOf));
+    const kept = state.sessions.filter(
+      (record) => !gone.has(identityOf(record)),
+    );
     await writeQueue(path, {
       owners: { ...state.owners, [serverUrl]: userId },
-      sessions: state.sessions.filter((s) => !theirs.includes(s)),
+      sessions: kept,
     });
-    return theirs.length;
+    return state.sessions.length - kept.length;
   });
 }
 

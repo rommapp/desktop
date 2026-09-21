@@ -177,7 +177,7 @@ test("prune keeps the newest when the backlog runs past its cap", () => {
 
 test("the file on disk is the sessions, their owners, and nothing else", async () => {
   const path = queueFile();
-  await claimQueue(path, SERVER, 7);
+  await claimQueue(path, SERVER, 7, []);
   await enqueue(path, record(1), NOW);
   const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
   assert.deepEqual(parsed, { owners: { [SERVER]: 7 }, sessions: [record(1)] });
@@ -238,7 +238,11 @@ test("a queue with no owner yet is adopted rather than discarded", async () => {
   await enqueue(path, record(1), NOW);
 
   assert.equal(await ownerOf(path, SERVER), undefined);
-  assert.equal(await claimQueue(path, SERVER, 7), 0, "nothing is discarded");
+  assert.equal(
+    await claimQueue(path, SERVER, 7, [record(1)]),
+    0,
+    "nothing is discarded",
+  );
   assert.equal(await ownerOf(path, SERVER), 7);
   assert.equal((await readQueue(path)).length, 1, "the session survives");
 });
@@ -246,9 +250,9 @@ test("a queue with no owner yet is adopted rather than discarded", async () => {
 test("claiming for the same account again is a no-op", async () => {
   const path = queueFile();
   await enqueue(path, record(1), NOW);
-  await claimQueue(path, SERVER, 7);
+  await claimQueue(path, SERVER, 7, [record(1)]);
 
-  assert.equal(await claimQueue(path, SERVER, 7), 0);
+  assert.equal(await claimQueue(path, SERVER, 7, [record(1)]), 0);
   assert.equal((await readQueue(path)).length, 1);
 });
 
@@ -256,11 +260,12 @@ test("a backlog is discarded rather than filed under whoever signed in next", as
   const path = queueFile();
   await enqueue(path, record(1), NOW);
   await enqueue(path, record(2), NOW);
-  await claimQueue(path, SERVER, 7);
+  const sevens = [record(1), record(2)];
+  await claimQueue(path, SERVER, 7, sevens);
 
   // User 7 played these; user 8 is who the server now says is asking. Nobody
   // can hand them to 7 after the fact, so they go rather than land on 8.
-  assert.equal(await claimQueue(path, SERVER, 8), 2);
+  assert.equal(await claimQueue(path, SERVER, 8, sevens), 2);
   assert.deepEqual(await readQueue(path), []);
   assert.equal(await ownerOf(path, SERVER), 8);
 });
@@ -270,10 +275,10 @@ test("an account change on one server leaves another server's backlog alone", as
   const other = "https://other.example";
   await enqueue(path, record(1), NOW);
   await enqueue(path, record(2, NOW - 60_000, other), NOW);
-  await claimQueue(path, SERVER, 7);
-  await claimQueue(path, other, 9);
+  await claimQueue(path, SERVER, 7, [record(1)]);
+  await claimQueue(path, other, 9, [record(2, NOW - 60_000, other)]);
 
-  assert.equal(await claimQueue(path, SERVER, 8), 1);
+  assert.equal(await claimQueue(path, SERVER, 8, [record(1)]), 1);
   assert.deepEqual(
     (await readQueue(path)).map((entry) => entry.serverUrl),
     [other],
@@ -284,7 +289,7 @@ test("an account change on one server leaves another server's backlog alone", as
 
 test("owners survive the writes that touch sessions", async () => {
   const path = queueFile();
-  await claimQueue(path, SERVER, 7);
+  await claimQueue(path, SERVER, 7, []);
 
   await enqueue(path, record(1), NOW);
   assert.equal(await ownerOf(path, SERVER), 7, "enqueue keeps it");
@@ -330,5 +335,26 @@ test("the cap drops the oldest by when it was played, not by when it landed", as
   assert.ok(
     !kept.some((entry) => entry.romId === 1000),
     "the session that started first is the one dropped",
+  );
+});
+
+test("a session queued while the account was being checked is not swept up", async () => {
+  const path = queueFile();
+  const theirs = record(1);
+  await enqueue(path, theirs, NOW);
+  await claimQueue(path, SERVER, 7, [theirs]);
+
+  // What the flush read before it went to ask who was signed in.
+  const seen = await readQueue(path);
+  // An emulator exits during that question, and the record belongs to whoever
+  // is answering it.
+  const mine = record(2);
+  await enqueue(path, mine, NOW);
+
+  assert.equal(await claimQueue(path, SERVER, 8, seen), 1, "only theirs goes");
+  assert.deepEqual(
+    (await readQueue(path)).map((entry) => entry.romId),
+    [2],
+    "the session queued mid-question survives for the next flush",
   );
 });
