@@ -105,7 +105,8 @@ export function buildNegotiatePayload(romId: number, local: LocalSave | null) {
 }
 
 /**
- * Whether a body is the save row RomM answers an accepted upload with.
+ * The id of the save row RomM answers an accepted upload with, or null when the
+ * body is not one.
  *
  * A 2xx on its own is not proof a save landed. A proxy or a sign-in page can
  * produce one, and `apiRequest` reports a body it could not parse as null
@@ -114,13 +115,15 @@ export function buildNegotiatePayload(romId: number, local: LocalSave | null) {
  * strength of it, so anything that can forge an "ok" can cost the only copy of
  * a save. `POST /api/saves` answers with the save it stored, and a stored save
  * has an id.
+ *
+ * The id is the answer rather than a yes: a slotted upload opens a new version,
+ * and the rest of the run writes to that one instead of opening another.
  */
-export function storedSave(body: unknown): boolean {
-  return (
-    typeof body === "object" &&
-    body !== null &&
-    typeof (body as { id?: unknown }).id === "number"
-  );
+export function storedSave(body: unknown): number | null {
+  const id = (body as { id?: unknown } | null)?.id;
+  return typeof body === "object" && body !== null && typeof id === "number"
+    ? id
+    : null;
 }
 
 /**

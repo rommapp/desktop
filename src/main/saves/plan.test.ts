@@ -514,7 +514,9 @@ test("an archive of a nameless save still gets an extension", () => {
 });
 
 test("an accepted upload is the save the server stored", () => {
-  assert.ok(storedSave({ id: 12, rom_id: 7, file_name: "Game.srm" }));
+  // The id, not a yes: a slotted upload opens a version, and the rest of the
+  // run writes over that one instead of opening another.
+  assert.equal(storedSave({ id: 12, rom_id: 7, file_name: "Game.srm" }), 12);
 });
 
 test("a 2xx that is not a save is not an accepted upload", () => {
@@ -531,6 +533,6 @@ test("a 2xx that is not a save is not an accepted upload", () => {
     {},
     { id: "12" },
   ]) {
-    assert.equal(storedSave(body), false, JSON.stringify(body) ?? "undefined");
+    assert.equal(storedSave(body), null, JSON.stringify(body) ?? "undefined");
   }
 });

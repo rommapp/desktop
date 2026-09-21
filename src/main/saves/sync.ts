@@ -139,9 +139,13 @@ async function negotiate(options: {
 }
 
 type UploadResult =
-  | { kind: "ok" }
+  /** `saveId` is the row the server stored these bytes in. */
+  | { kind: "ok"; saveId: number }
   /** The slot moved on since this device last saw it. */
   | { kind: "conflict" }
+  /** The version this run opened is not there any more, so there is nothing to
+   *  write over and the next send opens another. */
+  | { kind: "gone" }
   | { kind: "failed"; detail: string };
 
 /**
@@ -202,10 +206,66 @@ async function upload(options: {
   // strength of an "ok" here, so anything that can forge one can cost the only
   // copy of a save. The endpoint answers with the save it stored, so that is
   // what gets checked for.
-  if (!storedSave(response.body)) {
+  const saveId = storedSave(response.body);
+  if (saveId === null) {
     return { kind: "failed", detail: "the server did not answer with a save" };
   }
-  return { kind: "ok" };
+  return { kind: "ok", saveId };
+}
+
+/**
+ * Write these bytes over a version this run already opened.
+ *
+ * The slot is a history, and `POST /api/saves` adds to it: the server stamps
+ * every slotted upload with the time it arrived, so a name is never reused and
+ * each send is another version. That is right once per launch and wrong every
+ * ten seconds after it, which is what a run that reports its save as it plays
+ * would otherwise do. So the first send of a run opens the version and the rest
+ * of it writes here, the way a browser session updates the save it opened
+ * (`saveSave` in RomM's `frontend/src/views/Player/EmulatorJS/utils.ts`).
+ *
+ * Only ever a version this device opened in this run. The endpoint has no
+ * conflict guard of its own, because the caller is supposed to be the client
+ * that made the row; pointing it at someone else's version would overwrite
+ * progress this device never saw.
+ */
+async function updateVersion(options: {
+  serverUrl: string;
+  session: Session;
+  deviceId: string;
+  saveId: number;
+  fileName: string;
+  bytes: Uint8Array;
+  signal: AbortSignal;
+}): Promise<UploadResult> {
+  const { serverUrl, session, deviceId, saveId, fileName, bytes, signal } =
+    options;
+
+  const body = saveUploadBody(fileName, bytes);
+  const response = await apiRequest({
+    serverUrl,
+    session,
+    path: `/api/saves/${saveId}?device_id=${encodeURIComponent(deviceId)}`,
+    method: "PUT",
+    headers: { "content-type": body.contentType },
+    body: body.body,
+    signal,
+  });
+  if (!response) return { kind: "failed", detail: "no answer from the server" };
+  // Deleted from the save list, or rotated out of the slot while this run held
+  // it. Either way the bytes still have somewhere to go: a new version.
+  if (response.status === 404) return { kind: "gone" };
+  if (isSignedOut(response.status)) {
+    return { kind: "failed", detail: "signed out of RomM" };
+  }
+  if (response.status >= 300) {
+    return { kind: "failed", detail: `server returned ${response.status}` };
+  }
+  const stored = storedSave(response.body);
+  if (stored === null) {
+    return { kind: "failed", detail: "the server did not answer with a save" };
+  }
+  return { kind: "ok", saveId: stored };
 }
 
 /**
@@ -463,6 +523,11 @@ export interface PushOptions {
    *  below has to still hash to it, or the emulator is mid-write and there is
    *  nothing to send yet. */
   expect?: string | null;
+  /** The slot version this run has already opened, which this push writes over
+   *  instead of opening another. Only ever one this device opened in this run:
+   *  the endpoint behind it has no conflict guard, so someone else's version is
+   *  not this run's to rewrite. */
+  version?: number | null;
 }
 
 /**
@@ -491,6 +556,9 @@ interface PushResult {
   /** What the server holds because of this push, when it sent anything. The
    *  watcher carries it forward as its baseline. */
   sent: SaveStamp | null;
+  /** The slot version this run is writing to, for the next push to write to as
+   *  well. Null until a push opens one. */
+  version: number | null;
 }
 
 async function runPush({
@@ -503,8 +571,10 @@ async function runPush({
   allowance,
   signal,
   expect,
+  version,
 }: PushOptions): Promise<PushResult> {
-  const idle: PushResult = { outcome: null, sent: null };
+  const held = version ?? null;
+  const idle: PushResult = { outcome: null, sent: null, version: held };
 
   const serverUrl = config.serverUrl;
   if (!serverUrl) return idle;
@@ -565,7 +635,7 @@ async function runPush({
       console.info(
         `[saves] rom ${romId}: filed ${after.size} bytes as an archival save`,
       );
-      return { outcome: { action: "archived" }, sent: after };
+      return { outcome: { action: "archived" }, sent: after, version: held };
     }
     console.warn(
       `[saves] rom ${romId}: could not file an archival save, ${describe(archived)}`,
@@ -573,28 +643,58 @@ async function runPush({
     return {
       outcome: { action: "failed", detail: describe(archived) },
       sent: null,
+      version: held,
     };
   };
 
   if (!wantSlot) return filed();
 
-  const uploaded = await upload({
-    serverUrl,
-    session,
-    deviceId,
-    romId,
-    fileName: basename(saveFile),
-    bytes,
-    slot: AUTOSAVE_SLOT,
-    signal,
-  });
+  // One version per launch. The first send opens it, because the slot is a
+  // history and the server stamps every upload into it with the time it
+  // arrived; the rest of the run writes over that one, or an hour of play would
+  // leave an hour of versions with nothing to say between them.
+  let rewrote = false;
+  const toSlot = async (): Promise<UploadResult> => {
+    if (held !== null) {
+      const written = await updateVersion({
+        serverUrl,
+        session,
+        deviceId,
+        saveId: held,
+        fileName: basename(saveFile),
+        bytes,
+        signal,
+      });
+      if (written.kind !== "gone") {
+        rewrote = true;
+        return written;
+      }
+      console.info(
+        `[saves] rom ${romId}: version ${held} is gone, opening another`,
+      );
+    }
+    return upload({
+      serverUrl,
+      session,
+      deviceId,
+      romId,
+      fileName: basename(saveFile),
+      bytes,
+      slot: AUTOSAVE_SLOT,
+      signal,
+    });
+  };
+
+  const uploaded = await toSlot();
   if (uploaded.kind === "ok") {
     console.info(
-      `[saves] rom ${romId}: sent ${after.size} bytes to the ${AUTOSAVE_SLOT} slot`,
+      `[saves] rom ${romId}: ${rewrote ? "rewrote" : "opened"} version ` +
+        `${uploaded.saveId} in the ${AUTOSAVE_SLOT} slot with ${after.size} bytes`,
     );
     return {
       outcome: { action: "uploaded", slot: AUTOSAVE_SLOT },
       sent: after,
+      version: uploaded.saveId,
     };
   }
   if (uploaded.kind === "conflict") {
@@ -611,6 +711,7 @@ async function runPush({
   return {
     outcome: { action: "failed", detail: describe(uploaded) },
     sent: null,
+    version: held,
   };
 }
 
@@ -649,6 +750,9 @@ export interface SaveWatch {
   baseline(): SaveStamp | null;
   /** The saves sent while the emulator ran. */
   sent(): readonly SaveSyncOutcome[];
+  /** The slot version this run opened, so the push after the exit writes to it
+   *  rather than opening another. */
+  version(): number | null;
 }
 
 /**
@@ -684,11 +788,15 @@ export function watchSave(options: WatchOptions): SaveWatch {
       stop: () => Promise.resolve(),
       baseline: () => before,
       sent: () => [],
+      version: () => options.version ?? null,
     };
   }
 
   let baseline = before;
   let previous = before;
+  /** The version this run opened, once a save has landed in the slot. Every
+   *  later send writes over it, this run's and the exit's alike. */
+  let version = options.version ?? null;
   /** The bytes already offered, so a refusal is not retried every interval. The
    *  push after the exit is the retry, and it runs whatever happens here. */
   let offered: string | null = null;
@@ -708,9 +816,14 @@ export function watchSave(options: WatchOptions): SaveWatch {
     // digest that settled is what ties the two together: bytes that no longer
     // hash to it are a write that landed in between, and waiting for the next
     // agreement costs one interval rather than putting half a file in the slot.
-    const { outcome, sent: stored } = await inTurn(saveFile, () =>
-      runPush({ ...options, before: baseline, expect: reading.hash }),
+    const {
+      outcome,
+      sent: stored,
+      version: held,
+    } = await inTurn(saveFile, () =>
+      runPush({ ...options, before: baseline, expect: reading.hash, version }),
     );
+    version = held;
     if (!outcome || outcome.action === "failed") return true;
     baseline = stored ?? reading;
     sent.push(outcome);
@@ -731,6 +844,7 @@ export function watchSave(options: WatchOptions): SaveWatch {
     stop: () => beat.stop(),
     baseline: () => baseline,
     sent: () => sent,
+    version: () => version,
   };
 }
 

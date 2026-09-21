@@ -41,7 +41,7 @@ export interface ApiRequest {
   session: Session;
   /** Path and query, starting at `/api/`. */
   path: string;
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PUT";
   body?: BodyInit;
   headers?: Record<string, string>;
   signal: AbortSignal;

@@ -1026,6 +1026,9 @@ export class Launcher {
           deviceId: push.deviceId,
           before: push.watch?.baseline() ?? push.before,
           allowance: push.allowance,
+          // The run's own version, so the last save of a launch lands on the
+          // one the watcher opened rather than beside it.
+          version: push.watch?.version() ?? null,
         });
         if (pushed) {
           this.emit({ romId, status: "sync", sync: pushed });
