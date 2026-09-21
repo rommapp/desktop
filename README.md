@@ -74,6 +74,31 @@ returning your provider's end-session URL, so you are signed out of RomM either
 way; whether your provider's session ends depends on the browser that URL opens
 in.
 
+### When the session runs out
+
+RomM's session lasts fourteen days by default and is renewed by use, so a shell
+opened regularly stays signed in. One left alone for longer, or signed out from
+elsewhere, comes back to a server that no longer recognises it.
+
+The shell notices this itself, because it makes requests of its own that the
+page never sees: the ROM download, the disc list, the firmware list, the save
+negotiation. RomM answers those with a 401, which is its own signal that the
+caller should go and sign in -- distinct from the 403 it answers a user whose
+account simply lacks a scope, and which is not a session problem and not treated
+as one here. On a 401 the shell reloads the window and lets RomM's own frontend
+take it from there, so you get the login your server ships rather than a form
+this shell invented, and an OIDC server still goes to its provider.
+
+A launch that stops for this reason says so in as many words rather than
+reporting a failed download, and nothing is lost by it: a save the shell could
+not send stays on disk and is offered again the next time you launch that game.
+Sign in and press Play again.
+
+One reload per sign-out, not one per request: a single launch asks the server
+several times and an expired session fails all of them. A login page already on
+screen is left alone, and so is a window opened for an identity provider, since
+that is a sign-in already happening.
+
 ## Using a controller
 
 RomM's own interface handles controller navigation, so the shell adds none.
@@ -578,6 +603,8 @@ src/
     launcher.ts     Download, resolve, spawn, track
     rom-cache.ts    Download with the window's session cookies
     cache/          LRU eviction over the ROM cache
+    auth/           Telling a session that has expired from a scope that was
+                    never granted, and getting back to a login page
     saves/          Per-game save and state directories
     discs/          Multi-disc sets: disc selection and the .m3u that boots
                     them
