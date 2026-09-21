@@ -498,9 +498,10 @@ rather than landing on them. Losing a play record is the lesser of the two, and
 the only one that is not also someone else's business.
 
 Like save sync, none of this can fail a launch, and it reports as the same
-`deviceId` the saves sync under -- or unattributed, when this machine has never
-registered one. Turning `trackPlaySessions` off stops sessions being recorded;
-anything already queued is still sent.
+`deviceId` the saves sync under. A machine that could not register one sends
+nothing and waits, rather than filing playtime against no machine at all.
+Turning `trackPlaySessions` off stops sessions being recorded; anything already
+queued is still sent.
 
 ### Firmware from RomM
 

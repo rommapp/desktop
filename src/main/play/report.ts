@@ -70,6 +70,11 @@ async function flushPlaySessions(options: ReportOptions): Promise<void> {
   // The same id the saves sync as, so RomM attributes both to one machine and
   // dedupes a resent session against the row it already has.
   const deviceId = await ensureDeviceId({ config, session, signal });
+  // Without one, nothing is sent. The server would take the session and store it
+  // against no machine, which cannot be corrected afterwards and moves the
+  // dedupe key: a later resend carrying a real id would not match the row
+  // already there. Waiting costs a flush, and the queue is what waiting is for.
+  if (deviceId === null) return;
 
   for (const batch of inBatches(queued)) {
     const response = await apiRequest({
