@@ -11,6 +11,7 @@ import {
   planTick,
   selectOperation,
   storedSave,
+  watchIntervalFor,
   type Allowance,
   type SaveStamp,
   type SyncOperation,
@@ -106,7 +107,10 @@ test("a save in another slot is never taken for this launch", () => {
 
 test("an operation naming no slot is still this launch's", () => {
   // The server talking about the ROM rather than about one of its slots.
-  const chosen = selectOperation([op({ rom_id: 7, slot: null, save_id: 4 })], 7);
+  const chosen = selectOperation(
+    [op({ rom_id: 7, slot: null, save_id: 4 })],
+    7,
+  );
   assert.equal(chosen?.save_id, 4);
 });
 
@@ -148,7 +152,11 @@ test("a download is taken, and the server's own bytes are not archived", () => {
     op({ action: "download", save_id: 3, server_content_hash: "aaaa" }),
     stamp({ hash: "aaaa" }),
   );
-  assert.deepEqual(plan, { pull: true, archiveFirst: false, allowance: "push" });
+  assert.deepEqual(plan, {
+    pull: true,
+    archiveFirst: false,
+    allowance: "push",
+  });
 });
 
 test("a download over diverging local bytes archives them first", () => {
@@ -227,12 +235,18 @@ test("a conflict pulls nothing and marks the push as archival", () => {
 });
 
 test("an unreachable server is never offered anything", () => {
-  assert.equal(planPush(stamp(), stamp({ hash: "bbbb" }), "unreachable"), "none");
+  assert.equal(
+    planPush(stamp(), stamp({ hash: "bbbb" }), "unreachable"),
+    "none",
+  );
 });
 
 test("a conflicted save is archived, never written over", () => {
   const allowance: Allowance = "conflict";
-  assert.equal(planPush(stamp(), stamp({ hash: "bbbb" }), allowance), "archive");
+  assert.equal(
+    planPush(stamp(), stamp({ hash: "bbbb" }), allowance),
+    "archive",
+  );
 });
 
 test("a conflict with nothing on disk does nothing", () => {
@@ -282,8 +296,18 @@ test("only a changed save is sent", () => {
       after: stamp({ hash: "bbbb" }),
       want: "push",
     },
-    { name: "a save the emulator just made", before: null, after: stamp(), want: "push" },
-    { name: "a save the emulator removed", before: stamp(), after: null, want: "none" },
+    {
+      name: "a save the emulator just made",
+      before: null,
+      after: stamp(),
+      want: "push",
+    },
+    {
+      name: "a save the emulator removed",
+      before: stamp(),
+      after: null,
+      want: "none",
+    },
     {
       name: "a save that was unreadable before",
       before: stamp({ hash: null }),
@@ -369,6 +393,67 @@ test("a reading during a run is offered once two agree on it", () => {
   }
 });
 
+test("the watch cadence is a fraction of the writing cadence, never equal to it", () => {
+  // Equal cadences are how a game that writes on every flush is never offered
+  // at all: each reading catches a different version and no two ever agree.
+  for (const seconds of [10, 30, 6]) {
+    const interval = watchIntervalFor(seconds);
+    assert.ok(
+      interval <= (seconds * 1000) / 3,
+      `${seconds}s cadence looked every ${interval}ms`,
+    );
+  }
+});
+
+test("an unknown writing cadence still gets looked at", () => {
+  // Zero is the user leaving RetroArch's own interval alone, which the shell
+  // cannot read. Whatever the emulator does, looking costs a hash.
+  assert.equal(watchIntervalFor(0), watchIntervalFor(10));
+  for (const bad of [Number.NaN, -5, Number.POSITIVE_INFINITY]) {
+    assert.equal(watchIntervalFor(bad), watchIntervalFor(10), `${bad}`);
+  }
+});
+
+test("a very short writing cadence is floored, not chased", () => {
+  // Hashing a memory card measured in megabytes is not free, and no emulator
+  // writes a save every fraction of a second.
+  assert.ok(watchIntervalFor(1) >= 2_000);
+});
+
+test("only the bytes whose digest settled are sent", () => {
+  // The push reads the file itself, so the reading that settled has to be named
+  // for the two to be the same bytes. A write that landed in between leaves a
+  // file that no longer hashes to it, and that is not a save to put in the slot
+  // every other device syncs from.
+  assert.equal(
+    planPush(stamp({ hash: "aaaa" }), stamp({ hash: "bbbb" }), "push", "bbbb"),
+    "push",
+  );
+  assert.equal(
+    planPush(stamp({ hash: "aaaa" }), stamp({ hash: "cccc" }), "push", "bbbb"),
+    "none",
+  );
+  // A caller with no reading behind it -- the push after the exit -- is
+  // unaffected by any of this.
+  assert.equal(
+    planPush(stamp({ hash: "aaaa" }), stamp({ hash: "cccc" }), "push"),
+    "push",
+  );
+});
+
+test("a settled digest is required even of a save the server asked for", () => {
+  // "requested" sends whether or not the run changed anything, which is not a
+  // licence to send half a file.
+  assert.equal(
+    planPush(null, stamp({ hash: "cccc" }), "requested", "bbbb"),
+    "none",
+  );
+  assert.equal(
+    planPush(null, stamp({ hash: "bbbb" }), "requested", "bbbb"),
+    "push",
+  );
+});
+
 test("an archive is named the way the browser client names states", () => {
   // The value sessionStateName produces, with the extension a save carries.
   assert.equal(
@@ -392,7 +477,16 @@ test("a 2xx that is not a save is not an accepted upload", () => {
   // What a sign-in page, a proxy, or a body that would not parse looks like by
   // the time it reaches here. Each one would otherwise green-light the pull
   // that writes over the bytes this upload was meant to be preserving.
-  for (const body of [null, undefined, "", "<html>", 12, [], {}, { id: "12" }]) {
+  for (const body of [
+    null,
+    undefined,
+    "",
+    "<html>",
+    12,
+    [],
+    {},
+    { id: "12" },
+  ]) {
     assert.equal(storedSave(body), false, JSON.stringify(body) ?? "undefined");
   }
 });

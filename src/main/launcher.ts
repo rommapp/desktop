@@ -59,7 +59,12 @@ import {
   type SaveWatch,
 } from "./saves/sync.ts";
 import { autosaveSeconds, writeAutosaveConfig } from "./saves/retroarch.ts";
-import { AUTOSAVE_SLOT, type Allowance, type SaveStamp } from "./saves/plan.ts";
+import {
+  AUTOSAVE_SLOT,
+  watchIntervalFor,
+  type Allowance,
+  type SaveStamp,
+} from "./saves/plan.ts";
 import { assertSeparateRoots, resolveLibraryRom } from "./safety.ts";
 
 interface ActiveLaunch {
@@ -742,12 +747,10 @@ export class Launcher {
       // the arguments. Without it RetroArch writes the save once, when the
       // content closes, and a launch that never reaches that moment has nothing
       // for the push to find.
+      const autosave = autosaveSeconds(config.retroarchAutosaveSeconds);
       const launchConfig =
         savePaths && syncsSaves && config.saveDataPath
-          ? await writeAutosaveConfig(
-              config.saveDataPath,
-              autosaveSeconds(config.retroarchAutosaveSeconds),
-            )
+          ? await writeAutosaveConfig(config.saveDataPath, autosave)
           : null;
 
       // Resolved again, and this time strictly: the validation above may have
@@ -791,6 +794,10 @@ export class Launcher {
               before: saveSync.before,
               allowance: saveSync.allowance,
               signal: controller.signal,
+              // Derived from how often the emulator was asked to write, never
+              // equal to it: two readings have to agree, and looking exactly as
+              // often as the file changes is how they never do.
+              intervalMs: watchIntervalFor(autosave),
               onSent: (sync) =>
                 this.emit({ romId: request.romId, status: "sync", sync }),
             })
