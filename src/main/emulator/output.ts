@@ -13,6 +13,32 @@
 /** Lines kept from one launch, after which the capture goes quiet. */
 export const MAX_CAPTURED_LINES = 400;
 
+/** How many lines a launch has left, shared by the streams it captures. */
+export interface LineBudget {
+  /** What to report for this line, or null once the budget is spent. */
+  next(line: string): string | null;
+}
+
+/**
+ * One launch's allowance, spent by stdout and stderr together.
+ *
+ * Shared rather than one per stream, because the cap is a promise about the
+ * launch: a budget each would let a chatty run write twice the limit, and the
+ * whole point is a log a launch can still be found in.
+ */
+export function createLineBudget(
+  limit: number = MAX_CAPTURED_LINES,
+): LineBudget {
+  let taken = 0;
+  return {
+    next(line: string): string | null {
+      if (taken > limit) return null;
+      taken += 1;
+      return taken > limit ? `... capped at ${limit} lines` : line;
+    },
+  };
+}
+
 /**
  * Split a chunk into whole lines, keeping whatever came after the last newline.
  *
@@ -36,22 +62,22 @@ export interface LineSink {
 }
 
 /**
- * Collect a child's output into whole lines, up to `limit` of them.
+ * Collect a child's output into whole lines, spending `budget` as it goes.
  *
- * The line that hits the limit says so, so a truncated log reads as truncated
- * rather than as an emulator that went quiet.
+ * The line that exhausts the budget says so, so a truncated log reads as
+ * truncated rather than as an emulator that went quiet. The held tail is this
+ * sink's own: a stream gets a sink of its own precisely so a half line from one
+ * is never spliced onto a half line from the other.
  */
 export function createLineSink(
   onLine: (line: string) => void,
-  limit: number = MAX_CAPTURED_LINES,
+  budget: LineBudget = createLineBudget(),
 ): LineSink {
   let held = "";
-  let taken = 0;
 
   const take = (line: string): void => {
-    if (taken > limit) return;
-    taken += 1;
-    onLine(taken > limit ? `... capped at ${limit} lines` : line);
+    const reported = budget.next(line);
+    if (reported !== null) onLine(reported);
   };
 
   return {

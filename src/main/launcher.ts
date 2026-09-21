@@ -19,7 +19,7 @@ import {
   planCoreInstall,
 } from "./emulator/buildbot.ts";
 import { installCore } from "./emulator/install.ts";
-import { createLineSink } from "./emulator/output.ts";
+import { createLineBudget, createLineSink } from "./emulator/output.ts";
 import { offerStandaloneInstall } from "./emulator/standalone-install.ts";
 import { syncPlatformFirmware } from "./firmware/sync.ts";
 import { RELEASE_SOURCES } from "./emulator/standalone-release.ts";
@@ -104,12 +104,16 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 /** Repeat a launch's own output into the shell's log, so the emulator's account
  *  of the run sits beside the shell's. */
 function captureLaunchOutput(child: ChildProcess, romId: number): void {
+  // One budget for the launch, spent by both streams: the cap is a promise
+  // about the run, not about each pipe.
+  const budget = createLineBudget();
   // A sink per stream, because the two arrive independently: one held tail
   // shared between them would splice half a line onto half of another.
   for (const stream of [child.stdout, child.stderr]) {
     if (!stream) continue;
-    const sink = createLineSink((line) =>
-      console.info(`[emulator ${romId}] ${line}`),
+    const sink = createLineSink(
+      (line) => console.info(`[emulator ${romId}] ${line}`),
+      budget,
     );
     stream.setEncoding("utf8");
     stream.on("data", (chunk: string) => sink.write(chunk));
