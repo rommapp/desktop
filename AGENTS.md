@@ -2,8 +2,8 @@
 
 RomM Desktop is an Electron shell that launches ROMs from a RomM server in a
 native emulator: it downloads the ROM, resolves an emulator and core, spawns it,
-and moves saves, firmware and playtime between the machine and the server. The
-RomM web frontend drives it through `window.rommNative`.
+and moves saves, savestates, firmware and playtime between the machine and the
+server. The RomM web frontend drives it through `window.rommNative`.
 
 TypeScript throughout, Electron, Node 26 (`engines`). No UI framework, no test
 framework, no bundler.
@@ -57,12 +57,12 @@ Tests are `*.test.ts` colocated with their source.
 
 ## Nothing may fail a launch
 
-Everything the shell moves for a launch is best effort: saves, firmware, play
-sessions, and anything added to that list later. A server that cannot be
-reached, an expired session, a missing scope, a device the server has forgotten
-and a malformed response all end the same way: nothing moves, the log says what
-happened, and the game still starts. The only exception is the user's own
-cancel, which is re-thrown so it reads as a cancel.
+Everything the shell moves for a launch is best effort: saves, savestates,
+firmware, play sessions, and anything added to that list later. A server that
+cannot be reached, an expired session, a missing scope, a device the server has
+forgotten and a malformed response all end the same way: nothing moves, the log
+says what happened, and the game still starts. The only exception is the user's
+own cancel, which is re-thrown so it reads as a cancel.
 
 Hold that line in anything new here, and never let an upload hold the window.
 

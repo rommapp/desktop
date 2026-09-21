@@ -899,8 +899,9 @@ export class Launcher {
       child.on("error", (error) => {
         this.active.delete(request.romId);
         // A process that could not be spawned emits this and no exit, so this is
-        // the only place the watcher it started can be stopped.
-        if (watch) this.forget(watch);
+        // the only place the watcher it started can be stopped. Not awaited:
+        // nothing was spawned, so nothing of its is in flight.
+        if (watch) void this.forget(watch);
         this.emit({
           romId: request.romId,
           status: "failed",
