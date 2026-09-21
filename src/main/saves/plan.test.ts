@@ -414,6 +414,15 @@ test("an unknown writing cadence still gets looked at", () => {
   }
 });
 
+test("an absurd writing cadence is capped, not turned into a hot loop", () => {
+  // A setInterval delay past a signed 32-bit millisecond count does not wait
+  // longer, it fires every millisecond, so the quietest possible setting would
+  // become the busiest loop in the shell.
+  const interval = watchIntervalFor(Number.MAX_SAFE_INTEGER);
+  assert.ok(interval <= 5 * 60 * 1000, `capped at ${interval}ms`);
+  assert.ok(interval > 0);
+});
+
 test("a very short writing cadence is floored, not chased", () => {
   // Hashing a memory card measured in megabytes is not free, and no emulator
   // writes a save every fraction of a second.

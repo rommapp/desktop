@@ -59,7 +59,7 @@ import {
   type PullResult,
   type SaveWatch,
 } from "./saves/sync.ts";
-import { autosaveSeconds, writeAutosaveConfig } from "./saves/retroarch.ts";
+import { autosaveSeconds, writeLaunchConfig } from "./saves/retroarch.ts";
 import {
   AUTOSAVE_SLOT,
   watchIntervalFor,
@@ -174,9 +174,28 @@ export class Launcher {
    *  session -- so a quit can wait for it. Not keyed by rom id: it outlives the
    *  launch that started it and is deliberately not reachable from `active`. */
   private readonly pushes = new Set<Promise<void>>();
+  /** The watchers of running games, so a quit can stop them looking and then
+   *  wait for whatever one of them already has on the wire. */
+  private readonly watches = new Set<SaveWatch>();
 
   constructor(emit: (state: LaunchState) => void) {
     this.emit = emit;
+  }
+
+  /** Hold `work` open for the quit path, and forget it once it settles. */
+  private track(work: Promise<void>): void {
+    this.pushes.add(work);
+    void work.finally(() => this.pushes.delete(work));
+  }
+
+  /** Stop a watcher looking and settle what it already had on the wire. Held
+   *  open for the quit path too, since that is the caller that cannot wait for
+   *  an exit that may never come. */
+  private forget(watch: SaveWatch): Promise<void> {
+    this.watches.delete(watch);
+    const stopped = watch.stop();
+    this.track(stopped);
+    return stopped;
   }
 
   /** Whether the platform would launch, without downloading anything to find
@@ -750,13 +769,16 @@ export class Launcher {
       // for the push to find.
       const autosave = autosaveSeconds(config.retroarchAutosaveSeconds);
       // Only for the launch that will name it. A mapping's arguments are the
-      // user's, so a generated config would be a file nothing reads.
+      // user's, so a generated config would be a file nothing reads. The
+      // interval is asked for only where the shell is syncing this launch's
+      // saves; the display mode is the page's answer either way.
       const launchConfig =
-        savePaths &&
-        syncsSaves &&
         config.saveDataPath &&
         usesBuiltInRetroArch(config, request.platformSlug)
-          ? await writeAutosaveConfig(config.saveDataPath, autosave)
+          ? await writeLaunchConfig(config.saveDataPath, request.romId, {
+              autosaveSeconds: savePaths && syncsSaves ? autosave : 0,
+              fullscreen: request.fullscreen,
+            })
           : null;
 
       // Resolved again, and this time strictly: the validation above may have
@@ -808,12 +830,13 @@ export class Launcher {
                 this.emit({ romId: request.romId, status: "sync", sync }),
             })
           : null;
+      if (watch) this.watches.add(watch);
 
       child.on("error", (error) => {
         this.active.delete(request.romId);
         // A process that could not be spawned emits this and no exit, so this is
         // the only place the watcher it started can be stopped.
-        void watch?.stop();
+        if (watch) this.forget(watch);
         this.emit({
           romId: request.romId,
           status: "failed",
@@ -962,7 +985,7 @@ export class Launcher {
         // this push would offer the same file at the same moment. What it sent
         // is also what the push compares against, since those bytes are already
         // on the server.
-        await push.watch?.stop();
+        if (push.watch) await this.forget(push.watch);
         const streamed = push.watch?.sent() ?? [];
 
         const pushed = await pushSave({
@@ -1014,8 +1037,7 @@ export class Launcher {
       await reportPlaySessions({ config, session, signal });
     })().catch(() => undefined);
 
-    this.pushes.add(run);
-    void run.finally(() => this.pushes.delete(run));
+    this.track(run);
   }
 
   /**
@@ -1044,5 +1066,10 @@ export class Launcher {
       if (!entry.child) entry.controller.abort();
     }
     this.active.clear();
+    // The watchers of games still running: stopped so no further upload starts
+    // while the quit is held, and held open through `forget` so the one that may
+    // already be on the wire is what `saveSyncSettled` waits for. A running
+    // emulator is left alone, as everywhere else here.
+    for (const watch of [...this.watches]) void this.forget(watch);
   }
 }

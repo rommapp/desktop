@@ -248,12 +248,27 @@ export function watchIntervalFor(autosaveSeconds: number): number {
     Number.isFinite(autosaveSeconds) && autosaveSeconds > 0
       ? autosaveSeconds
       : DEFAULT_RETROARCH_AUTOSAVE_SECONDS;
-  return Math.max(Math.round((cadence * 1000) / 3), MIN_WATCH_INTERVAL_MS);
+  const third = Math.round((cadence * 1000) / 3);
+  return Math.min(
+    Math.max(third, MIN_WATCH_INTERVAL_MS),
+    MAX_WATCH_INTERVAL_MS,
+  );
 }
 
 /** Floor on the above: a hash of a memory card measured in megabytes is not
  *  free, and no emulator writes a save more often than this. */
 const MIN_WATCH_INTERVAL_MS = 2_000;
+
+/**
+ * Ceiling on it, for a cadence nobody meant.
+ *
+ * A hand-edited interval is any number a JSON file can hold, and a setInterval
+ * delay past a signed 32-bit millisecond count does not wait longer, it fires
+ * every millisecond -- which would turn the quietest possible setting into the
+ * busiest loop in the shell. Five minutes is already longer than a look is
+ * worth: the push after the exit covers whatever a look this slow would miss.
+ */
+const MAX_WATCH_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * Whether a reading of the save file taken during a run is worth offering.

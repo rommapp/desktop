@@ -470,10 +470,13 @@ A save only reaches the server once it is on disk, and RetroArch writes SRAM
 when the content closes. That is one moment to miss, so the built-in RetroArch
 launch is handed `autosave_interval` for the run, which makes RetroArch write
 the save every `retroarchAutosaveSeconds` while you play. The shell watches that
-file and sends each save an interval or so after the game writes it, the way the
-browser player uploads on its own tick. It is passed with `--appendconfig`, so
-your `retroarch.cfg` is untouched, and `0` leaves the setting alone. A configured
-emulator sets its own interval in whatever config it already keeps.
+file, at a fraction of that interval, and sends each save once two readings of
+it agree, the way the browser player uploads on its own tick. The setting rides
+in a small generated config named with `--appendconfig`, one per game, so your
+`retroarch.cfg` is untouched; `0` leaves the interval alone. RomM's play page
+also passes its full-screen answer per launch, which travels in the same file,
+since RetroArch has a flag for starting fullscreen and none for the opposite. A
+configured emulator is handed neither: its arguments and its config are yours.
 
 Nothing here can fail a launch. One limit remains: save states are not synced at
 all, since RomM's API has no slot or device tracking for them.

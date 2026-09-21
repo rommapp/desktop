@@ -4,28 +4,48 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
-  autosaveConfigPath,
   autosaveSeconds,
   DEFAULT_RETROARCH_AUTOSAVE_SECONDS,
-  retroarchAutosaveConfig,
-  writeAutosaveConfig,
+  launchConfigPath,
+  MAX_RETROARCH_AUTOSAVE_SECONDS,
+  retroarchLaunchConfig,
+  writeLaunchConfig,
 } from "./retroarch.ts";
 
 test("the config asks RetroArch for the interval, in its own format", () => {
-  const written = retroarchAutosaveConfig(10) ?? "";
+  const written = retroarchLaunchConfig({ autosaveSeconds: 10 }) ?? "";
   assert.match(written, /^autosave_interval = "10"$/m);
 });
 
-test("an interval of zero asks for nothing at all", () => {
+test("a launch with nothing to ask for names no config", () => {
   // Not a file that sets zero: that would override a user who chose their own
-  // interval, which is the opposite of leaving their setting alone.
-  assert.equal(retroarchAutosaveConfig(0), null);
+  // interval, which is the opposite of leaving their settings alone.
+  assert.equal(retroarchLaunchConfig({ autosaveSeconds: 0 }), null);
 });
 
-test("an interval that is not a whole number of seconds is declined", () => {
+test("an interval that is not a whole number of seconds is left out", () => {
   for (const seconds of [-5, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-    assert.equal(retroarchAutosaveConfig(seconds), null, `${seconds}`);
+    assert.equal(retroarchLaunchConfig({ autosaveSeconds: seconds }), null);
   }
+});
+
+test("both display answers are written, since only one has a flag", () => {
+  // RetroArch has -f for fullscreen and nothing for the opposite, so a switch
+  // the page turned off has only the setting to say it with -- and it has to
+  // say it, on a machine whose own config turns fullscreen on.
+  assert.match(
+    retroarchLaunchConfig({ autosaveSeconds: 0, fullscreen: false }) ?? "",
+    /^video_fullscreen = "false"$/m,
+  );
+  assert.match(
+    retroarchLaunchConfig({ autosaveSeconds: 0, fullscreen: true }) ?? "",
+    /^video_fullscreen = "true"$/m,
+  );
+});
+
+test("a launch that says nothing about the display leaves it alone", () => {
+  const written = retroarchLaunchConfig({ autosaveSeconds: 10 }) ?? "";
+  assert.doesNotMatch(written, /video_fullscreen/);
 });
 
 test("a hand-edited interval falls back to the default, but zero is honoured", () => {
@@ -40,22 +60,34 @@ test("a hand-edited interval falls back to the default, but zero is honoured", (
   }
 });
 
-test("the generated config cannot collide with a game's own directory", () => {
-  // Those are named with the ROM id, and a leading dot is not one.
-  const path = autosaveConfigPath("/data/save-data");
-  assert.equal(path, join("/data/save-data", ".retroarch", "autosave.cfg"));
+test("an absurd interval is capped rather than passed on", () => {
+  // The watcher looks at a fraction of this, so a number nobody meant here
+  // becomes a timer nobody meant there.
+  assert.equal(
+    autosaveSeconds(Number.MAX_SAFE_INTEGER),
+    MAX_RETROARCH_AUTOSAVE_SECONDS,
+  );
+});
+
+test("each launch gets its own config, named for the game", () => {
+  // Per ROM because the contents differ per launch: two games running at once
+  // would otherwise overwrite each other's display answer. The leading dot is
+  // what keeps the directory clear of a game's own, which is named by ROM id.
+  const path = launchConfigPath("/data/save-data", 7);
+  assert.equal(path, join("/data/save-data", ".retroarch", "launch-7.cfg"));
+  assert.notEqual(path, launchConfigPath("/data/save-data", 8));
 });
 
 test("writing returns the path the launch can name", async () => {
   const root = mkdtempSync(join(tmpdir(), "romm-save-data-"));
-  const target = await writeAutosaveConfig(root, 10);
-  assert.equal(target, autosaveConfigPath(root));
+  const target = await writeLaunchConfig(root, 7, { autosaveSeconds: 10 });
+  assert.equal(target, launchConfigPath(root, 7));
   assert.match(readFileSync(target ?? "", "utf8"), /autosave_interval = "10"/);
 });
 
-test("nothing is written when the interval asks for nothing", async () => {
+test("nothing is written when there is nothing to ask for", async () => {
   const root = mkdtempSync(join(tmpdir(), "romm-save-data-"));
-  assert.equal(await writeAutosaveConfig(root, 0), null);
+  assert.equal(await writeLaunchConfig(root, 7, { autosaveSeconds: 0 }), null);
 });
 
 test("a path an --appendconfig list cannot express is declined", async () => {
@@ -63,5 +95,8 @@ test("a path an --appendconfig list cannot express is declined", async () => {
   // firmware config is appended beside this one, so mangling the list would
   // cost that too.
   const root = mkdtempSync(join(tmpdir(), "romm-save-data-"));
-  assert.equal(await writeAutosaveConfig(join(root, "a|b"), 10), null);
+  assert.equal(
+    await writeLaunchConfig(join(root, "a|b"), 7, { autosaveSeconds: 10 }),
+    null,
+  );
 });
