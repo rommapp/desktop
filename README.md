@@ -80,25 +80,22 @@ RomM's session lasts fourteen days by default and is renewed by use, so a shell
 opened regularly stays signed in. One left alone for longer, or signed out from
 elsewhere, comes back to a server that no longer recognises it.
 
-The shell notices this itself, because it makes requests of its own that the
-page never sees: the ROM download, the disc list, the firmware list, the save
-negotiation, the play session report. RomM answers those with a 401, which is its own signal that the
-caller should go and sign in -- distinct from the 403 it answers a user whose
-account simply lacks a scope, and which is not a session problem and not treated
-as one here. On a 401 the shell reloads the window and lets RomM's own frontend
-take it from there, so you get the login your server ships rather than a form
-this shell invented, and an OIDC server still goes to its provider.
+The shell notices, because it makes requests the page never sees: the ROM
+download, the disc list, the firmware list, the save negotiation, the play
+session report. RomM answers those with a 401 -- its signal to go and sign in,
+distinct from the 403 it gives an account that simply lacks a scope. On a 401
+the shell reloads the window and lets RomM's own frontend take it from there, so
+you get the login your server ships, and an OIDC server still goes to its
+provider.
 
-A launch that stops for this reason says so in as many words rather than
-reporting a failed download, and nothing is lost by it: a save the shell could
-not send stays on disk and is offered again the next time you launch that game,
-and a play session it could not report stays queued. Sign in and press Play
-again.
+A launch that stops for this says so rather than reporting a failed download,
+and nothing is lost: a save the shell could not send stays on disk for the next
+launch of that game, and a play session it could not report stays queued. Sign
+in and press Play again.
 
-One reload per sign-out, not one per request: a single launch asks the server
-several times and an expired session fails all of them. A login page already on
-screen is left alone, and so is a window opened for an identity provider, since
-that is a sign-in already happening.
+One reload per sign-out, not one per request. A login page already on screen is
+left alone, and so is a window opened for an identity provider, which is a
+sign-in already under way.
 
 ## Using a controller
 
