@@ -74,15 +74,19 @@ const NEVER_CANCELLED = new AbortController().signal;
  * Every other attempt happens when an emulator exits, which is enough for a
  * machine that is used again. It is not enough for one that was played offline
  * and then set down: without this, that session waits for a launch that may
- * never come. Unlike the emulator offer, this runs for every window rather than
- * once per run: a reopen is another chance at a server that was not there
- * before, and an empty queue costs a file that is not on disk.
+ * never come.
  *
- * Held until the page has loaded, so it goes out over a session the user has had
- * the chance to sign back into.
+ * Every load rather than the first, because the first is the one least likely to
+ * be signed in. A shell opened after its session expired lands on the login page,
+ * and the load that matters is the one after the user has signed back in. An
+ * empty queue costs a file that is not on disk, so the repeats are cheap.
+ *
+ * This cannot become a reload cycle with the sign-out nudge, which reloads the
+ * window on a 401: the second load is the login page, and a window already there
+ * is one the nudge leaves alone.
  */
 function reportBacklog(config: DesktopConfig, window: BrowserWindow): void {
-  window.webContents.once("did-finish-load", () => {
+  window.webContents.on("did-finish-load", () => {
     void reportPlaySessions({
       config,
       session: window.webContents.session,
