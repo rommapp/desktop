@@ -491,6 +491,12 @@ only ever offered to that one, since a rom id belongs to the server that issued
 it: point the shell elsewhere and the old backlog waits rather than being
 misfiled.
 
+A session is filed against whoever is signed in when it arrives, not whoever
+played it, so the queue is bound to an account as well. Sign a different account
+into the same server while a backlog is waiting and the backlog is discarded
+rather than landing on them. Losing a play record is the lesser of the two, and
+the only one that is not also someone else's business.
+
 Like save sync, none of this can fail a launch, and it reports as the same
 `deviceId` the saves sync under -- or unattributed, when this machine has never
 registered one. Turning `trackPlaySessions` off stops sessions being recorded;

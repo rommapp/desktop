@@ -10,10 +10,19 @@ import { type DesktopConfig } from "../../shared/types.ts";
 import { playQueuePath } from "../config.ts";
 import { ensureDeviceId } from "../saves/device.ts";
 import { apiRequest } from "../saves/http.ts";
-import { dequeue, pruneQueue } from "./queue.ts";
-import { forServer, inBatches, shouldRetry, toEntries } from "./session.ts";
+import { claimQueue, dequeue, ownerOf, pruneQueue } from "./queue.ts";
+import {
+  forServer,
+  inBatches,
+  shouldRetry,
+  toEntries,
+  userIdFrom,
+} from "./session.ts";
 
 const INGEST_PATH = "/api/play-sessions";
+
+/** What RomM's own frontend asks to find out who it is talking for. */
+const ME_PATH = "/api/users/me";
 
 interface ReportOptions {
   config: DesktopConfig;
@@ -39,6 +48,22 @@ async function flushPlaySessions(options: ReportOptions): Promise<void> {
   // Pruned here rather than only as sessions arrive, so the age bound holds for
   // a machine that has stopped being played on.
   const queued = forServer(await pruneQueue(playQueuePath()), serverUrl);
+  const owner = await ownerOf(playQueuePath(), serverUrl);
+  // Nothing waiting and the queue already has an owner: the ordinary case, and
+  // the one that has to stay free of a request.
+  if (queued.length === 0 && owner !== undefined) return;
+
+  // Who the server thinks is asking. A session is filed against whoever is
+  // signed in when it arrives, not whoever played it, so this is asked before
+  // anything is sent rather than after.
+  const userId = await currentUserId({ config, session, signal });
+  // No answer is not an account: what is queued stays queued.
+  if (userId === null) return;
+
+  // Recorded even with nothing to send, so the account is known before the
+  // first offline session is queued against it rather than after.
+  const discarded = await claimQueue(playQueuePath(), serverUrl, userId);
+  if (discarded > 0) return;
   if (queued.length === 0) return;
 
   // The same id the saves sync as, so RomM attributes both to one machine and
@@ -64,6 +89,23 @@ async function flushPlaySessions(options: ReportOptions): Promise<void> {
     // thing again.
     await dequeue(playQueuePath(), batch);
   }
+}
+
+/** Who the server says this session belongs to, or null when it would not say. */
+async function currentUserId({
+  config,
+  session,
+  signal,
+}: ReportOptions): Promise<number | null> {
+  const response = await apiRequest({
+    serverUrl: config.serverUrl ?? "",
+    session,
+    path: ME_PATH,
+    method: "GET",
+    signal,
+  });
+  if (!response || response.status >= 300) return null;
+  return userIdFrom(response.body);
 }
 
 /**

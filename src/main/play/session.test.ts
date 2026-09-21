@@ -10,6 +10,7 @@ import {
   playTrackingEnabled,
   shouldRetry,
   toEntries,
+  userIdFrom,
   type Clocks,
   type PlaySessionRecord,
 } from "./session.ts";
@@ -211,4 +212,14 @@ test("a backlog is never offered to a server it was not played against", () => {
     theirs,
   ]);
   assert.deepEqual(forServer([mine, theirs], "https://third.example"), []);
+});
+
+test("the account is read from what /users/me actually answers", () => {
+  assert.equal(userIdFrom({ id: 7, username: "sam" }), 7);
+  // The endpoint is declared UserSchema | None, so null is an answer.
+  assert.equal(userIdFrom(null), null);
+  assert.equal(userIdFrom({}), null);
+  assert.equal(userIdFrom({ id: "7" }), null);
+  assert.equal(userIdFrom({ id: 1.5 }), null);
+  assert.equal(userIdFrom("not an object"), null);
 });

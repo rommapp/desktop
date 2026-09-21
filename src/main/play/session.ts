@@ -184,6 +184,19 @@ export function shouldRetry(status: number): boolean {
 }
 
 /**
+ * The user id out of a `/api/users/me` answer, if it is the shape expected.
+ *
+ * `UserSchema.id` is an int, and the endpoint is declared as `UserSchema | None`,
+ * so a body that is not an object with one is an answer this cannot read rather
+ * than an account to file sessions under.
+ */
+export function userIdFrom(body: unknown): number | null {
+  if (typeof body !== "object" || body === null) return null;
+  const id = (body as { id?: unknown }).id;
+  return typeof id === "number" && Number.isInteger(id) ? id : null;
+}
+
+/**
  * What makes two records the same session.
  *
  * The server's own identity, minus the device and the user, which do not vary

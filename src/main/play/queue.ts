@@ -23,6 +23,22 @@ import { identityOf, type PlaySessionRecord } from "./session.ts";
 export const QUEUE_FILE = "play-sessions.json";
 
 /**
+ * What the file holds: the sessions waiting, and who each server's waiting
+ * sessions belong to.
+ *
+ * The owner is here rather than in the config because it is the queue's own
+ * bookkeeping, and here rather than on each record because it has to be
+ * recorded before there is anything to stamp -- the point of it is to know, on
+ * the first flush after an account change, that what is queued was not this
+ * account's. Keyed by server, so repointing the shell and coming back does not
+ * read as a different person.
+ */
+interface QueueFile {
+  owners: Record<string, number>;
+  sessions: PlaySessionRecord[];
+}
+
+/**
  * How much backlog is kept.
  *
  * A machine that never reaches its server would otherwise grow this file for as
@@ -52,34 +68,92 @@ function isRecord(value: unknown): value is PlaySessionRecord {
   );
 }
 
-/** Everything queued, oldest first. A file that is missing, truncated or full of
- *  something else reads as an empty queue: there is nothing to recover from it
- *  and refusing to start would cost the sessions that follow as well. */
-export async function readQueue(path: string): Promise<PlaySessionRecord[]> {
+/** A file that is missing, truncated or full of something else reads as empty:
+ *  there is nothing to recover from it and refusing to start would cost the
+ *  sessions that follow as well. */
+async function readFileState(path: string): Promise<QueueFile> {
+  const empty: QueueFile = { owners: {}, sessions: [] };
   let raw: string;
   try {
     raw = await readFile(path, "utf8");
   } catch {
-    return [];
+    return empty;
   }
   try {
     const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter(isRecord) : [];
+    if (typeof parsed !== "object" || parsed === null) return empty;
+    const { owners, sessions } = parsed as Partial<QueueFile>;
+    return {
+      owners: isOwners(owners) ? owners : {},
+      sessions: Array.isArray(sessions) ? sessions.filter(isRecord) : [],
+    };
   } catch {
-    return [];
+    return empty;
   }
 }
 
-async function writeQueue(
-  path: string,
-  records: readonly PlaySessionRecord[],
-): Promise<void> {
+function isOwners(value: unknown): value is Record<string, number> {
+  if (typeof value !== "object" || value === null) return false;
+  return Object.values(value).every(
+    (id) => typeof id === "number" && Number.isInteger(id),
+  );
+}
+
+/** Everything queued, oldest first. */
+export async function readQueue(path: string): Promise<PlaySessionRecord[]> {
+  return (await readFileState(path)).sessions;
+}
+
+async function writeQueue(path: string, next: QueueFile): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   // Write-then-rename, as the config does: a crash mid-write must not leave a
   // truncated file where the backlog was.
   const temp = `${path}.tmp`;
-  await writeFile(temp, JSON.stringify(records, null, 2), "utf8");
+  await writeFile(temp, JSON.stringify(next, null, 2), "utf8");
   await rename(temp, path);
+}
+
+/** Which account this server's queued sessions were recorded under, if the
+ *  shell has ever been able to ask. */
+export async function ownerOf(
+  path: string,
+  serverUrl: string,
+): Promise<number | undefined> {
+  return (await readFileState(path)).owners[serverUrl];
+}
+
+/**
+ * Record who this server's queue belongs to, discarding it if that has changed.
+ *
+ * A session is attributed to whoever is signed in when it is delivered, not to
+ * whoever played it, so a backlog outliving its account would land on the next
+ * one. There is no way to hand it to the right person after the fact, so it goes
+ * -- losing a play record is the lesser of the two, and the only one that is not
+ * also someone else's business.
+ *
+ * Returns how many were discarded, so the caller can tell an ordinary flush from
+ * one that found the queue belonged to somebody else.
+ */
+export function claimQueue(
+  path: string,
+  serverUrl: string,
+  userId: number,
+): Promise<number> {
+  return inTurn(path, async () => {
+    const state = await readFileState(path);
+    const known = state.owners[serverUrl];
+    if (known === userId) return 0;
+
+    const theirs =
+      known === undefined
+        ? []
+        : state.sessions.filter((s) => s.serverUrl === serverUrl);
+    await writeQueue(path, {
+      owners: { ...state.owners, [serverUrl]: userId },
+      sessions: state.sessions.filter((s) => !theirs.includes(s)),
+    });
+    return theirs.length;
+  });
 }
 
 /**
@@ -95,9 +169,11 @@ export function pruneQueue(
   now: number = Date.now(),
 ): Promise<PlaySessionRecord[]> {
   return inTurn(path, async () => {
-    const queued = await readQueue(path);
-    const kept = prune(queued, now);
-    if (kept.length !== queued.length) await writeQueue(path, kept);
+    const state = await readFileState(path);
+    const kept = prune(state.sessions, now);
+    if (kept.length !== state.sessions.length) {
+      await writeQueue(path, { ...state, sessions: kept });
+    }
     return kept;
   });
 }
@@ -131,8 +207,9 @@ export function enqueue(
   // Two emulators can exit at once, and both would otherwise read this file,
   // add their own row, and write back a copy missing the other's.
   return inTurn(path, async () => {
-    const queued = prune([...(await readQueue(path)), record], now);
-    await writeQueue(path, queued);
+    const state = await readFileState(path);
+    const queued = prune([...state.sessions, record], now);
+    await writeQueue(path, { ...state, sessions: queued });
     return queued;
   });
 }
@@ -151,9 +228,12 @@ export function dequeue(
   if (delivered.length === 0) return Promise.resolve();
   const gone = new Set(delivered.map(identityOf));
   return inTurn(path, async () => {
-    const remaining = (await readQueue(path)).filter(
-      (record) => !gone.has(identityOf(record)),
-    );
-    await writeQueue(path, remaining);
+    const state = await readFileState(path);
+    await writeQueue(path, {
+      ...state,
+      sessions: state.sessions.filter(
+        (record) => !gone.has(identityOf(record)),
+      ),
+    });
   });
 }
