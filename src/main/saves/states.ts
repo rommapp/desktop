@@ -30,11 +30,15 @@ import { safeFileName, safeFileNameComponent } from "../safety.ts";
 /**
  * The largest state this will send.
  *
- * RomM's own default ceiling for an asset (`MAX_ASSET_UPLOAD_SIZE_BYTES`, 512
- * MiB). A server configured lower answers 413 and the log says so; the point of
- * checking here is to not spend minutes uploading something certain to bounce.
+ * Well under RomM's own 512 MiB asset ceiling, because the cost here is memory
+ * rather than bandwidth: the file and the multipart body framing it are both
+ * resident while the request is built, so the peak is roughly twice the state.
+ * A savestate is a core's RAM and video memory, which puts the heaviest real
+ * ones in the tens of megabytes, so this passes everything an emulator
+ * actually writes and refuses the ones that would cost the main process its
+ * heap. Anything larger is named in the log rather than sent.
  */
-export const MAX_STATE_BYTES = 512 * 1024 * 1024;
+export const MAX_STATE_BYTES = 128 * 1024 * 1024;
 
 /** The picture RetroArch writes beside a state when thumbnails are on. */
 export const THUMBNAIL_SUFFIX = ".png";

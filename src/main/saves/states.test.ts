@@ -115,3 +115,12 @@ test("a long game name yields to the slot rather than swallowing it", () => {
 test("a machine whose name survives nothing still produces a usable name", () => {
   assert.equal(stateAssetName("Game", "...", "auto"), "Game [auto].state");
 });
+
+test("the ceiling leaves room for a real state and not for a heap", () => {
+  // Memory, not bandwidth: the file and the multipart body framing it are both
+  // resident, so the peak is about twice this. Well over the heaviest state a
+  // core actually writes, well under RomM's own 512 MiB asset limit.
+  assert.equal(MAX_STATE_BYTES, 128 * 1024 * 1024);
+  assert.ok(MAX_STATE_BYTES > 64 * 1024 * 1024);
+  assert.ok(MAX_STATE_BYTES < 512 * 1024 * 1024);
+});

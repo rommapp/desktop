@@ -101,17 +101,24 @@ export async function pushStates(
 
   for (const entry of tooLarge) {
     console.warn(
-      `[states] rom ${romId}: ${entry.name} is ${entry.size} bytes, over the ${MAX_STATE_BYTES} the server takes`,
+      `[states] rom ${romId}: ${entry.name} is ${entry.size} bytes, over the ${MAX_STATE_BYTES} this sends`,
     );
   }
   if (send.length === 0) {
-    console.info(`[states] rom ${romId}: this run wrote no new states`);
-    return { uploaded: 0, failed: 0 };
+    // Which of the two it was, because "no new states" for a run that wrote
+    // one too large to send is the log answering a question nobody asked.
+    console.info(
+      tooLarge.length > 0
+        ? `[states] rom ${romId}: nothing sent, every state this run wrote was too large`
+        : `[states] rom ${romId}: this run wrote no new states`,
+    );
+    return { uploaded: 0, failed: tooLarge.length };
   }
 
   const pictures = new Set(after.map((entry) => entry.name));
   let uploaded = 0;
-  let failed = 0;
+  // A state too large to send did not make it either, so it counts here.
+  let failed = tooLarge.length;
 
   for (const { entry, slot } of send) {
     if (signal.aborted) break;

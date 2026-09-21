@@ -544,8 +544,9 @@ Naming the machine keeps two of them from overwriting each other's slots.
 RetroArch's automatic state is `[... auto]`, its `.bak` copies are skipped, and
 savestate thumbnails go up with the state if you have them switched on.
 
-Only the slots a run actually wrote are sent, and anything above the server's
-512 MiB asset limit is logged rather than sent.
+Only the slots a run actually wrote are sent, and anything over 128 MiB is
+logged rather than sent: a state and the request framing it are both in memory
+while it uploads, and the heaviest state a real core writes is far below that.
 
 Mirroring needs the states to land where the shell can find them: the built-in
 RetroArch path, which pins `savestate_directory`, or a mapping naming
