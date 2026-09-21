@@ -8,6 +8,7 @@ import {
   DEFAULT_RETROARCH_AUTOSAVE_SECONDS,
   launchConfigPath,
   MAX_RETROARCH_AUTOSAVE_SECONDS,
+  MIN_RETROARCH_AUTOSAVE_SECONDS,
   retroarchLaunchConfig,
   writeLaunchConfig,
 } from "./retroarch.ts";
@@ -58,6 +59,16 @@ test("a hand-edited interval falls back to the default, but zero is honoured", (
       `${bad}`,
     );
   }
+});
+
+test("an interval faster than the watcher can catch is raised to one it can", () => {
+  // RetroArch takes any whole number of seconds, but a cadence the watcher
+  // cannot see at rest is a cadence nothing is ever sent from: it has to read
+  // the same bytes twice, so looks further apart than the writes never agree.
+  for (const asked of [1, 2, 5]) {
+    assert.equal(autosaveSeconds(asked), MIN_RETROARCH_AUTOSAVE_SECONDS);
+  }
+  assert.equal(autosaveSeconds(MIN_RETROARCH_AUTOSAVE_SECONDS + 1), 7);
 });
 
 test("an absurd interval is capped rather than passed on", () => {

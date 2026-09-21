@@ -256,7 +256,9 @@ export function watchIntervalFor(autosaveSeconds: number): number {
 }
 
 /** Floor on the above: a hash of a memory card measured in megabytes is not
- *  free, and no emulator writes a save more often than this. */
+ *  free. `MIN_RETROARCH_AUTOSAVE_SECONDS` is the other half of it: the cadence
+ *  asked of the emulator is floored at three of these, so widening a third that
+ *  came out shorter cannot leave the looks further apart than the writes. */
 const MIN_WATCH_INTERVAL_MS = 2_000;
 
 /**

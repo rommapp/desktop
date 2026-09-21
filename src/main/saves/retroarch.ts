@@ -34,6 +34,18 @@ import { dirname, join } from "node:path";
 export const DEFAULT_RETROARCH_AUTOSAVE_SECONDS = 10;
 
 /**
+ * Floor on the interval the shell asks for.
+ *
+ * RetroArch takes any whole number of seconds, but the watcher looks at a third
+ * of the cadence and no oftener than every two seconds, and it has to see the
+ * same bytes twice before offering them. Six is the fastest cadence whose third
+ * is that floor rather than shorter than it: ask for less and the looks are
+ * further apart than the writes, so a game that writes on every flush is never
+ * caught at rest and nothing is sent until the exit.
+ */
+export const MIN_RETROARCH_AUTOSAVE_SECONDS = 6;
+
+/**
  * Ceiling on the interval a hand-edited config can ask for.
  *
  * An hour is already longer than the cadence is useful at, and the number is
@@ -100,14 +112,17 @@ export function retroarchLaunchConfig(settings: LaunchSettings): string | null {
 
 /** Coerce the configured interval, the way minimumPlayMs does: zero is the user
  *  asking the shell to leave the setting alone, anything that is not a whole
- *  number of seconds is not an answer, and the ceiling is what keeps a
- *  hand-edited number from becoming a timer nobody meant. */
+ *  number of seconds is not an answer, and the bounds are what keep a
+ *  hand-edited number from becoming a cadence the watcher cannot work with. */
 export function autosaveSeconds(seconds: number | null | undefined): number {
   if (seconds === 0) return 0;
   if (!Number.isInteger(seconds) || (seconds as number) < 0) {
     return DEFAULT_RETROARCH_AUTOSAVE_SECONDS;
   }
-  return Math.min(seconds as number, MAX_RETROARCH_AUTOSAVE_SECONDS);
+  return Math.min(
+    Math.max(seconds as number, MIN_RETROARCH_AUTOSAVE_SECONDS),
+    MAX_RETROARCH_AUTOSAVE_SECONDS,
+  );
 }
 
 /**

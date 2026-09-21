@@ -17,6 +17,11 @@ import {
   type SaveStamp,
   type SyncOperation,
 } from "./plan.ts";
+import {
+  DEFAULT_RETROARCH_AUTOSAVE_SECONDS,
+  MAX_RETROARCH_AUTOSAVE_SECONDS,
+  MIN_RETROARCH_AUTOSAVE_SECONDS,
+} from "./retroarch.ts";
 
 function op(patch: Partial<SyncOperation> = {}): SyncOperation {
   return {
@@ -432,6 +437,25 @@ test("an absurd writing cadence is capped, not turned into a hot loop", () => {
   const interval = watchIntervalFor(Number.MAX_SAFE_INTEGER);
   assert.ok(interval <= 5 * 60 * 1000, `capped at ${interval}ms`);
   assert.ok(interval > 0);
+});
+
+test("every cadence the shell can ask for leaves two looks between writes", () => {
+  // The floor on looking and the floor on the cadence asked of the emulator are
+  // one rule read from both ends: two looks have to fall between one write and
+  // the next for any of them to agree, so widening a third that came out below
+  // the floor must not leave the looks further apart than the writes.
+  for (const seconds of [
+    MIN_RETROARCH_AUTOSAVE_SECONDS,
+    MIN_RETROARCH_AUTOSAVE_SECONDS + 1,
+    DEFAULT_RETROARCH_AUTOSAVE_SECONDS,
+    MAX_RETROARCH_AUTOSAVE_SECONDS,
+  ]) {
+    const interval = watchIntervalFor(seconds);
+    assert.ok(
+      2 * interval <= seconds * 1000,
+      `${seconds}s cadence looked every ${interval}ms`,
+    );
+  }
 });
 
 test("a very short writing cadence is floored, not chased", () => {

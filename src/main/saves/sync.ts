@@ -27,6 +27,7 @@ import {
 import { isSignedOut } from "../auth/status.ts";
 import { downloadFromServer } from "../rom-cache.ts";
 import { resolveDownloadUrl } from "../safety.ts";
+import { onBeat } from "./beat.ts";
 import { ensureDeviceId, forgetDeviceId } from "./device.ts";
 import { hashFile, md5Hex } from "./hash.ts";
 import { apiRequest } from "./http.ts";
@@ -661,18 +662,15 @@ export function watchSave(options: WatchOptions): SaveWatch {
    *  push after the exit is the retry, and it runs whatever happens here. */
   let offered: string | null = null;
   const sent: SaveSyncOutcome[] = [];
-  let stopped = false;
-  // Ticks are chained rather than concurrent: an upload can outlast an
-  // interval, and two pushes of one file would race for the same slot.
-  let settled: Promise<void> = Promise.resolve();
 
-  const tick = async (): Promise<void> => {
-    if (stopped || signal.aborted) return;
+  /** One look at the file, and whether there is any point looking again. */
+  const tick = async (): Promise<boolean> => {
+    if (signal.aborted) return false;
 
     const reading = (await readLocal(saveFile))?.stamp ?? null;
     const worthOffering = planTick(previous, reading, baseline);
     previous = reading;
-    if (!worthOffering || !reading || reading.hash === offered) return;
+    if (!worthOffering || !reading || reading.hash === offered) return true;
     offered = reading.hash;
 
     // The push reads the file itself, once, and sends what it read. Naming the
@@ -682,7 +680,7 @@ export function watchSave(options: WatchOptions): SaveWatch {
     const { outcome, sent: stored } = await inTurn(saveFile, () =>
       runPush({ ...options, before: baseline, expect: reading.hash }),
     );
-    if (!outcome || outcome.action === "failed") return;
+    if (!outcome || outcome.action === "failed") return true;
     baseline = stored ?? reading;
     sent.push(outcome);
     onSent?.(outcome);
@@ -690,25 +688,13 @@ export function watchSave(options: WatchOptions): SaveWatch {
     // The slot moved on under this run, so what the emulator writes from here
     // is archival. One of those is the exit's to file: filing one per interval
     // would leave a session's worth of saves nothing rotates or reaps.
-    if (outcome.action === "archived") {
-      stopped = true;
-      clearInterval(timer);
-    }
+    return outcome.action !== "archived";
   };
 
-  const timer = setInterval(() => {
-    settled = settled.then(tick).catch(() => undefined);
-  }, intervalMs);
-  // A game runs for hours, and this timer is not a reason to keep the process
-  // alive on its own.
-  timer.unref();
+  const beat = onBeat(intervalMs, tick);
 
   return {
-    async stop() {
-      stopped = true;
-      clearInterval(timer);
-      await settled;
-    },
+    stop: () => beat.stop(),
     baseline: () => baseline,
     sent: () => sent,
   };
