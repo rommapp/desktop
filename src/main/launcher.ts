@@ -815,7 +815,9 @@ export class Launcher {
                 pulled: saveSync.outcome,
               }
             : null;
-        if (!pushes && !played) return;
+        // Runs even with nothing of its own to send. An exit is the moment the
+        // shell most recently had a server in front of it, and a run too short
+        // to record is still a chance to clear what an earlier one queued.
         this.settleExit({
           config,
           session,
