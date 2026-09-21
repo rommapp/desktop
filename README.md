@@ -481,6 +481,17 @@ also passes its full-screen answer per launch, which travels in the same file,
 since RetroArch has a flag for starting fullscreen and none for the opposite. A
 configured emulator is handed neither: its arguments and its config are yours.
 
+The same config pins where the save goes. `-s` and `-S` name the files, which is
+what the shell wants, but they are deprecated and lose to your own settings: a
+`savefile_directory`, a sorting option or "save files in content directory"
+redirects the write while the read still comes from the named file, so a game
+loads the shell's save and writes its own somewhere else, and every launch after
+that reports the save as unchanged. So the generated config sets
+`savefile_directory` and `savestate_directory` to this game's own directories and
+turns every redirect off them off. RetroArch still names the file itself, from
+the content, and when that name differs from the one the shell pulled into place
+the log says which file the emulator wrote instead.
+
 A launch leaves one save in the slot, not one per interval. The autosave slot is
 a history, and every upload into it opens a new version, so the first save a run
 sends opens the version and the rest of the run writes over that one, the way a

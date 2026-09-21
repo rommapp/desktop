@@ -111,3 +111,46 @@ test("a path an --appendconfig list cannot express is declined", async () => {
     null,
   );
 });
+
+test("a launch pins the directories its saves and states belong in", () => {
+  // The deprecated flags name the files but lose to a savefile_directory, a
+  // sorting option or "save files in content directory" in the user's own
+  // config, which redirects the write while the read still comes from the named
+  // file. A config appended for the run is what outranks those.
+  const written =
+    retroarchLaunchConfig({
+      autosaveSeconds: 0,
+      saveDir: "/data/4755/saves",
+      stateDir: "/data/4755/states",
+    }) ?? "";
+
+  assert.match(written, /^savefile_directory = "\/data\/4755\/saves"$/m);
+  assert.match(written, /^savestate_directory = "\/data\/4755\/states"$/m);
+  for (const key of [
+    "sort_savefiles_enable",
+    "sort_savefiles_by_content_enable",
+    "savefiles_in_content_dir",
+    "sort_savestates_enable",
+    "sort_savestates_by_content_enable",
+    "savestates_in_content_dir",
+  ]) {
+    assert.match(written, new RegExp(`^${key} = "false"$`, "m"));
+  }
+});
+
+test("a directory a config cannot quote is left unsaid", () => {
+  // A retroarch.cfg value is a quoted string with no escape for a quote inside
+  // it, so the alternative to saying nothing is a config that does not parse.
+  assert.equal(
+    retroarchLaunchConfig({ autosaveSeconds: 0, saveDir: '/data/a"b/saves' }),
+    null,
+  );
+  const written =
+    retroarchLaunchConfig({
+      autosaveSeconds: 10,
+      saveDir: '/data/a"b/saves',
+      stateDir: "/data/4755/states",
+    }) ?? "";
+  assert.doesNotMatch(written, /savefile_directory/);
+  assert.match(written, /^savestate_directory = "\/data\/4755\/states"$/m);
+});

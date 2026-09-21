@@ -18,7 +18,7 @@
 // moves, and the game starts anyway.
 
 import { type Session } from "electron";
-import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
   type DesktopConfig,
@@ -33,6 +33,7 @@ import { hashFile, md5Hex } from "./hash.ts";
 import { apiRequest } from "./http.ts";
 import { inTurn } from "./lock.ts";
 import { saveUploadBody } from "./multipart.ts";
+import { newerSibling, type SaveEntry } from "./paths.ts";
 import {
   archiveName,
   AUTOSAVE_SLOT,
@@ -600,13 +601,21 @@ async function runPush({
     // The file's own timestamp goes with the reason: "unchanged" is the shell
     // and the emulator disagreeing about which file the run was about, and a
     // mtime from before the launch is what says so.
-    const touched = await stat(saveFile)
-      .then((info) => info.mtime.toISOString())
-      .catch(() => "unknown");
+    const info = await stat(saveFile).catch(() => null);
+    const touched = info ? info.mtime.toISOString() : "unknown";
     console.info(
       `[saves] rom ${romId}: nothing to send, ${declined(after, allowance, expect)}` +
         ` (${after.size} bytes, last written ${touched})`,
     );
+    // Named when it exists, because a save the emulator wrote under its own
+    // name is the one thing that makes an untouched file mean something other
+    // than "nobody saved".
+    const instead = info && (await newerSaveBeside(saveFile, info.mtimeMs));
+    if (instead) {
+      console.warn(
+        `[saves] rom ${romId}: the emulator wrote ${instead} instead, which is not the file this launch named`,
+      );
+    }
     return idle;
   }
 
@@ -717,6 +726,26 @@ async function runPush({
 
 function describe(result: UploadResult): string {
   return result.kind === "failed" ? result.detail : "upload refused";
+}
+
+/** A save written into this game's directory more recently than the launch's
+ *  own file, which is the emulator having named its save something else. */
+async function newerSaveBeside(
+  saveFile: string,
+  modifiedAt: number,
+): Promise<string | null> {
+  const directory = dirname(saveFile);
+  const names = await readdir(directory).catch(() => [] as string[]);
+  const entries = await Promise.all(
+    names.map(async (name) => {
+      const info = await stat(join(directory, name)).catch(() => null);
+      return info?.isFile() ? { name, modifiedAt: info.mtimeMs } : null;
+    }),
+  );
+  return newerSibling(
+    { name: basename(saveFile), modifiedAt },
+    entries.filter((entry): entry is SaveEntry => entry !== null),
+  );
 }
 
 /** Why a push found nothing to do, for the log line that is the only trace a

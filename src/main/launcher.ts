@@ -796,6 +796,11 @@ export class Launcher {
           ? await writeLaunchConfig(config.saveDataPath, request.romId, {
               autosaveSeconds: askedAutosave,
               fullscreen: request.fullscreen,
+              // The flags name the files and the settings pin the directory:
+              // a redirect in the user's own config beats the flags, and this
+              // config beats the redirect.
+              saveDir: savePaths?.saveDir,
+              stateDir: savePaths?.stateDir,
             })
           : null;
       // The interval is the one thing the arguments below do not show: they

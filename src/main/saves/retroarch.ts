@@ -81,14 +81,61 @@ export interface LaunchSettings {
   /** Whether to start fullscreen. Undefined asks for nothing, which is what
    *  leaves the user's own setting to decide. */
   fullscreen?: boolean;
+  /** Where this game's saves and states belong. Undefined leaves the
+   *  directories to the user's own settings. */
+  saveDir?: string;
+  stateDir?: string;
+}
+
+/**
+ * Where a launch's save data belongs, as settings rather than as flags.
+ *
+ * `-s` and `-S` name the files, which is what the shell wants, but they are
+ * deprecated and lose: a `savefile_directory`, a sorting option or "save files
+ * in content directory" in the user's own retroarch.cfg redirects the write
+ * while the read still comes from the named file, so a game loads the shell's
+ * save and writes its own somewhere else, and the launch reports the save as
+ * unchanged for the rest of time. A config appended for this run is the one
+ * thing that outranks those settings.
+ *
+ * So the directory is pinned here and every redirect off it is turned off. The
+ * name is RetroArch's own (it derives one from the content), which is why the
+ * flags stay too: where the two agree, the file is the one the shell pulled
+ * into place.
+ */
+function saveDirectoryLines(settings: LaunchSettings): string[] {
+  const { saveDir, stateDir } = settings;
+  const lines: string[] = [];
+
+  // A retroarch.cfg value is a quoted string with no escape for a quote inside
+  // it, so a path holding one cannot be named at all. Saying nothing leaves the
+  // user's settings standing, which is where they were.
+  if (saveDir && !saveDir.includes('"')) {
+    lines.push(
+      `savefile_directory = "${saveDir}"`,
+      'sort_savefiles_enable = "false"',
+      'sort_savefiles_by_content_enable = "false"',
+      'savefiles_in_content_dir = "false"',
+    );
+  }
+  if (stateDir && !stateDir.includes('"')) {
+    lines.push(
+      `savestate_directory = "${stateDir}"`,
+      'sort_savestates_enable = "false"',
+      'sort_savestates_by_content_enable = "false"',
+      'savestates_in_content_dir = "false"',
+    );
+  }
+  return lines;
 }
 
 /**
  * The config for one launch, or null when it would set nothing.
  *
- * A file that asks for nothing is not the same as no file: an interval of zero
- * and an unanswered display mode are both the user's own settings standing, so
- * the launch names no config at all rather than naming an empty one.
+ * A file that asks for nothing is not the same as no file: an interval of zero,
+ * an unanswered display mode and no directories to pin are all the user's own
+ * settings standing, so the launch names no config at all rather than naming an
+ * empty one.
  *
  * `video_fullscreen` is written for both answers, not just for "no". The flag
  * covers starting fullscreen, but nothing on the command line can ask for the
@@ -105,6 +152,7 @@ export function retroarchLaunchConfig(settings: LaunchSettings): string | null {
   if (fullscreen !== undefined) {
     lines.push(`video_fullscreen = "${fullscreen ? "true" : "false"}"`);
   }
+  lines.push(...saveDirectoryLines(settings));
 
   if (lines.length === 0) return null;
   return [...GENERATED_HEADER, ...lines, ""].join("\n");
