@@ -277,6 +277,14 @@ export interface DesktopConfig {
    *  and a slot that moved on is archived rather than overwritten. Turning it
    *  off leaves the local files exactly where they are. */
   syncSaves: boolean;
+  /** How often the built-in RetroArch launch is asked to write the save to
+   *  disk, in seconds. RetroArch otherwise writes it once, when the content
+   *  closes, which is a single moment for a crash or a launcher that exits
+   *  early to cost a whole session's progress. Asked for with --appendconfig,
+   *  so the user's own retroarch.cfg is left alone, and only on the built-in
+   *  path: a configured emulator sets its own. Zero leaves the setting
+   *  untouched. */
+  retroarchAutosaveSeconds: number;
   /** Report how long the emulator ran to RomM's play session list, so a native
    *  launch counts towards the playtime the server keeps for a game. The server
    *  can see a ROM being downloaded; it cannot see it being played, so without

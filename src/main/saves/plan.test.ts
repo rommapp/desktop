@@ -8,6 +8,7 @@ import {
   MAX_SAVE_BYTES,
   planPull,
   planPush,
+  planTick,
   selectOperation,
   storedSave,
   type Allowance,
@@ -306,6 +307,65 @@ test("only a changed save is sent", () => {
 
   for (const { name, before, after, want } of cases) {
     assert.equal(planPush(before, after, "push"), want, name);
+  }
+});
+
+test("a reading during a run is offered once two agree on it", () => {
+  const cases: {
+    name: string;
+    previous: SaveStamp | null;
+    current: SaveStamp | null;
+    baseline: SaveStamp | null;
+    want: boolean;
+  }[] = [
+    {
+      // The emulator is mid-write as far as this can tell, so it waits.
+      name: "a reading nothing agrees with yet",
+      previous: stamp({ hash: "aaaa" }),
+      current: stamp({ hash: "bbbb" }),
+      baseline: stamp({ hash: "aaaa" }),
+      want: false,
+    },
+    {
+      name: "two readings agreeing on new bytes",
+      previous: stamp({ hash: "bbbb" }),
+      current: stamp({ hash: "bbbb" }),
+      baseline: stamp({ hash: "aaaa" }),
+      want: true,
+    },
+    {
+      name: "bytes the server already holds",
+      previous: stamp(),
+      current: stamp(),
+      baseline: stamp(),
+      want: false,
+    },
+    {
+      name: "the first save of a game the server has none for",
+      previous: stamp({ hash: "bbbb" }),
+      current: stamp({ hash: "bbbb" }),
+      baseline: null,
+      want: true,
+    },
+    {
+      name: "nothing on disk yet",
+      previous: null,
+      current: null,
+      baseline: null,
+      want: false,
+    },
+    {
+      // No hash is no opinion, here as everywhere else.
+      name: "a save the shell cannot read",
+      previous: stamp({ hash: null }),
+      current: stamp({ hash: null }),
+      baseline: null,
+      want: false,
+    },
+  ];
+
+  for (const { name, previous, current, baseline, want } of cases) {
+    assert.equal(planTick(previous, current, baseline), want, name);
   }
 });
 

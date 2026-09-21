@@ -498,6 +498,51 @@ test("a RetroArch launch is pointed at the firmware only once there is some", ()
   ]);
 });
 
+test("a RetroArch launch appends the launch config beside the firmware one", () => {
+  // RetroArch takes a "|"-delimited list, so the save interval this launch asks
+  // for does not displace the firmware directory it also needs.
+  const install = fakeInstall(["mgba"]);
+  const biosRoot = mkdtempSync(join(tmpdir(), "romm-bios-"));
+  const generated = join(biosRoot, ".retroarch", "gba.cfg");
+  mkdirSync(join(biosRoot, ".retroarch"), { recursive: true });
+  writeFileSync(generated, 'system_directory = "x"');
+  const config = testConfig({
+    retroarchPath: install.binary,
+    retroarchCoresPath: install.root,
+    biosPath: biosRoot,
+  });
+
+  const withBoth = resolveLaunch({
+    config,
+    platformSlug: "gba",
+    cores: ["mgba"],
+    romPath: "/cache/1/game.gba",
+    savePaths: null,
+    launchConfig: "/save-data/.retroarch/autosave.cfg",
+  });
+  assert.equal(
+    withBoth.args[0],
+    `--appendconfig=${generated}|/save-data/.retroarch/autosave.cfg`,
+  );
+
+  // And on its own, for a platform whose firmware the mirror has nothing for.
+  const withoutFirmware = resolveLaunch({
+    config: testConfig({
+      retroarchPath: install.binary,
+      retroarchCoresPath: install.root,
+    }),
+    platformSlug: "gba",
+    cores: ["mgba"],
+    romPath: "/cache/1/game.gba",
+    savePaths: null,
+    launchConfig: "/save-data/.retroarch/autosave.cfg",
+  });
+  assert.equal(
+    withoutFirmware.args[0],
+    "--appendconfig=/save-data/.retroarch/autosave.cfg",
+  );
+});
+
 test("a RetroArch mapping can ask for the system directory itself", () => {
   // The automatic flag is only for the built-in RetroArch path, since a
   // mapping's arguments are the user's and "flatpak run org.libretro.RetroArch"

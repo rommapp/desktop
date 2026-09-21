@@ -106,21 +106,30 @@ function generatedSystemConfig(biosPaths: BiosPaths | null): string | null {
 }
 
 /**
- * The extra arguments that point RetroArch at this platform's firmware.
+ * The extra arguments naming the configs the shell generates: this platform's
+ * firmware directory, and the save interval this launch asks for.
  *
- * --appendconfig layers that config over the user's own for one run rather than
- * editing their retroarch.cfg, so switching the mirror off switches this off
- * with it and nothing of theirs is rewritten.
+ * --appendconfig layers them over the user's own for one run rather than
+ * editing their retroarch.cfg, so switching the mirror off switches the first
+ * off with it and nothing of theirs is rewritten.
  *
  * Only for the built-in RetroArch path, because that is the only launch whose
  * argument list the shell writes: a mapping's arguments are the user's, and the
  * shell cannot know whether "flatpak run org.libretro.RetroArch" is RetroArch,
  * nor where in someone else's argv a flag of its own would be safe to insert.
- * A mapping asks for this with "{biosconfig}" instead.
+ * A mapping asks for the firmware config with "{biosconfig}" instead, and sets
+ * its own interval in the config it already keeps.
  */
-function systemDirectoryArgs(biosPaths: BiosPaths | null): string[] {
-  const generated = generatedSystemConfig(biosPaths);
-  return generated ? [`--appendconfig=${generated}`] : [];
+function appendConfigArgs(
+  biosPaths: BiosPaths | null,
+  launchConfig: string | null,
+): string[] {
+  // RetroArch takes several, delimited by "|", and reads them all after the
+  // user's own config, so each layers on top for this run alone.
+  const generated = [generatedSystemConfig(biosPaths), launchConfig].filter(
+    (file): file is string => file !== null,
+  );
+  return generated.length > 0 ? [`--appendconfig=${generated.join("|")}`] : [];
 }
 
 function findMapping(
@@ -419,6 +428,7 @@ export function resolveLaunch({
   cores,
   romPath,
   savePaths,
+  launchConfig = null,
   assumeMissingCoreInstalled = false,
 }: {
   config: DesktopConfig;
@@ -426,6 +436,9 @@ export function resolveLaunch({
   cores: string[];
   romPath: string;
   savePaths: SavePaths | null;
+  /** A generated RetroArch config for this run, appended after the firmware
+   *  one. Null when the launch asked for nothing. */
+  launchConfig?: string | null;
   /** Treat a core that is about to be downloaded as already installed, so a
    *  launch can be validated in full before the transfer. Validation only: the
    *  result names a core that is not on disk yet and must not be spawned. */
@@ -522,10 +535,10 @@ export function resolveLaunch({
 
   return {
     command: config.retroarchPath,
-    // The system directory first: --appendconfig is read as RetroArch starts
+    // The generated configs first: --appendconfig is read as RetroArch starts
     // up, and the core and content that follow are what the run is about.
     args: [
-      ...systemDirectoryArgs(biosPaths),
+      ...appendConfigArgs(biosPaths, launchConfig),
       "-L",
       core.path,
       ...saveArgs,

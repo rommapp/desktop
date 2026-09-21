@@ -54,8 +54,11 @@ import {
   pullSave,
   pushSave,
   saveSyncEnabled,
+  watchSave,
   type PullResult,
+  type SaveWatch,
 } from "./saves/sync.ts";
+import { autosaveSeconds, writeAutosaveConfig } from "./saves/retroarch.ts";
 import { AUTOSAVE_SLOT, type Allowance, type SaveStamp } from "./saves/plan.ts";
 import { assertSeparateRoots, resolveLibraryRom } from "./safety.ts";
 
@@ -735,6 +738,18 @@ export class Launcher {
         throwIfCancelled(controller.signal);
       }
 
+      // Asked for before the launch is resolved, so its path can be named in
+      // the arguments. Without it RetroArch writes the save once, when the
+      // content closes, and a launch that never reaches that moment has nothing
+      // for the push to find.
+      const launchConfig =
+        savePaths && syncsSaves && config.saveDataPath
+          ? await writeAutosaveConfig(
+              config.saveDataPath,
+              autosaveSeconds(config.retroarchAutosaveSeconds),
+            )
+          : null;
+
       // Resolved again, and this time strictly: the validation above may have
       // assumed a core that had yet to be downloaded, and nothing is spawned
       // from an assumption.
@@ -744,6 +759,7 @@ export class Launcher {
         cores,
         romPath,
         savePaths,
+        launchConfig,
       });
 
       // A launch cancelled while the ROM came out of the local library never
@@ -759,8 +775,31 @@ export class Launcher {
       });
       entry.child = child;
 
+      // Offers what the emulator writes while it is still running, so the launch
+      // does not rest on the single reading taken after it exits. Started from
+      // the same facts the push is gated on: a negotiation happened, and this
+      // launch owns the file the emulator was pointed at.
+      const watch: SaveWatch | null =
+        savePaths && saveSync?.deviceId && saveSync.sessionId !== null
+          ? watchSave({
+              config,
+              session,
+              romId: request.romId,
+              saveFile: savePaths.saveFile,
+              deviceId: saveSync.deviceId,
+              before: saveSync.before,
+              allowance: saveSync.allowance,
+              signal: controller.signal,
+              onSent: (sync) =>
+                this.emit({ romId: request.romId, status: "sync", sync }),
+            })
+          : null;
+
       child.on("error", (error) => {
         this.active.delete(request.romId);
+        // A process that could not be spawned emits this and no exit, so this is
+        // the only place the watcher it started can be stopped.
+        void watch?.stop();
         this.emit({
           romId: request.romId,
           status: "failed",
@@ -813,6 +852,7 @@ export class Launcher {
                 allowance: saveSync.allowance,
                 sessionId: saveSync.sessionId,
                 pulled: saveSync.outcome,
+                watch,
               }
             : null;
         // Runs even with nothing of its own to send. An exit is the moment the
@@ -874,6 +914,8 @@ export class Launcher {
       sessionId: number;
       /** What the pull did, so the session counts both ends. */
       pulled: SaveSyncOutcome | null;
+      /** The watcher this launch ran, holding what it already sent. */
+      watch: SaveWatch | null;
     } | null;
   }): void {
     const { config, session, romId, signal, played, push } = options;
@@ -902,6 +944,13 @@ export class Launcher {
       let playDelivered = false;
 
       if (push) {
+        // Stopped before the last reading is taken: otherwise its next tick and
+        // this push would offer the same file at the same moment. What it sent
+        // is also what the push compares against, since those bytes are already
+        // on the server.
+        await push.watch?.stop();
+        const streamed = push.watch?.sent() ?? [];
+
         const pushed = await pushSave({
           config,
           session,
@@ -909,19 +958,19 @@ export class Launcher {
           signal,
           saveFile: push.saveFile,
           deviceId: push.deviceId,
-          before: push.before,
+          before: push.watch?.baseline() ?? push.before,
           allowance: push.allowance,
         });
         if (pushed) {
           this.emit({ romId, status: "sync", sync: pushed });
         }
 
-        // Both ends of the launch, counted here rather than by the server: the
-        // upload endpoint has a counter of its own and feeding both would count
-        // every save twice. A 404 or a refusal costs a stale session row and
-        // nothing else, so this is the last thing tried and the only thing that
-        // failing is not worth acting on.
-        const outcomes = [push.pulled, pushed].filter(
+        // Every save this launch moved, both ends and the middle, counted here
+        // rather than by the server: the upload endpoint has a counter of its
+        // own and feeding both would count every save twice. A 404 or a refusal
+        // costs a stale session row and nothing else, so this is the last thing
+        // tried and the only thing that failing is not worth acting on.
+        const outcomes = [push.pulled, ...streamed, pushed].filter(
           (outcome): outcome is SaveSyncOutcome => outcome !== null,
         );
         if (serverUrl) {

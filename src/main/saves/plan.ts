@@ -228,6 +228,30 @@ export function planPull(
 }
 
 /**
+ * Whether a reading of the save file taken during a run is worth offering.
+ *
+ * Two readings have to agree before anything is sent. The emulator writes the
+ * file, not the shell, so a reading taken while that write is in progress
+ * describes half of one -- and the autosave slot is what every other device
+ * syncs from. Two identical readings an interval apart is the same rule the
+ * browser player applies to its own ticks (`createSaveSyncTracker` in RomM's
+ * `frontend/src/views/Player/EmulatorJS/utils.ts`), and it costs one interval
+ * of delay rather than a torn save on the server.
+ *
+ * Bytes the server already holds are not offered again, which is what keeps a
+ * game that writes nothing from uploading the same save every interval.
+ */
+export function planTick(
+  previous: SaveStamp | null,
+  current: SaveStamp | null,
+  baseline: SaveStamp | null,
+): boolean {
+  if (current === null || current.hash === null) return false;
+  if (previous === null || previous.hash !== current.hash) return false;
+  return baseline === null || baseline.hash !== current.hash;
+}
+
+/**
  * Whether there is anything worth sending, and in what form.
  *
  * Mostly this is "did the emulator change the file", but not always. `archive`

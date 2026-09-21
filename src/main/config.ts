@@ -14,6 +14,7 @@ import {
 } from "../shared/types.ts";
 import { DEFAULT_MINIMUM_PLAY_SECONDS } from "./play/session.ts";
 import { QUEUE_FILE } from "./play/queue.ts";
+import { DEFAULT_RETROARCH_AUTOSAVE_SECONDS } from "./saves/retroarch.ts";
 
 const CONFIG_FILE = "desktop-config.json";
 
@@ -37,6 +38,7 @@ function emptyConfig(): DesktopConfig {
     // already knows how to do, and both fail quietly rather than failing a
     // launch, so the cost of the default being wrong is one setting away.
     syncSaves: true,
+    retroarchAutosaveSeconds: DEFAULT_RETROARCH_AUTOSAVE_SECONDS,
     // On for the same reason: the server already keeps playtime, a native launch
     // is the one play it cannot see, and a failure costs a queued row rather
     // than a launch.
