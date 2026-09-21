@@ -11,6 +11,7 @@ import {
   planTick,
   selectOperation,
   storedSave,
+  watchesDuringRun,
   watchIntervalFor,
   type Allowance,
   type SaveStamp,
@@ -332,6 +333,16 @@ test("only a changed save is sent", () => {
   for (const { name, before, after, want } of cases) {
     assert.equal(planPush(before, after, "push"), want, name);
   }
+});
+
+test("only a run that may write the shared slot is watched", () => {
+  // An archival save is paired with nothing, so no slot rotates it and nothing
+  // reaps it. A conflicted run has one of those to file, at the end, and the
+  // exit push is what files it.
+  assert.equal(watchesDuringRun("push"), true);
+  assert.equal(watchesDuringRun("requested"), true);
+  assert.equal(watchesDuringRun("conflict"), false);
+  assert.equal(watchesDuringRun("unreachable"), false);
 });
 
 test("a reading during a run is offered once two agree on it", () => {

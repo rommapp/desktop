@@ -271,6 +271,20 @@ const MIN_WATCH_INTERVAL_MS = 2_000;
 const MAX_WATCH_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
+ * Whether a run is one to watch at all.
+ *
+ * Only a launch that may write the shared slot. A conflicted slot holds
+ * progress this device has not seen, so what this run writes is filed as an
+ * archival save instead -- and there is one of those per launch, at the end,
+ * not one per interval: they are paired with nothing, so no slot rotates them
+ * and nothing reaps them. The push after the exit files the final state once,
+ * which is the whole of what a conflicted run has to say.
+ */
+export function watchesDuringRun(allowance: Allowance): boolean {
+  return allowance === "push" || allowance === "requested";
+}
+
+/**
  * Whether a reading of the save file taken during a run is worth offering.
  *
  * Two readings have to agree before anything is sent. The emulator writes the

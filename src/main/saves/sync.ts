@@ -42,6 +42,7 @@ import {
   planPush,
   planTick,
   selectOperation,
+  watchesDuringRun,
   storedSave,
   type Allowance,
   type LocalSave,
@@ -643,7 +644,17 @@ export interface SaveWatch {
  * else here, it cannot fail a launch.
  */
 export function watchSave(options: WatchOptions): SaveWatch {
-  const { saveFile, before, signal, intervalMs, onSent } = options;
+  const { saveFile, before, signal, allowance, intervalMs, onSent } = options;
+
+  // A run that cannot write the shared slot is not watched: everything it has
+  // to say is one archival save, which the push after the exit files once.
+  if (!watchesDuringRun(allowance)) {
+    return {
+      stop: () => Promise.resolve(),
+      baseline: () => before,
+      sent: () => [],
+    };
+  }
 
   let baseline = before;
   let previous = before;
@@ -676,6 +687,14 @@ export function watchSave(options: WatchOptions): SaveWatch {
     baseline = stored ?? reading;
     sent.push(outcome);
     onSent?.(outcome);
+
+    // The slot moved on under this run, so what the emulator writes from here
+    // is archival. One of those is the exit's to file: filing one per interval
+    // would leave a session's worth of saves nothing rotates or reaps.
+    if (outcome.action === "archived") {
+      stopped = true;
+      clearInterval(timer);
+    }
   };
 
   const timer = setInterval(() => {
