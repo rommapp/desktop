@@ -138,6 +138,36 @@ test("a launch pins the directories its saves and states belong in", () => {
   }
 });
 
+test("a launch mirroring its states asks for the pictures to mirror", () => {
+  // RetroArch writes the thumbnail beside a state only when the setting is on,
+  // and it is off by default, so a launch that says nothing leaves every state
+  // in RomM without its picture.
+  const written =
+    retroarchLaunchConfig({
+      autosaveSeconds: 0,
+      stateDir: "/data/4755/states",
+      stateThumbnails: true,
+    }) ?? "";
+
+  assert.match(written, /^savestate_thumbnail_enable = "true"$/m);
+});
+
+test("a launch not mirroring its states leaves the thumbnails alone", () => {
+  // Never written as "false": the shell has no use for the picture here, which
+  // is not a reason to take it away from a user who keeps thumbnails for
+  // RetroArch's own slot menu.
+  for (const stateThumbnails of [false, undefined]) {
+    const written =
+      retroarchLaunchConfig({
+        autosaveSeconds: 0,
+        stateDir: "/data/4755/states",
+        stateThumbnails,
+      }) ?? "";
+
+    assert.doesNotMatch(written, /savestate_thumbnail_enable/);
+  }
+});
+
 test("a directory a config cannot quote is left unsaid", () => {
   // A retroarch.cfg value is a quoted string with no escape for a quote inside
   // it, so the alternative to saying nothing is a config that does not parse.

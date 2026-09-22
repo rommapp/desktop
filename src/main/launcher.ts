@@ -825,6 +825,10 @@ export class Launcher {
               // config beats the redirect.
               saveDir: savePaths?.saveDir,
               stateDir: savePaths?.stateDir,
+              // On the same terms as the interval: the picture is only worth
+              // taking where there is a state mirror to carry it, and this is
+              // the same condition the reading below was taken under.
+              stateThumbnails: Boolean(savePaths) && syncsStates,
             })
           : null;
       // The interval is the one thing the arguments below do not show: they
