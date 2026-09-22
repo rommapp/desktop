@@ -13,7 +13,6 @@ import {
   rename,
   rm,
   stat,
-  writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
 import { type DesktopConfig } from "../../shared/types.ts";
@@ -24,14 +23,16 @@ import { apiRequest } from "./http.ts";
 import { inTurn } from "./lock.ts";
 import { stateUploadBody } from "./multipart.ts";
 import {
+  readPushedFile,
+  rememberPushedRows,
+} from "./pushed.ts";
+import {
   displacedStateName,
   MAX_STATE_BYTES,
   MAX_THUMBNAIL_BYTES,
   planStateRestore,
   planStates,
-  PUSHED_FILE,
   pushedRowFrom,
-  readPushedRows,
   readStateDir,
   readStateList,
   stateAssetName,
@@ -44,7 +45,7 @@ import {
 /** Send one state, with its picture when the emulator took one.
  *
  *  `row` is the row the upload left, which is what the next pull reads to
- *  recognise its own machine's copy. Null when the server answered with a body
+ *  recognise this machine's own copy; null when the server answered with a body
  *  this does not read as one.
  */
 async function upload(options: {
@@ -218,43 +219,6 @@ async function runPush(
     }
   }
   return { uploaded, failed };
-}
-
-/** The rows this ROM's directory has recorded, or none when it has none. */
-async function readPushedFile(
-  directory: string,
-): Promise<Record<string, PushedRow>> {
-  const raw = await readFile(join(directory, PUSHED_FILE), "utf8").catch(
-    () => null,
-  );
-  if (raw === null) return {};
-  try {
-    return readPushedRows(JSON.parse(raw));
-  } catch {
-    return {};
-  }
-}
-
-/** Record the rows this run left, so the next pull does not fetch them back.
- *
- *  Read and rewritten whole, through a temporary name: a record written half
- *  way reads as one with rows missing. */
-async function rememberPushedRows(
-  directory: string,
-  landed: Record<string, PushedRow>,
-): Promise<void> {
-  const temp = join(directory, tempNameFor(PUSHED_FILE));
-  try {
-    const known = await readPushedFile(directory);
-    await mkdir(directory, { recursive: true });
-    await writeFile(temp, JSON.stringify({ ...known, ...landed }));
-    await rename(temp, join(directory, PUSHED_FILE));
-  } catch (error) {
-    await rm(temp, { force: true }).catch(() => {});
-    console.warn(
-      `[states] could not record what this run pushed, ${String(error)}`,
-    );
-  }
 }
 
 /** Whether a filesystem error is the file simply not being there, as opposed

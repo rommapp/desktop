@@ -604,8 +604,8 @@ the wrong core crashes rather than merely disagreeing. So the restore is strict:
 - **A state this machine pushed is not fetched back.** The upload runs after the
   emulator that wrote the state exits, so RomM's stamp on it is always later
   than the file's. Each push records the row it left in `.pushed-rows.json`
-  beside the slots, and a slot whose row is in that record is left alone; a row
-  another machine has written since is not that row.
+  beside the slots, and a slot whose row is in that record is left alone, while
+  a row another machine has written since comes down as before.
 
 Nothing is lost either way round. Before a slot is written over, the state
 already in it goes up to RomM, and a slot whose upload does not land is left

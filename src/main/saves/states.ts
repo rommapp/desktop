@@ -38,11 +38,11 @@
 // restore will pick again, and a slot whose upload does not land is left
 // alone -- the same rule the save pull follows, for the same reason.
 //
-// Nor is a row this machine's own push left brought down. The upload runs after
-// the exit that wrote the state, so RomM's stamp on it is always later than the
-// local file's, and freshness alone would fetch the bytes just sent back over
-// themselves at every launch. A push records the row it left, beside the slots,
-// and a row that record names is this machine's copy of what the slot holds.
+// Nor does a row this machine's own push left come back down. The upload runs
+// after the exit that wrote the state, so RomM's stamp on it is always later
+// than the local file's, and freshness alone would fetch those bytes straight
+// back at every launch. A push records the row it left, beside the slots, and a
+// row that record names is this machine's copy of what the slot holds.
 
 import { readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -330,7 +330,7 @@ function screenshotId(screenshot: unknown): number | null {
 
 /** A row a push left in RomM: its id, the stamp it carries, and the mtime of the
  *  slot file it was pushed from. The id and stamp name the row; the mtime is what
- *  says the slot still holds the bytes that were pushed, and not a copy some
+ *  says the slot still holds the bytes that were pushed, rather than a copy some
  *  other tool has put there since. */
 export interface PushedRow {
   id: number;
@@ -604,7 +604,10 @@ export function planStateRestore(options: {
     const displaces = onDisk.get(slot) ?? null;
     const pushed = options.pushed[slot];
     // The slot holds RomM's copy when the row is the one this machine pushed
-    // and the file is the one it pushed that row from.
+    // and the file is the one it pushed that row from. A write from somewhere
+    // else inside the same second ties on the stamp and reads as this machine's
+    // too, which is the one case here that leaves a slot as it found it; the
+    // stamp is second-resolution, so the two cannot be told apart.
     const ours =
       displaces !== null &&
       pushed !== undefined &&
