@@ -4,6 +4,7 @@
 import { realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
+  ALL_DISCS,
   type DesktopConfig,
   LaunchError,
   type LaunchRequest,
@@ -254,6 +255,21 @@ export function validateLaunchRequest(value: unknown): LaunchRequest {
     throw new LaunchError("invalid-request", "fullscreen must be a boolean.");
   }
 
+  // The id is interpolated into a file_ids selector, so a fraction or a
+  // negative is not a file to fetch: it is a request that fails. Which of the
+  // rom's files it names is the disc sync's business, not this layer's.
+  const disc = candidate.disc;
+  if (
+    disc !== undefined &&
+    disc !== ALL_DISCS &&
+    (typeof disc !== "number" || !Number.isInteger(disc) || disc <= 0)
+  ) {
+    throw new LaunchError(
+      "invalid-request",
+      `disc must be a positive integer or "${ALL_DISCS}".`,
+    );
+  }
+
   return {
     romId,
     downloadPath,
@@ -264,6 +280,7 @@ export function validateLaunchRequest(value: unknown): LaunchRequest {
     ...(serverPath === undefined ? {} : { serverPath }),
     ...(fileSize === undefined ? {} : { fileSize }),
     ...(fullscreen === undefined ? {} : { fullscreen }),
+    ...(disc === undefined ? {} : { disc: disc as number | typeof ALL_DISCS }),
   };
 }
 

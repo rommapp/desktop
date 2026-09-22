@@ -30,7 +30,9 @@ const ALL_CAPABILITIES = {
   "platform-support-all": true,
   "firmware-mirror": true,
   "multi-disc": true,
+  "disc-choice": true,
   "save-sync": true,
+  "state-restore": true,
   "play-sessions": true,
   "launch-fullscreen": true,
 } satisfies Record<ShellCapability, true>;

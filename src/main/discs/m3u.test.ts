@@ -7,7 +7,9 @@ import {
   ownPlaylist,
   renderM3u,
   selectDiscs,
+  selectPickedDisc,
   selectStagedFiles,
+  selectStagedForDisc,
 } from "./m3u.ts";
 
 function file(fileName: string, id = 1): DiscFile {
@@ -296,6 +298,49 @@ test("selectStagedFiles keeps a sheet's audio tracks too", () => {
     "Game (Disc 1).cue",
     "Game (Disc 2).cue",
   ]);
+});
+
+test("selectPickedDisc answers with the disc the page picked", () => {
+  const files = [
+    file("Game (Disc 1).chd", 1),
+    file("Game (Disc 2).chd", 2),
+    file("Game.m3u", 3),
+    file("readme.nfo", 4),
+  ];
+
+  assert.equal(selectPickedDisc(files, 2)?.fileName, "Game (Disc 2).chd");
+  // A playlist, a manual, and an id this rom does not answer to are all picks
+  // to fall back to the whole set from rather than to act on.
+  assert.equal(selectPickedDisc(files, 3), null);
+  assert.equal(selectPickedDisc(files, 4), null);
+  assert.equal(selectPickedDisc(files, 99), null);
+});
+
+test("a picked image travels alone, a picked sheet takes the tracks", () => {
+  const files = [
+    file("Game (Disc 1).cue", 1),
+    file("Game (Disc 1) (Track 1).bin", 2),
+    file("Game (Disc 2).cue", 3),
+    file("Game.m3u", 4),
+    file("readme.nfo", 5),
+  ];
+
+  // Which track belongs to which sheet is not in the names, so a sheet takes
+  // every track: one transfer too many beats a .cue pointing at nothing.
+  assert.deepEqual(
+    selectStagedForDisc(files, file("Game (Disc 1).cue", 1)).map(
+      (f) => f.fileName,
+    ),
+    ["Game (Disc 1).cue", "Game (Disc 1) (Track 1).bin"],
+  );
+
+  assert.deepEqual(
+    selectStagedForDisc(
+      [file("Game (Disc 1).chd", 1), file("Game (Disc 2).chd", 2)],
+      file("Game (Disc 2).chd", 2),
+    ).map((f) => f.fileName),
+    ["Game (Disc 2).chd"],
+  );
 });
 
 test("renderM3u lists one disc per line, in the order given", () => {

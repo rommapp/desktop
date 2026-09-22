@@ -70,7 +70,20 @@ export interface LaunchRequest {
    *  is the only argument list the shell writes; a mapping decides it in its
    *  own arguments or its own config. */
   fullscreen?: boolean;
+  /** Which of a multi-disc rom's files to boot, as the play page's own disc
+   *  selector asks it: the id of one of the rom's files, or `"all"` for the
+   *  whole set. Saying nothing is the same as `"all"`, which is what the shell
+   *  did before it could be asked.
+   *
+   *  A single disc is fetched and booted on its own, so a set nobody means to
+   *  play through costs one transfer rather than four. Its sheet's tracks come
+   *  with it, since a `.cue` cannot boot without them. */
+  disc?: number | typeof ALL_DISCS;
 }
+
+/** `LaunchRequest.disc` asking for the whole set. The same spelling the play
+ *  page stores its choice under, so the two can be read as one value. */
+export const ALL_DISCS = "all";
 
 export type LaunchStatus =
   | "downloading"
@@ -126,8 +139,9 @@ export interface LaunchState {
    *  the user installs what was fetched, which has no progress to report.
    *  "firmware" is the RomM firmware mirror, which usually has nothing to do.
    *  "save" is the save pull, which happens after a ROM is ready and before the
-   *  emulator starts. */
-  stage?: "rom" | "core" | "emulator" | "firmware" | "save";
+   *  emulator starts, and "state" is the savestate restore just before the
+   *  spawn. */
+  stage?: "rom" | "core" | "emulator" | "firmware" | "save" | "state";
   /** The core being installed, while stage is "core". */
   core?: string;
   /** The firmware file being fetched, while stage is "firmware". Its own field
@@ -285,11 +299,13 @@ export interface DesktopConfig {
    *  and a slot that moved on is archived rather than overwritten. Turning it
    *  off leaves the local files exactly where they are. */
   syncSaves: boolean;
-  /** Mirror the savestates a native launch writes into RomM, after it exits.
-   *  One way only: states go up, nothing comes down and nothing is deleted,
-   *  because a state belongs to the core and build that wrote it and is not
-   *  something to resume from on another machine. Each slot lands under a name
-   *  of its own, so a run rewrites that slot rather than adding to a pile. */
+  /** Move the savestates of a native launch between the emulator and RomM.
+   *  Each slot lands under a name of its own, so a run rewrites that slot
+   *  rather than adding to a pile, and before a launch the states RomM holds
+   *  for the emulator it is about to run come back into the slots they were
+   *  written from. Nothing is deleted, and a slot holding something newer than
+   *  RomM's copy keeps it: a state belongs to the core and build that wrote it,
+   *  so only a state that core wrote is ever offered to it. */
   syncStates: boolean;
   /** How often the built-in RetroArch launch is asked to write the save to
    *  disk, in seconds. RetroArch otherwise writes it once, when the content
@@ -365,8 +381,18 @@ export type ShellCapability =
    *  launch: the save pull is reported as the "save" launch stage, and what
    *  happened to a save afterwards as a "sync" status carrying `sync`. A shell
    *  without this capability leaves both sides of it undone. Savestates are a
-   *  separate setting and travel one way, so they report nothing here. */
+   *  separate setting, and report nothing here. */
   | "save-sync"
+  /** Savestates travel both ways around a native launch: the states RomM holds
+   *  for the emulator this launch runs are restored into their slots before it
+   *  starts, and the ones the run writes go up after it exits. A shell without
+   *  this only sends them. */
+  | "state-restore"
+  /** `LaunchRequest.disc` is honoured, so the play page's disc selector covers
+   *  a native launch as well as the in-browser one: one disc of a set is
+   *  fetched and booted on its own. A shell without this always boots the whole
+   *  set. */
+  | "disc-choice"
   /** How long the emulator ran is reported to RomM's play session list, and
    *  carried on the "exited" state as `play`. A shell without this leaves a
    *  native launch out of the server's playtime entirely. */

@@ -16,7 +16,7 @@
 import { type Session } from "electron";
 import { mkdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type DesktopConfig } from "../../shared/types.ts";
+import { ALL_DISCS, type DesktopConfig } from "../../shared/types.ts";
 import { noteSignedOut } from "../auth/recover.ts";
 import { evictToLimit } from "../cache/evict.ts";
 import { downloadFromServer } from "../rom-cache.ts";
@@ -27,7 +27,9 @@ import {
   readRomFiles,
   renderM3u,
   selectDiscs,
+  selectPickedDisc,
   selectStagedFiles,
+  selectStagedForDisc,
 } from "./m3u.ts";
 
 /** The playlist's own name inside the rom's cache directory. */
@@ -42,6 +44,9 @@ interface SyncOptions {
    *  disc is what starts the game and the rest of the set is a disc change away
    *  in the emulator's own menu, so no playlist is written. */
   playlist: boolean;
+  /** The disc the play page picked, `"all"` for the whole set, or undefined
+   *  from a caller that was never asked. */
+  disc?: number | typeof ALL_DISCS;
   onProgress?: (
     fileName: string,
     received: number,
@@ -89,6 +94,7 @@ export async function syncDiscSet({
   romId,
   signal,
   playlist,
+  disc,
   onProgress,
 }: SyncOptions): Promise<string | null> {
   const { serverUrl, cachePath } = config;
@@ -102,7 +108,26 @@ export async function syncDiscSet({
   // One disc is an ordinary launch, and the caller's own download handles it
   // without a playlist in the way.
   if (discs.length < 2) return null;
-  const staged = selectStagedFiles(files);
+
+  // One disc of the set, where the page's disc selector picked one. Booted on
+  // its own with no playlist in front of it, which is what that choice means:
+  // the rest of the set is not fetched, so a four-disc game the player is only
+  // replaying disc one of costs one transfer.
+  const picked =
+    disc === undefined || disc === ALL_DISCS
+      ? null
+      : selectPickedDisc(files, disc);
+  if (disc !== undefined && disc !== ALL_DISCS && !picked) {
+    // A pick the rom does not answer to, which a page whose view of the rom
+    // predates a rescan can send. The whole set still plays the game.
+    console.warn(
+      `[discs] rom ${romId}: file ${disc} is not a disc of this rom, booting the whole set`,
+    );
+  }
+
+  const staged = picked
+    ? selectStagedForDisc(files, picked)
+    : selectStagedFiles(files);
 
   // The set comes from one place: all of it from the library, in one
   // directory, or all of it from the cache.
@@ -120,9 +145,12 @@ export async function syncDiscSet({
     }));
   if (!paths) return null;
 
+  // The pick is the whole of what was staged, so it is the whole of what boots.
+  if (picked) return paths.get(picked.id) ?? null;
+
   const bootPaths: string[] = [];
-  for (const disc of discs) {
-    const path = paths.get(disc.id);
+  for (const entry of discs) {
+    const path = paths.get(entry.id);
     // A disc the staged set does not hold is a set that cannot be launched.
     if (!path) return null;
     bootPaths.push(path);
