@@ -514,9 +514,8 @@ test("a slot holding this machine's own copy is left alone", () => {
 });
 
 test("a slot rewritten behind the mirror is not this machine's copy", () => {
-  // The record says the slot holds the bytes that were pushed, and an older
-  // copy put there by something else no longer does: freshness alone replaces
-  // it, and without the file check the record would keep it instead.
+  // The record says the slot holds the bytes that were pushed; an older copy put
+  // there by something else no longer does, so freshness has to replace it.
   const was = entry("Zelda.state1", Date.parse("2026-01-01T00:00:00Z"));
   const now = entry("Zelda.state1", Date.parse("2025-06-01T00:00:00Z"));
   const own = remote("Zelda [study-pc slot 1].state", "2026-01-01T00:00:09Z", {

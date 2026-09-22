@@ -328,21 +328,17 @@ function screenshotId(screenshot: unknown): number | null {
   return id;
 }
 
-/** A row a push left in RomM: its id on the server, the stamp it carries, and
- *  the mtime of the slot file it was pushed from. The id and the stamp tell
- *  this machine's own copy from one it has not written -- a write to the same
- *  filename keeps the id and moves the stamp -- and the mtime is what says the
- *  slot still holds the bytes that were pushed, rather than a copy some other
- *  tool has put there since. */
+/** A row a push left in RomM: its id, the stamp it carries, and the mtime of the
+ *  slot file it was pushed from. The id and stamp name the row; the mtime is what
+ *  says the slot still holds the bytes that were pushed, and not a copy some
+ *  other tool has put there since. */
 export interface PushedRow {
   id: number;
   updatedAt: number;
   mtimeMs: number;
 }
 
-/** A record entry from its three parts, or null for a set that is not one. The
- *  shape is checked here so the row the server reports and the row read back off
- *  the disk are held to the same one. */
+/** A record entry from its three parts, or null for a set that is not one. */
 function toPushedRow(
   id: unknown,
   updatedAt: unknown,

@@ -160,9 +160,8 @@ async function runPush(
   // A state too large to send did not make it either, so it counts here.
   let failed = tooLarge.length;
 
-  // Recorded on the way out either way, because a cancel throws out of the send
-  // loop: rows already pushed are rows the next pull has to recognise, even when
-  // the run that pushed them was cut short.
+  // Recorded on the way out either way: a cancel throws out of this loop, and
+  // rows already pushed are rows the next pull has to recognise.
   try {
     for (const { entry, slot } of send) {
       if (signal.aborted) break;
