@@ -336,6 +336,75 @@ test("a file in the way is archived even where it is not the name written", () =
   assert.deepEqual(plan[0]?.displaces, local);
 });
 
+test("the exact spelling is the one at risk, whatever order it is found in", () => {
+  // Both can only coexist where the filesystem keeps them apart, and there the
+  // write reaches the exact name. Taking whichever `readdir` happened to yield
+  // last would gate freshness on the wrong file's time and then overwrite the
+  // newer one without archiving it.
+  const exact = entry("Zelda.state1", Date.parse("2026-06-01T00:00:00Z"));
+  const other = entry("zelda.state1", Date.parse("2025-01-01T00:00:00Z"));
+  const older = remote("Zelda [laptop slot 1].state", "2026-03-01T00:00:00Z");
+
+  // Listed after the exact one, which is where the old map took it from.
+  assert.deepEqual(
+    planStateRestore({
+      remote: [older],
+      local: [exact, other],
+      emulator: "snes9x",
+      bases: ["Zelda"],
+    }),
+    [],
+  );
+
+  // And it is still the file that goes up when the remote copy does win.
+  const newer = remote("Zelda [laptop slot 1].state", "2026-09-01T00:00:00Z");
+  const plan = planStateRestore({
+    remote: [newer],
+    local: [exact, other],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+  assert.equal(plan[0]?.fileName, "Zelda.state1");
+  assert.deepEqual(plan[0]?.displaces, exact);
+});
+
+test("spellings that all differ in case leave nothing in the way", () => {
+  // Two of them coexisting proves the filesystem keeps them apart, so a write
+  // to the name neither carries creates a file rather than replacing one.
+  //
+  // Reaching that needs the base to come from the launch rather than from
+  // either spelling, which is what the unrelated newest file below arranges:
+  // it is what `stateBaseIn` reads, and it agrees with no candidate.
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z")],
+    local: [
+      entry("Playlist.state2", Date.parse("2026-01-01T00:00:00Z")),
+      entry("zelda.state1", Date.parse("2025-01-01T00:00:00Z")),
+      entry("ZELDA.state1", Date.parse("2025-02-01T00:00:00Z")),
+    ],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.equal(plan[0]?.fileName, "Zelda.state1");
+  assert.equal(plan[0]?.displaces, null);
+});
+
+test("one spelling differing in case is still the file the write reaches", () => {
+  // The other side of it: a single spelling cannot prove the filesystem keeps
+  // them apart, so on Windows and macOS it is that file and goes up first.
+  const only = entry("zelda.state1", Date.parse("2025-01-01T00:00:00Z"));
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z")],
+    local: [entry("Playlist.state2", Date.parse("2026-01-01T00:00:00Z")), only],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.equal(plan[0]?.fileName, "Zelda.state1");
+  assert.deepEqual(plan[0]?.displaces, only);
+});
+
 test("a padded slot is the same slot as the plain one", () => {
   // Both spell one slot and one file. Keyed apart, a padded row would find no
   // local file to displace and overwrite it without archiving it first.

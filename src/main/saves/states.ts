@@ -467,25 +467,39 @@ export function planStateRestore(options: {
   // pinned none and boots content the shell cannot name either.
   if (base === null) return [];
 
-  // What a restore of each slot might write over: the file whose name is the
-  // one this launch would write, compared without regard to case.
-  //
-  // Loose on purpose, and only for this question. On Windows and macOS two
-  // spellings are one file, so an exact test would read the slot as empty and
-  // overwrite it without archiving it first; on Linux they are two files, and
-  // archiving one that turns out not to be in the way costs a transfer where
-  // the other way round costs a state. Where to write is decided separately,
-  // and exactly, below.
-  //
-  // A state left under a different content's name is not in the way at all: it
-  // is that launch's, and this one neither reads nor touches it.
-  const onDisk = new Map<string, StateEntry>();
+  // Every spelling of the name this launch would write for each slot, gathered
+  // without regard to case. A state left under a different content's name is
+  // not among them: it is that launch's, and this one neither reads nor
+  // touches it.
+  const spellings = new Map<string, StateEntry[]>();
   for (const entry of local) {
     const slot = stateSlot(entry.name);
     const wanted = slot ? localStateName(base, slot) : null;
     if (!slot || !wanted) continue;
     if (wanted.toLowerCase() !== entry.name.toLowerCase()) continue;
-    onDisk.set(slot, entry);
+    const found = spellings.get(slot);
+    if (found) found.push(entry);
+    else spellings.set(slot, [entry]);
+  }
+
+  // Which of them a restore of that slot would actually write over.
+  //
+  // The file at the exact name, when there is one, since that is the name the
+  // write uses. A lone spelling that differs only in case counts as well,
+  // because on Windows and macOS it *is* that file and an exact test would read
+  // the slot as empty and overwrite it without archiving it first.
+  //
+  // Several spellings at once can only happen where the filesystem keeps them
+  // apart, and there a write to a name none of them carries creates a new file
+  // with nothing in its way -- so none of them is, and the newest is not put at
+  // risk by the oldest being found first.
+  const onDisk = new Map<string, StateEntry>();
+  for (const [slot, found] of spellings) {
+    const wanted = localStateName(base, slot);
+    const atRisk =
+      found.find((entry) => entry.name === wanted) ??
+      (found.length === 1 ? found[0] : undefined);
+    if (atRisk) onDisk.set(slot, atRisk);
   }
 
   const newest = new Map<string, RemoteState>();
