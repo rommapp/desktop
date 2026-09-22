@@ -31,6 +31,7 @@ import {
 import {
   applyCorePreference,
   emulatorLabel,
+  emulatorPinsStateFile,
   emulatorReadsPlaylist,
   emulatorUsesSaveFile,
   emulatorUsesStateDir,
@@ -54,11 +55,12 @@ import { ensureRom } from "./rom-cache.ts";
 import { resolveSavePaths, saveBaseName } from "./saves/paths.ts";
 import { hostFacts } from "./saves/device.ts";
 import {
+  contentStateBase,
   readStateDir,
   stateSyncEnabled,
   type StateEntry,
 } from "./saves/states.ts";
-import { pushStates } from "./saves/state-sync.ts";
+import { pullStates, pushStates } from "./saves/state-sync.ts";
 import {
   completeSync,
   pullSave,
@@ -639,6 +641,10 @@ export class Launcher {
         romId: request.romId,
         signal: controller.signal,
         playlist: emulatorReadsPlaylist(config, request.platformSlug),
+        // The play page's own disc selector, which asks the same question of
+        // both routes: a shell that ignored it would fetch the set whole for a
+        // player who picked one disc of it.
+        ...(request.disc === undefined ? {} : { disc: request.disc }),
         onProgress: (fileName, received, total, index, count) => {
           if (index !== staging) {
             staging = index;
@@ -720,17 +726,13 @@ export class Launcher {
         await mkdir(savePaths.stateDir, { recursive: true });
       }
 
-      // What the state directory held before the emulator touched it, which is
-      // the only thing that tells a state this run wrote from one sitting
-      // there since March. Read whatever the emulator turns out to do, because
-      // the alternative is deciding after the fact what was already there.
+      // Whether this launch's states are the shell's business at all. Asked
+      // here because the generated config below is written from it; the
+      // directory itself is read once the launch is resolved, after the restore
+      // has put RomM's own states into it.
       const syncsStates =
         stateSyncEnabled(config) &&
         emulatorUsesStateDir(config, request.platformSlug);
-      const statesBefore =
-        savePaths && syncsStates
-          ? await readStateDir(savePaths.stateDir)
-          : null;
 
       // Blocking, unlike the push at the other end of the launch: what the
       // emulator boots with has to be settled before it boots, and a save
@@ -851,6 +853,53 @@ export class Launcher {
         launchConfig,
         fullscreen: request.fullscreen,
       });
+
+      // What this launch runs. The push records its states against it and the
+      // restore below loads only states written by it, so the two agree by
+      // reading the same value rather than by both deriving one.
+      const playedBy = launch.core ?? launch.label;
+
+      // The states RomM already holds for this emulator, put back into the
+      // slots they were written from. Blocking, like the save pull: a slot has
+      // to be settled before the emulator can be asked to load it.
+      if (savePaths && syncsStates) {
+        this.emit({
+          romId: request.romId,
+          status: "downloading",
+          stage: "state",
+        });
+        // The name the launch pinned, and the one the emulator would derive
+        // from the content it was handed, which for a disc set is the playlist
+        // or the single picked disc rather than the game. Best first, so a
+        // launch that pinned nothing leads with the emulator's own answer.
+        const pinned = saveBaseName(request.fileName);
+        const derived = contentStateBase(romPath);
+        await pullStates({
+          config,
+          session,
+          romId: request.romId,
+          stateDir: savePaths.stateDir,
+          base: pinned,
+          localBases: emulatorPinsStateFile(config, request.platformSlug)
+            ? [pinned, derived]
+            : [derived, pinned],
+          host: hostFacts().hostname,
+          emulator: playedBy,
+          signal: controller.signal,
+        }).catch(() => {
+          // Except a cancel, which is the user's and belongs to the launch.
+          throwIfCancelled(controller.signal);
+        });
+      }
+
+      // What the state directory held before the emulator touched it, which is
+      // the only thing that tells a state this run wrote from one sitting there
+      // since March. Taken after the restore, so a slot that came down reads as
+      // one that was already there rather than as one this run wrote.
+      const statesBefore =
+        savePaths && syncsStates
+          ? await readStateDir(savePaths.stateDir)
+          : null;
 
       // A launch cancelled while the ROM came out of the local library never
       // passed through an interruptible transfer, so without this the emulator
@@ -976,7 +1025,7 @@ export class Launcher {
               ? {
                   stateDir: savePaths.stateDir,
                   base: saveBaseName(request.fileName),
-                  emulator: launch.core ?? launch.label,
+                  emulator: playedBy,
                   before: statesBefore,
                 }
               : null,

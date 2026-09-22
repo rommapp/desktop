@@ -266,11 +266,11 @@ export function emulatorUsesSaveFile(
  * Whether this platform's launch will write its savestates where the shell can
  * find them.
  *
- * The directory is enough here, unlike the save file above, because the state
- * mirror only ever reads it: the directory is this ROM's own, so everything in
- * it is a state of this game, and the shell never has to predict the name the
- * emulator will choose. A mapping that names neither state token keeps its
- * states wherever the emulator puts them, and there is nothing to mirror.
+ * The directory is enough here, unlike the save file above, because the mirror
+ * reads it whole: the directory is this ROM's own, so everything in it is a
+ * state of this game, and the mirror never has to predict the name the emulator
+ * will choose. A mapping that names neither state token keeps its states
+ * wherever the emulator puts them, and there is nothing to mirror.
  */
 export function emulatorUsesStateDir(
   config: DesktopConfig,
@@ -283,6 +283,27 @@ export function emulatorUsesStateDir(
   return mapping.args.some(
     (arg) => arg.includes("{states}") || arg.includes("{statefile}"),
   );
+}
+
+/**
+ * Whether this platform's launch pins what its states are called, rather than
+ * only the directory they land in.
+ *
+ * The restore is the one half of the mirror that does have to name a file, for
+ * a slot the directory holds nothing under yet, and this is which name to try
+ * first. A launch naming `{statefile}` has told the emulator what to call them;
+ * one naming only `{states}` leaves the emulator to derive a name from the
+ * content it was handed, which for a disc set is the playlist rather than the
+ * game.
+ */
+export function emulatorPinsStateFile(
+  config: DesktopConfig,
+  platformSlug: string,
+): boolean {
+  const mapping = findMapping(config, platformSlug);
+  // The built-in RetroArch path passes -S, naming the exact file.
+  if (!mapping) return true;
+  return mapping.args.some((arg) => arg.includes("{statefile}"));
 }
 
 /** What to call the emulator this platform would use, before a launch has

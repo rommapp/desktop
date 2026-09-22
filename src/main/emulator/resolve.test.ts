@@ -13,6 +13,7 @@ import {
   coreFileName,
   emulatorIsPresent,
   emulatorLabel,
+  emulatorPinsStateFile,
   emulatorReadsPlaylist,
   emulatorUsesSaveFile,
   emulatorUsesStateDir,
@@ -1247,4 +1248,39 @@ test("emulatorUsesStateDir answers for where the states will land", () => {
   assert.ok(emulatorUsesStateDir(config, "n64"));
   assert.ok(emulatorUsesStateDir(config, "snes"));
   assert.equal(emulatorUsesStateDir(config, "gba"), false);
+});
+
+test("emulatorPinsStateFile answers whether the name is the launch's to give", () => {
+  // No mapping: the built-in RetroArch path passes -S, naming the exact file.
+  assert.ok(emulatorPinsStateFile(testConfig(), "psx"));
+
+  const config = testConfig({
+    emulators: [
+      // Naming the file is telling the emulator what to call its states, which
+      // is the name a restore should try first for an empty directory.
+      {
+        platformSlug: "snes",
+        command: "/usr/bin/retroarch",
+        args: ["-L", "{core}", "-S", "{statefile}", "{rom}"],
+      },
+      // The directory alone leaves the emulator to derive a name from the
+      // content it was handed, which for a disc set is not the game's.
+      {
+        platformSlug: "n64",
+        command: "/usr/bin/mupen64plus",
+        args: ["--statedir", "{states}", "{rom}"],
+      },
+      // No state token at all: nothing of this game's states is the shell's
+      // business, so there is no name to pin either.
+      {
+        platformSlug: "gba",
+        command: "/usr/bin/mgba",
+        args: ["-s", "{savefile}", "{rom}"],
+      },
+    ],
+  });
+
+  assert.ok(emulatorPinsStateFile(config, "snes"));
+  assert.equal(emulatorPinsStateFile(config, "n64"), false);
+  assert.equal(emulatorPinsStateFile(config, "gba"), false);
 });

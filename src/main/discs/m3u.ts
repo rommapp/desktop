@@ -129,6 +129,43 @@ export function selectStagedFiles(files: DiscFile[]): DiscFile[] {
 }
 
 /**
+ * The disc the play page picked, or null when its pick is not a disc of this
+ * rom.
+ *
+ * Null covers a pick the shell should not act on rather than an error: a
+ * playlist, a manual, a row the reader above dropped, or an id from a page
+ * whose view of the rom predates a rescan. The launch falls back to the whole
+ * set, which is what it would have done before it could be asked.
+ */
+export function selectPickedDisc(
+  files: DiscFile[],
+  fileId: number,
+): DiscFile | null {
+  return selectDiscs(files).find((file) => file.id === fileId) ?? null;
+}
+
+/**
+ * Every file that has to be on disk for one picked disc to boot.
+ *
+ * A sheet takes every track in the set with it, not the tracks that are its
+ * own: which those are is not derivable from their names (`selectDiscs` says
+ * why), and fetching a track too many costs a transfer where missing one costs
+ * the boot. An image that holds its own data travels alone.
+ */
+export function selectStagedForDisc(
+  files: DiscFile[],
+  disc: DiscFile,
+): DiscFile[] {
+  if (!SHEET_EXTENSIONS.includes(extensionOf(disc.fileName))) return [disc];
+  const tracks = files.filter(
+    (file) =>
+      file.id !== disc.id &&
+      TRACK_EXTENSIONS.includes(extensionOf(file.fileName)),
+  );
+  return [disc, ...inDiscOrder(tracks)];
+}
+
+/**
  * Numbered entries first, in numeric order, then the rest by name.
  *
  * Ranking the unnumbered rather than falling back to a name comparison between

@@ -112,8 +112,12 @@ The in-browser emulators (EmulatorJS, Ruffle, js-dos, PICO-8), file downloads
 and clipboard actions are untested in this shell and worth exercising.
 
 [Multi-disc games](#multi-disc-games) have unit tests over disc selection, the
-playlist, and which emulators are handed one, but no real disc set has been
-launched through an emulator yet.
+playlist, which emulators are handed one, and booting a single picked disc, but
+no real disc set has been launched through an emulator yet.
+
+The [savestate](#savestates-synced-with-romm) restore has unit tests over what
+it decides, but no state has come back down from a live server into a real
+emulator's slot menu yet.
 
 ## Configuration
 
@@ -144,7 +148,7 @@ launch attempt without a restart.
 | `cacheLimitBytes`          | 20 GB              | Cache size before LRU eviction                                                   |
 | `saveDataPath`             | `save-data`        | [Save and state](#save-data) directories                                         |
 | `syncSaves`                | `true`             | [Move saves to and from RomM](#saves-synced-with-romm) around a launch           |
-| `syncStates`               | `true`             | [Send savestates to RomM](#savestates-mirrored-to-romm) after a launch           |
+| `syncStates`               | `true`             | [Move savestates to and from RomM](#savestates-synced-with-romm) around a launch |
 | `retroarchAutosaveSeconds` | `10`               | How often RetroArch is asked to write the save, at least 6s; `0` leaves it alone |
 | `logEmulatorOutput`        | `false`            | [Repeat the emulator's own log](#when-a-save-does-not-sync) in the shell's       |
 | `trackPlaySessions`        | `true`             | [Report how long you played](#play-sessions-reported-to-romm) to RomM            |
@@ -394,6 +398,25 @@ A set already under `libraryPath` is launched in place, all of it or none, and
 only when it sits in one directory; otherwise the whole set lands in the cache,
 where the playlist is always written.
 
+#### One disc of a set
+
+RomM's play page has a disc selector, and a native launch honours it: pick a
+single disc there and that disc alone is fetched and booted, with no playlist in
+front of it, so a four-disc game you are replaying disc one of costs one
+transfer instead of four. A picked `.cue` brings the set's tracks with it, since
+a sheet cannot boot without them.
+
+Picking "All discs", or launching from anywhere without a disc selector, boots
+the whole set as above. So does a pick naming a file this ROM does not answer
+to, which a page whose view of the ROM predates a rescan can send: the whole set
+still plays the game.
+
+Note that the states of a one-disc boot and a whole-set boot can end up under
+different names, since an emulator that names its states after the content it
+was handed calls one after the disc and the other after the playlist. The
+[savestate](#savestates-synced-with-romm) restore reads the name out of the
+directory for exactly this reason.
+
 ### Save data
 
 Left to itself an emulator writes save data next to the ROM, where cache
@@ -525,13 +548,13 @@ repeated in the shell's log, capped per launch, with the built-in RetroArch
 launch asked to be verbose. RetroArch then names the configs it appended and the
 save file it resolved, which is what settles where a save went.
 
-### Savestates mirrored to RomM
+### Savestates synced with RomM
 
 With `syncStates` on, the savestates a launch writes are sent to RomM once the
-emulator exits. One way only: nothing is downloaded, nothing is deleted, and no
-state in RomM is written over a local file. A savestate belongs to the core and
-the build that wrote it, so these are for browsing and fetching by hand, not for
-resuming a game on another machine.
+emulator exits, and the ones RomM already holds for the emulator a launch is
+about to run are put back into their slots before it starts. So a state saved on
+one machine is in the slot menu on the next, and nothing has to be fetched by
+hand.
 
 Each slot keeps one entry, named for the game, this machine and the slot.
 Playing that slot again replaces it:
@@ -546,7 +569,7 @@ RetroArch's automatic state is `[... auto]`, and its `.bak` copies are skipped.
 A state goes up with the picture RetroArch takes as it writes it. RetroArch
 takes one only when savestate thumbnails are on, and they are off by default,
 so the built-in RetroArch launch asks for them in its generated config whenever
-it is mirroring that launch's states. It asks only for that launch, and never
+it is syncing that launch's states. It asks only for that launch, and never
 asks for them to be turned off. Only that path writes a generated config, so on
 a platform answered by a mapping (one you wrote, or a detected standalone
 emulator) the picture goes up if you have thumbnails switched on yourself.
@@ -555,10 +578,61 @@ Only the slots a run actually wrote are sent, and anything over 128 MiB is
 logged rather than sent: a state and the request framing it are both in memory
 while it uploads, and the heaviest state a real core writes is far below that.
 
-Mirroring needs the states to land where the shell can find them: the built-in
+Syncing needs the states to land where the shell can find them: the built-in
 RetroArch path, which pins `savestate_directory`, or a mapping naming
 `{states}` or `{statefile}`. Turn `syncStates` off to stop; the local files stay
 where they are.
+
+#### Which states come back
+
+A savestate belongs to the core and the build that wrote it, and one loaded into
+the wrong core crashes rather than merely disagreeing. So the restore is strict:
+
+- **The emulator has to match.** Only states recorded against the emulator this
+  launch runs are offered to it. A state carrying no emulator is nobody's rather
+  than everybody's, and stays where it is.
+- **The name has to carry a slot.** RomM has no slot of its own, so the
+  `[machine slot 3]` name above is the only record of which slot a state is, and
+  a slot is the only place an emulator can be asked to load one from. A state
+  uploaded from the browser player or by hand names none, and is still yours to
+  fetch by hand. So does a backup, deliberately (below).
+- **The automatic state stays local.** `[... auto]` names a slot and is left out
+  anyway: RetroArch loads it on start without being asked, so another machine's
+  copy would replace a session nobody chose to leave.
+- **A newer local state wins.** A slot is filled when it is empty, or when
+  RomM's copy was written after the file sitting in it.
+
+Nothing is lost either way round. Before a slot is written over, the state
+already in it goes up to RomM, and a slot whose upload does not land is left
+exactly as it was. That backup is named apart from the slots:
+
+```
+Chrono Trigger (USA) [study-pc slot 3 replaced 2026-09-22 01-16-39-006].state
+```
+
+Named that way because a backup filed as this machine's slot 3 would be that
+slot's newest state the moment it was written, and the next launch would restore
+the bytes this one had just replaced. The marker is what keeps it out of the
+restore, and the stamp keeps two displacements of one slot from overwriting each
+other. The picture beside a
+restored slot is replaced with the one RomM holds, or removed: RetroArch shows
+that thumbnail in its own load menu, and a stale one would have you pick a frame
+and load something else.
+
+The name a restored state lands under is read out of the state directory rather
+than assumed, because the emulator names the state and not the shell. The launch
+offers two names of its own -- the one it pins (`-S`, or a mapping's
+`{statefile}`) and the one the emulator would derive from the content it was
+handed -- and the spelling already on disk decides between them, down to its
+case. A name on disk that is neither does not decide, since a
+[disc set](#multi-disc-games) launched whole leaves `discs.state1` behind and a
+later launch of one disc would restore into a name that launch's emulator never
+reads.
+
+Anything that might be that same file is archived first regardless, since two
+spellings of one name are one file on Windows and macOS and two on Linux: a
+backup of a file that turns out not to be in the way costs a transfer, and the
+other way round costs a state.
 
 ### Play sessions reported to RomM
 

@@ -2,10 +2,18 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  contentStateBase,
+  displacedStateName,
+  localStateName,
   MAX_STATE_BYTES,
+  planStateRestore,
   planStates,
+  readStateList,
+  slotFromAssetName,
   stateAssetName,
+  stateLoadsIn,
   stateSlot,
+  type RemoteState,
   type StateEntry,
 } from "./states.ts";
 
@@ -123,4 +131,429 @@ test("the ceiling leaves room for a real state and not for a heap", () => {
   assert.equal(MAX_STATE_BYTES, 128 * 1024 * 1024);
   assert.ok(MAX_STATE_BYTES > 64 * 1024 * 1024);
   assert.ok(MAX_STATE_BYTES < 512 * 1024 * 1024);
+});
+
+// ── The restore ───────────────────────────────────────────────────────────────
+
+function remote(
+  fileName: string,
+  updatedAt: string,
+  over: Partial<RemoteState> = {},
+): RemoteState {
+  return {
+    id: 1,
+    fileName,
+    emulator: "snes9x",
+    size: 4096,
+    updatedAt: Date.parse(updatedAt),
+    screenshotId: null,
+    ...over,
+  };
+}
+
+test("the slot comes back out of the name the mirror wrote", () => {
+  assert.equal(slotFromAssetName("Zelda [study-pc slot 3].state"), "slot 3");
+  assert.equal(slotFromAssetName("Zelda [study-pc auto].state"), "auto");
+  assert.equal(slotFromAssetName("Zelda [slot 0].state"), "slot 0");
+});
+
+test("a state from anywhere else names no slot", () => {
+  // The browser player and a hand upload both land here, and neither says
+  // which slot it is. Guessing one would write over a slot the player has.
+  assert.equal(slotFromAssetName("Zelda.state"), null);
+  assert.equal(slotFromAssetName("Zelda [1999-01-01 12-00-00].state"), null);
+  assert.equal(slotFromAssetName("Zelda [study-pc slot 3].srm"), null);
+  // A title of its own ending in brackets cannot pass for a slot.
+  assert.equal(slotFromAssetName("Zelda [slot 3] [extra].state"), null);
+});
+
+test("only the emulator that wrote a state can load it", () => {
+  const state = remote("Zelda [pc slot 1].state", "2026-01-01T00:00:00Z");
+  assert.equal(stateLoadsIn(state, "snes9x"), true);
+  assert.equal(stateLoadsIn(state, "SNES9X"), true);
+  assert.equal(stateLoadsIn(state, "bsnes"), false);
+  // A state naming no emulator is nobody's rather than everybody's.
+  assert.equal(stateLoadsIn({ ...state, emulator: null }, "snes9x"), false);
+  assert.equal(stateLoadsIn(state, null), false);
+});
+
+test("a slot's local file is the name the emulator writes", () => {
+  assert.equal(localStateName("Zelda", "slot 0"), "Zelda.state");
+  assert.equal(localStateName("Zelda", "slot 3"), "Zelda.state3");
+  // The automatic state loads on start without being asked for, so it is not
+  // somewhere another machine's session gets to land.
+  assert.equal(localStateName("Zelda", "auto"), null);
+});
+
+test("an empty slot is filled from the name the launch pinned", () => {
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 2].state", "2026-01-01T00:00:00Z")],
+    local: [],
+    emulator: "snes9x",
+    bases: ["Zelda (USA)", "discs"],
+  });
+
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0]?.fileName, "Zelda (USA).state2");
+  assert.equal(plan[0]?.displaces, null);
+});
+
+test("a directory that already names this game's states wins over the guess", () => {
+  // The emulator names the state, not the shell: a restore into a name nothing
+  // reads is a slot the player cannot see. So the spelling on disk decides,
+  // where the launch would have arrived at it too.
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 2].state", "2026-01-01T00:00:00Z")],
+    local: [entry("discs.state1", 1_000)],
+    emulator: "snes9x",
+    bases: ["Zelda (USA)", "discs"],
+  });
+
+  assert.equal(plan[0]?.fileName, "discs.state2");
+});
+
+test("a name left by a different content choice does not decide", () => {
+  // A whole-set launch left "discs.state1" behind, and this launch boots one
+  // disc: the emulator will look for "Disc 2.state2", so restoring into the
+  // playlist's name puts the state where nothing reads it.
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 2].state", "2026-01-01T00:00:00Z")],
+    local: [entry("discs.state1", 1_000)],
+    emulator: "snes9x",
+    bases: ["Disc 2"],
+  });
+
+  assert.equal(plan[0]?.fileName, "Disc 2.state2");
+});
+
+test("a slot past the ninety-ninth is still a slot", () => {
+  // stateSlot reads any number of digits off the emulator's own name, so a
+  // ceiling on the way back would upload a state nothing could ever restore.
+  assert.equal(stateSlot("Game.state100"), "slot 100");
+  assert.equal(
+    slotFromAssetName(stateAssetName("Game", "pc", "slot 100")),
+    "slot 100",
+  );
+  assert.equal(localStateName("Game", "slot 100"), "Game.state100");
+});
+
+test("a displaced state is archived out of the restore's reach", () => {
+  // Filed as this machine's slot it would be that slot's newest row the moment
+  // it was written, and the next launch would restore the bytes this one had
+  // just replaced.
+  const at = new Date("2026-09-22T01:16:39.006Z");
+  const archived = displacedStateName("Zelda", "study-pc", "slot 1", at);
+
+  assert.equal(
+    archived,
+    "Zelda [study-pc slot 1 replaced 2026-09-22 01-16-39-006].state",
+  );
+  assert.equal(slotFromAssetName(archived), null);
+  assert.notEqual(archived, stateAssetName("Zelda", "study-pc", "slot 1"));
+});
+
+test("an archive of a long game name still keeps the slot and the marker", () => {
+  const archived = displacedStateName(
+    "A".repeat(300),
+    "study-pc",
+    "slot 3",
+    new Date("2026-09-22T01:16:39.006Z"),
+  );
+
+  assert.ok(
+    archived.endsWith("slot 3 replaced 2026-09-22 01-16-39-006].state"),
+  );
+  assert.ok(archived.length <= 120);
+});
+
+test("an archived state is not a candidate the restore can pick", () => {
+  const plan = planStateRestore({
+    remote: [
+      remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z"),
+      // Written later than the state above, and still never restored.
+      remote(
+        "Zelda [study-pc slot 1 replaced 2026-09-22 01-16-39-006].state",
+        "2026-09-22T01:16:39Z",
+        { id: 9 },
+      ),
+    ],
+    local: [],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0]?.state.fileName, "Zelda [laptop slot 1].state");
+});
+
+test("a slot's own file is the one this launch's emulator would read", () => {
+  // `discs.state2` is the slot 2 of a whole-set launch, not of this one: this
+  // emulator reads "Disc 2.state2", so restoring over the playlist's file
+  // would cost a state nothing here reads and land where nothing looks.
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 2].state", "2026-01-01T00:00:00Z")],
+    local: [entry("discs.state2", Date.parse("2026-06-01T00:00:00Z"))],
+    emulator: "snes9x",
+    bases: ["Disc 2"],
+  });
+
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0]?.fileName, "Disc 2.state2");
+  assert.equal(plan[0]?.displaces, null);
+});
+
+test("a slot spelled differently is the emulator's own spelling of it", () => {
+  // The directory demonstrated the case, so that is the name written and the
+  // file in the way. On Windows and macOS the two spellings are one file
+  // anyway; on Linux this is the one the emulator has been using.
+  const local = entry("zelda.state1", Date.parse("2025-12-01T00:00:00Z"));
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z")],
+    local: [local],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.equal(plan[0]?.fileName, "zelda.state1");
+  assert.deepEqual(plan[0]?.displaces, local);
+});
+
+test("a file in the way is archived even where it is not the name written", () => {
+  // Nothing in the directory demonstrates a spelling for slot 1, so the
+  // launch's own name is written -- and the file that may be that same file on
+  // a case-insensitive filesystem still goes up first. Archiving one that
+  // turns out not to be in the way costs a transfer; the other way round
+  // costs a state.
+  const local = entry("zelda.state1", Date.parse("2025-12-01T00:00:00Z"));
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z")],
+    local: [local, entry("Zelda.state4", Date.parse("2026-06-01T00:00:00Z"))],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.equal(plan[0]?.fileName, "Zelda.state1");
+  assert.deepEqual(plan[0]?.displaces, local);
+});
+
+test("the exact spelling is the one at risk, whatever order it is found in", () => {
+  // Both can only coexist where the filesystem keeps them apart, and there the
+  // write reaches the exact name. Taking whichever `readdir` happened to yield
+  // last would gate freshness on the wrong file's time and then overwrite the
+  // newer one without archiving it.
+  const exact = entry("Zelda.state1", Date.parse("2026-06-01T00:00:00Z"));
+  const other = entry("zelda.state1", Date.parse("2025-01-01T00:00:00Z"));
+  const older = remote("Zelda [laptop slot 1].state", "2026-03-01T00:00:00Z");
+
+  // Listed after the exact one, which is where the old map took it from.
+  assert.deepEqual(
+    planStateRestore({
+      remote: [older],
+      local: [exact, other],
+      emulator: "snes9x",
+      bases: ["Zelda"],
+    }),
+    [],
+  );
+
+  // And it is still the file that goes up when the remote copy does win.
+  const newer = remote("Zelda [laptop slot 1].state", "2026-09-01T00:00:00Z");
+  const plan = planStateRestore({
+    remote: [newer],
+    local: [exact, other],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+  assert.equal(plan[0]?.fileName, "Zelda.state1");
+  assert.deepEqual(plan[0]?.displaces, exact);
+});
+
+test("spellings that all differ in case leave nothing in the way", () => {
+  // Two of them coexisting proves the filesystem keeps them apart, so a write
+  // to the name neither carries creates a file rather than replacing one.
+  //
+  // Reaching that needs the base to come from the launch rather than from
+  // either spelling, which is what the unrelated newest file below arranges:
+  // it is what `stateBaseIn` reads, and it agrees with no candidate.
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z")],
+    local: [
+      entry("Playlist.state2", Date.parse("2026-01-01T00:00:00Z")),
+      entry("zelda.state1", Date.parse("2025-01-01T00:00:00Z")),
+      entry("ZELDA.state1", Date.parse("2025-02-01T00:00:00Z")),
+    ],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.equal(plan[0]?.fileName, "Zelda.state1");
+  assert.equal(plan[0]?.displaces, null);
+});
+
+test("one spelling differing in case is still the file the write reaches", () => {
+  // The other side of it: a single spelling cannot prove the filesystem keeps
+  // them apart, so on Windows and macOS it is that file and goes up first.
+  const only = entry("zelda.state1", Date.parse("2025-01-01T00:00:00Z"));
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z")],
+    local: [entry("Playlist.state2", Date.parse("2026-01-01T00:00:00Z")), only],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.equal(plan[0]?.fileName, "Zelda.state1");
+  assert.deepEqual(plan[0]?.displaces, only);
+});
+
+test("a padded slot is the same slot as the plain one", () => {
+  // Both spell one slot and one file. Keyed apart, a padded row would find no
+  // local file to displace and overwrite it without archiving it first.
+  assert.equal(stateSlot("Game.state01"), "slot 1");
+  assert.equal(slotFromAssetName("Game [pc slot 01].state"), "slot 1");
+  assert.equal(localStateName("Game", "slot 01"), "Game.state1");
+
+  const local = entry("Game.state1", Date.parse("2025-12-01T00:00:00Z"));
+  const plan = planStateRestore({
+    remote: [remote("Game [laptop slot 01].state", "2026-01-01T00:00:00Z")],
+    local: [local],
+    emulator: "snes9x",
+    bases: ["Game"],
+  });
+
+  assert.equal(plan[0]?.fileName, "Game.state1");
+  assert.deepEqual(plan[0]?.displaces, local);
+});
+
+test("a slot number too large to be exact is not a slot", () => {
+  // "slot 99999999999999999999" rounds, and a key derived from a rounded
+  // number is a key that meets the wrong file.
+  const huge = "9".repeat(20);
+  assert.equal(stateSlot(`Game.state${huge}`), null);
+  assert.equal(slotFromAssetName(`Game [pc slot ${huge}].state`), null);
+  assert.equal(localStateName("Game", `slot ${huge}`), null);
+});
+
+test("a slot holding something newer is left alone", () => {
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z")],
+    local: [entry("Zelda.state1", Date.parse("2026-02-01T00:00:00Z"))],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.deepEqual(plan, []);
+});
+
+test("a slot holding something older is replaced, and its own bytes go up", () => {
+  const older = entry("Zelda.state1", Date.parse("2025-12-01T00:00:00Z"));
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z")],
+    local: [older],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0]?.fileName, "Zelda.state1");
+  assert.deepEqual(plan[0]?.displaces, older);
+});
+
+test("one state per slot, the most recently written of them", () => {
+  const plan = planStateRestore({
+    remote: [
+      remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z", { id: 7 }),
+      remote("Zelda [study-pc slot 1].state", "2026-03-01T00:00:00Z", {
+        id: 8,
+      }),
+    ],
+    local: [],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0]?.state.fileName, "Zelda [study-pc slot 1].state");
+});
+
+test("the automatic state is never restored", () => {
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop auto].state", "2026-01-01T00:00:00Z")],
+    local: [],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.deepEqual(plan, []);
+});
+
+test("another core's states and oversized ones are not brought down", () => {
+  const plan = planStateRestore({
+    remote: [
+      remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z", {
+        emulator: "bsnes",
+      }),
+      remote("Zelda [laptop slot 2].state", "2026-01-01T00:00:00Z", {
+        size: MAX_STATE_BYTES + 1,
+      }),
+    ],
+    local: [],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.deepEqual(plan, []);
+});
+
+test("a launch with no name to give its states restores none", () => {
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z")],
+    local: [],
+    emulator: "snes9x",
+    bases: [],
+  });
+
+  assert.deepEqual(plan, []);
+});
+
+test("the content's own name is what a disc set's states go by", () => {
+  // A multi-disc launch boots the playlist the shell wrote, so an emulator
+  // naming states after the content calls them "discs", not the game.
+  assert.equal(contentStateBase("/cache/42/discs.m3u"), "discs");
+  assert.equal(
+    contentStateBase("/cache/42/Final Fantasy VII (Disc 2).chd"),
+    "Final Fantasy VII (Disc 2)",
+  );
+  assert.equal(contentStateBase("/cache/42/Zelda"), "Zelda");
+});
+
+test("a malformed state list costs the rows it broke, not the launch", () => {
+  const rows = readStateList([
+    {
+      id: 4,
+      file_name: "Zelda [pc slot 1].state",
+      file_size_bytes: 4096,
+      emulator: "snes9x",
+      updated_at: "2026-01-01T00:00:00Z",
+      screenshot: { id: 9 },
+    },
+    // No id to fetch by, no length to hold the transfer to, no timestamp to
+    // compare against, and a file the server has lost: none are rows to act on.
+    { file_name: "a.state", file_size_bytes: 1, updated_at: "2026-01-01Z" },
+    { id: 5, file_name: "b.state", updated_at: "2026-01-01T00:00:00Z" },
+    { id: 6, file_name: "c.state", file_size_bytes: 1 },
+    {
+      id: 7,
+      file_name: "d.state",
+      file_size_bytes: 1,
+      updated_at: "2026-01-01T00:00:00Z",
+      missing_from_fs: true,
+    },
+    "not a row",
+  ]);
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.id, 4);
+  assert.equal(rows[0]?.screenshotId, 9);
+  assert.equal(rows[0]?.updatedAt, Date.parse("2026-01-01T00:00:00Z"));
+  assert.deepEqual(readStateList("not a list"), []);
 });

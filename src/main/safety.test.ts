@@ -492,3 +492,25 @@ test("validatePlatformQueries rejects a non-array and an oversized batch", () =>
     code: "invalid-request",
   });
 });
+
+test("validateLaunchRequest checks the disc the page picked", () => {
+  const base = {
+    romId: 1,
+    downloadPath: "/api/roms/1/content/game.chd",
+    fileName: "game.chd",
+    platformSlug: "psx",
+    cores: ["swanstation"],
+  };
+
+  assert.equal(validateLaunchRequest({ ...base, disc: 4 }).disc, 4);
+  assert.equal(validateLaunchRequest({ ...base, disc: "all" }).disc, "all");
+  // Absent stays absent, so a shell reading it cannot tell a page that said
+  // nothing from one that asked for the whole set by name.
+  assert.equal("disc" in validateLaunchRequest(base), false);
+
+  // The id is interpolated into a file_ids selector, so anything that is not a
+  // file to fetch is a request that fails rather than one that is normalised.
+  for (const disc of [0, -1, 1.5, "2", "none", null]) {
+    assert.throws(() => validateLaunchRequest({ ...base, disc }), /disc must/);
+  }
+});
