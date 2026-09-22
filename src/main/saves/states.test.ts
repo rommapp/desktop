@@ -286,6 +286,38 @@ test("an archived state is not a candidate the restore can pick", () => {
   assert.equal(plan[0]?.state.fileName, "Zelda [laptop slot 1].state");
 });
 
+test("a slot's own file is the one this launch's emulator would read", () => {
+  // `discs.state2` is the slot 2 of a whole-set launch, not of this one: this
+  // emulator reads "Disc 2.state2", so restoring over the playlist's file
+  // would cost a state nothing here reads and land where nothing looks.
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 2].state", "2026-01-01T00:00:00Z")],
+    local: [entry("discs.state2", Date.parse("2026-06-01T00:00:00Z"))],
+    emulator: "snes9x",
+    bases: ["Disc 2"],
+  });
+
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0]?.fileName, "Disc 2.state2");
+  assert.equal(plan[0]?.displaces, null);
+});
+
+test("a slot spelled differently is still the same file to displace", () => {
+  // On Windows and macOS these are one file, so reading the slot as empty is
+  // how it gets overwritten without being archived first. The file's own
+  // spelling is what gets written.
+  const local = entry("zelda.state1", Date.parse("2025-12-01T00:00:00Z"));
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z")],
+    local: [local],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.equal(plan[0]?.fileName, "zelda.state1");
+  assert.deepEqual(plan[0]?.displaces, local);
+});
+
 test("a slot holding something newer is left alone", () => {
   const plan = planStateRestore({
     remote: [remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z")],

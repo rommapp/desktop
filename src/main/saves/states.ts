@@ -437,14 +437,20 @@ export function planStateRestore(options: {
   // pinned none and boots content the shell cannot name either.
   if (base === null) return [];
 
-  // The newest file claiming each slot, since two launch paths can name the
-  // same game differently and leave two files for one slot behind.
+  // What this launch's emulator would read for each slot, and only that: a
+  // state left under a different content's name is that launch's, and writing
+  // over it would cost a state nothing here even reads.
+  //
+  // Matched without regard to case, with the file's own spelling kept for the
+  // write. On Windows and macOS two spellings are one file, so reading the slot
+  // as empty is how it gets overwritten without being archived first.
   const onDisk = new Map<string, StateEntry>();
   for (const entry of local) {
     const slot = stateSlot(entry.name);
-    if (!slot) continue;
-    const held = onDisk.get(slot);
-    if (!held || entry.modifiedAt > held.modifiedAt) onDisk.set(slot, entry);
+    const wanted = slot ? localStateName(base, slot) : null;
+    if (!slot || !wanted) continue;
+    if (wanted.toLowerCase() !== entry.name.toLowerCase()) continue;
+    onDisk.set(slot, entry);
   }
 
   const newest = new Map<string, RemoteState>();

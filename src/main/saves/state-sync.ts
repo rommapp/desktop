@@ -185,6 +185,16 @@ async function runPush(
   return { uploaded, failed };
 }
 
+/** Whether a filesystem error is the file simply not being there, as opposed
+ *  to being there and unreadable. The two mean opposite things to a restore. */
+function isMissing(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
+}
+
 /** Where a half-written transfer sits until it is complete. Leading dot, so
  *  nothing listing the directory reads it as a slot: `stateSlot` would call
  *  `.Game.state3.part` nothing at all, and the emulator ignores it too. */
@@ -289,7 +299,9 @@ async function restoreThumbnail(options: {
       size: null,
       maxBytes: MAX_THUMBNAIL_BYTES,
       signal,
-    }).catch(() => false);
+    });
+    // Not caught: fetchAsset answers false for every failure of its own and
+    // throws only on a cancel, which is the launch's and has to reach it.
     if (fetched) return;
   }
   await rm(join(directory, fileName), { force: true }).catch(() => {});
@@ -444,11 +456,21 @@ async function archive(
     return false;
   }
 
-  const bytes = await readFile(join(stateDir, displaced.name)).catch(
-    () => null,
-  );
-  // Gone between the reading and here, so there is nothing left to lose.
-  if (!bytes) return true;
+  let bytes: Uint8Array;
+  try {
+    bytes = await readFile(join(stateDir, displaced.name));
+  } catch (error) {
+    // Gone between the reading and here leaves nothing to lose, so the restore
+    // carries on. Every other failure is bytes that exist and could not be
+    // read, and writing over those is the one thing this function is here to
+    // prevent -- a permission the emulator has and the shell does not would
+    // otherwise cost a state on every launch, silently.
+    if (isMissing(error)) return true;
+    console.warn(
+      `[states] rom ${romId}: leaving ${slot} as it is, its own state could not be read, ${String(error)}`,
+    );
+    return false;
+  }
 
   const fileName = displacedStateName(base, host, slot, new Date());
   const picture = await readFile(
