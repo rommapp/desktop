@@ -16,6 +16,7 @@ import { apiRequest } from "./http.ts";
 import { inTurn } from "./lock.ts";
 import { stateUploadBody } from "./multipart.ts";
 import {
+  displacedStateName,
   MAX_STATE_BYTES,
   MAX_THUMBNAIL_BYTES,
   planStateRestore,
@@ -419,14 +420,15 @@ async function sweepOrphanedTemporaries(directory: string): Promise<void> {
 }
 
 /**
- * Send the state a restore is about to write over, under this machine's name
- * for its slot.
+ * Send the state a restore is about to write over, under an archive name.
  *
  * The same rule the save pull follows: the server's copy is written over bytes
  * it may not already hold, so those bytes go up first and the restore is
- * abandoned if they do not land. Usually this rewrites the row the previous
- * run's push already created, which is what makes it cheap enough to do every
- * time rather than only when it looks necessary.
+ * abandoned if they do not land.
+ *
+ * `displacedStateName` and not this machine's name for the slot, which would
+ * file the backup as the slot's newest state and have the next launch restore
+ * the bytes this one just replaced. See its own comment.
  */
 async function archive(
   options: PullStatesOptions,
@@ -448,7 +450,7 @@ async function archive(
   // Gone between the reading and here, so there is nothing left to lose.
   if (!bytes) return true;
 
-  const fileName = stateAssetName(base, host, slot);
+  const fileName = displacedStateName(base, host, slot, new Date());
   const picture = await readFile(
     join(stateDir, `${displaced.name}${THUMBNAIL_SUFFIX}`),
   ).catch(() => null);

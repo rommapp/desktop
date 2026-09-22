@@ -595,7 +595,7 @@ the wrong core crashes rather than merely disagreeing. So the restore is strict:
   `[machine slot 3]` name above is the only record of which slot a state is, and
   a slot is the only place an emulator can be asked to load one from. A state
   uploaded from the browser player or by hand names none, and is still yours to
-  fetch by hand.
+  fetch by hand. So does a backup, deliberately (below).
 - **The automatic state stays local.** `[... auto]` names a slot and is left out
   anyway: RetroArch loads it on start without being asked, so another machine's
   copy would replace a session nobody chose to leave.
@@ -603,18 +603,30 @@ the wrong core crashes rather than merely disagreeing. So the restore is strict:
   RomM's copy was written after the file sitting in it.
 
 Nothing is lost either way round. Before a slot is written over, the state
-already in it goes up to RomM under this machine's name for that slot, and a
-slot whose upload does not land is left exactly as it was. The picture beside a
+already in it goes up to RomM, and a slot whose upload does not land is left
+exactly as it was. That backup is named apart from the slots:
+
+```
+Chrono Trigger (USA) [study-pc slot 3 replaced 2026-09-22 01-16-39-006].state
+```
+
+Named that way because a backup filed as this machine's slot 3 would be that
+slot's newest state the moment it was written, and the next launch would restore
+the bytes this one had just replaced. The marker is what keeps it out of the
+restore, and the stamp keeps two displacements of one slot from overwriting each
+other. The picture beside a
 restored slot is replaced with the one RomM holds, or removed: RetroArch shows
 that thumbnail in its own load menu, and a stale one would have you pick a frame
 and load something else.
 
 The name a restored state lands under is read out of the state directory rather
-than assumed, because the emulator names the state and not the shell. For an
-empty directory the launch offers its own name (`-S`, or a mapping's
-`{statefile}`) and then the name the emulator would derive from the content it
-was handed, which for a [disc set](#multi-disc-games) is the playlist or the one
-picked disc rather than the game.
+than assumed, because the emulator names the state and not the shell. The launch
+offers two names of its own -- the one it pins (`-S`, or a mapping's
+`{statefile}`) and the one the emulator would derive from the content it was
+handed -- and the spelling already on disk decides between them. A name on disk
+that is neither does not, since a [disc set](#multi-disc-games) launched whole
+leaves `discs.state1` behind and a later launch of one disc would restore into
+a name that launch's emulator never reads.
 
 ### Play sessions reported to RomM
 

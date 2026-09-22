@@ -409,10 +409,15 @@ function changed(before: SaveStamp | null, after: SaveStamp): boolean | null {
  * writes beside it.
  */
 export function archiveName(fileName: string, at: Date): string {
-  const stamp = at
+  return `${saveBaseName(fileName)} [${assetStamp(at)}].srm`;
+}
+
+/** The moment an archive was made, as RomM's own asset names spell it. Shared
+ *  with the displaced-state name so the two read alike in the library. */
+export function assetStamp(at: Date): string {
+  return at
     .toISOString()
     .replace(/[:.]/g, "-")
     .replace("T", " ")
     .replace("Z", "");
-  return `${saveBaseName(fileName)} [${stamp}].srm`;
 }

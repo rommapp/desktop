@@ -34,14 +34,15 @@
 // RetroArch's automatic state names a slot and is still left out: it loads on
 // start without the player asking, so a copy from another machine would
 // replace a session nobody chose to leave. And a local state is never simply
-// overwritten. The slot's own bytes go up first, under this machine's name for
-// that slot, and a slot whose upload does not land is left alone -- the same
-// rule the save pull follows, for the same reason.
+// overwritten. The slot's own bytes go up first, under an archive name no
+// restore will pick again, and a slot whose upload does not land is left
+// alone -- the same rule the save pull follows, for the same reason.
 
 import { readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { type DesktopConfig } from "../../shared/types.ts";
 import { safeFileName, safeFileNameComponent } from "../safety.ts";
+import { assetStamp } from "./plan.ts";
 
 /**
  * The largest state this will send.
@@ -127,8 +128,41 @@ export function stateAssetName(
   host: string,
   slot: string,
 ): string {
+  return composeStateName(base, host, slot);
+}
+
+/** What marks a name as a displaced state rather than a slot. Inside the
+ *  brackets, after the slot, which is where `slotFromAssetName` stops looking:
+ *  an archive is deliberately unreachable from the restore. */
+const REPLACED_MARKER = "replaced";
+
+/**
+ * The name a displaced state is archived under.
+ *
+ * Deliberately not `stateAssetName`. A backup filed as this machine's slot
+ * would be that slot's newest row the moment it was written, so the next
+ * launch, here or on another machine, would restore the very bytes this one
+ * had just replaced -- and where the row being restored is this machine's own,
+ * the upload would overwrite it before the download read it. The marker is
+ * what keeps an archive out of the restore, and the stamp keeps two
+ * displacements of one slot from overwriting each other, as the save archive
+ * beside it does.
+ */
+export function displacedStateName(
+  base: string,
+  host: string,
+  slot: string,
+  at: Date,
+): string {
+  const tail = `${slot} ${REPLACED_MARKER} ${assetStamp(at)}`;
+  return composeStateName(base, host, tail);
+}
+
+/** The shared composition: the game, then the machine and what it is, with the
+ *  truncation landing on the game's name rather than on either. */
+function composeStateName(base: string, host: string, tail: string): string {
   const machine = safeFileNameComponent(host).slice(0, MAX_HOST_LENGTH);
-  const suffix = ` [${machine ? `${machine} ` : ""}${slot}].state`;
+  const suffix = ` [${machine ? `${machine} ` : ""}${tail}].state`;
   const room = Math.max(MAX_NAME_LENGTH - suffix.length, 0);
   const stem = safeFileNameComponent(base).slice(0, room);
   return safeFileName(`${stem}${suffix}`);
@@ -276,7 +310,7 @@ function screenshotId(screenshot: unknown): number | null {
  * own title ends in brackets cannot read as a slot.
  */
 export function slotFromAssetName(fileName: string): string | null {
-  const match = /\[[^[\]]*?(slot \d{1,2}|auto)\]\.state$/.exec(fileName);
+  const match = /\[[^[\]]*?(slot \d+|auto)\]\.state$/.exec(fileName);
   return match?.[1] ?? null;
 }
 
@@ -299,17 +333,21 @@ export function stateLoadsIn(
  * unreachable from here.
  */
 export function localStateName(base: string, slot: string): string | null {
-  const match = /^slot (\d{1,2})$/.exec(slot);
-  if (!match) return null;
-  const number = match[1] === "0" ? "" : match[1];
-  return `${base}.state${number}`;
+  const number = slotNumber(slot);
+  if (number === null) return null;
+  return `${base}.state${number === 0 ? "" : number}`;
 }
 
-/** The slot's own number, for reading a plan in the order a player sees the
- *  slots in. Anything that is not a numbered slot sorts last. */
-function slotNumber(slot: string): number {
-  const match = /^slot (\d{1,2})$/.exec(slot);
-  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+/**
+ * The slot's own number, or null when this is not a numbered slot.
+ *
+ * Any number of digits, because `stateSlot` reads any number of digits off the
+ * emulator's own name: a two-digit ceiling here would upload `Game.state100`
+ * and then never be able to bring it back.
+ */
+function slotNumber(slot: string): number | null {
+  const match = /^slot (\d+)$/.exec(slot);
+  return match ? Number(match[1]) : null;
 }
 
 /**
@@ -345,12 +383,19 @@ export function stateBaseIn(
   local: readonly StateEntry[],
   bases: readonly string[],
 ): string | null {
+  const offered = bases.filter((base) => base !== "");
   const slotted = local
     .filter((entry) => stateSlot(entry.name) !== null)
     .sort((a, b) => b.modifiedAt - a.modifiedAt);
-  const newest = slotted[0];
-  if (newest) return newest.name.replace(/\.state\d*(\.auto)?$/, "");
-  return bases.find((base) => base !== "") ?? null;
+  const inUse = slotted[0]?.name.replace(/\.state\d*(\.auto)?$/, "");
+
+  // The directory decides only when it agrees with a name this launch would
+  // use, which is what makes the emulator's own spelling of the game
+  // authoritative without a name from a different content choice becoming so:
+  // a whole-set launch leaves "discs.state1" behind, and restoring into it for
+  // a launch that boots one disc puts the state where nothing reads it.
+  if (inUse && (offered.length === 0 || offered.includes(inUse))) return inUse;
+  return offered[0] ?? inUse ?? null;
 }
 
 /** One state to bring down, and what it lands on. */
@@ -428,6 +473,9 @@ export function planStateRestore(options: {
     if (!fileName) continue;
     restore.push({ state, slot, fileName, displaces });
   }
-  // Ordered so the log reads in slot order rather than in map order.
-  return restore.sort((a, b) => slotNumber(a.slot) - slotNumber(b.slot));
+  // Ordered so the log reads in slot order rather than in map order. Every
+  // entry is a numbered slot by now, the automatic one having been dropped.
+  return restore.sort(
+    (a, b) => (slotNumber(a.slot) ?? 0) - (slotNumber(b.slot) ?? 0),
+  );
 }

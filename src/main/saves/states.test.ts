@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   contentStateBase,
+  displacedStateName,
   localStateName,
   MAX_STATE_BYTES,
   planStateRestore,
@@ -199,15 +200,90 @@ test("an empty slot is filled from the name the launch pinned", () => {
 
 test("a directory that already names this game's states wins over the guess", () => {
   // The emulator names the state, not the shell: a restore into a name nothing
-  // reads is a slot the player cannot see.
+  // reads is a slot the player cannot see. So the spelling on disk decides,
+  // where the launch would have arrived at it too.
   const plan = planStateRestore({
     remote: [remote("Zelda [laptop slot 2].state", "2026-01-01T00:00:00Z")],
     local: [entry("discs.state1", 1_000)],
     emulator: "snes9x",
-    bases: ["Zelda (USA)"],
+    bases: ["Zelda (USA)", "discs"],
   });
 
   assert.equal(plan[0]?.fileName, "discs.state2");
+});
+
+test("a name left by a different content choice does not decide", () => {
+  // A whole-set launch left "discs.state1" behind, and this launch boots one
+  // disc: the emulator will look for "Disc 2.state2", so restoring into the
+  // playlist's name puts the state where nothing reads it.
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 2].state", "2026-01-01T00:00:00Z")],
+    local: [entry("discs.state1", 1_000)],
+    emulator: "snes9x",
+    bases: ["Disc 2"],
+  });
+
+  assert.equal(plan[0]?.fileName, "Disc 2.state2");
+});
+
+test("a slot past the ninety-ninth is still a slot", () => {
+  // stateSlot reads any number of digits off the emulator's own name, so a
+  // ceiling on the way back would upload a state nothing could ever restore.
+  assert.equal(stateSlot("Game.state100"), "slot 100");
+  assert.equal(
+    slotFromAssetName(stateAssetName("Game", "pc", "slot 100")),
+    "slot 100",
+  );
+  assert.equal(localStateName("Game", "slot 100"), "Game.state100");
+});
+
+test("a displaced state is archived out of the restore's reach", () => {
+  // Filed as this machine's slot it would be that slot's newest row the moment
+  // it was written, and the next launch would restore the bytes this one had
+  // just replaced.
+  const at = new Date("2026-09-22T01:16:39.006Z");
+  const archived = displacedStateName("Zelda", "study-pc", "slot 1", at);
+
+  assert.equal(
+    archived,
+    "Zelda [study-pc slot 1 replaced 2026-09-22 01-16-39-006].state",
+  );
+  assert.equal(slotFromAssetName(archived), null);
+  assert.notEqual(archived, stateAssetName("Zelda", "study-pc", "slot 1"));
+});
+
+test("an archive of a long game name still keeps the slot and the marker", () => {
+  const archived = displacedStateName(
+    "A".repeat(300),
+    "study-pc",
+    "slot 3",
+    new Date("2026-09-22T01:16:39.006Z"),
+  );
+
+  assert.ok(
+    archived.endsWith("slot 3 replaced 2026-09-22 01-16-39-006].state"),
+  );
+  assert.ok(archived.length <= 120);
+});
+
+test("an archived state is not a candidate the restore can pick", () => {
+  const plan = planStateRestore({
+    remote: [
+      remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z"),
+      // Written later than the state above, and still never restored.
+      remote(
+        "Zelda [study-pc slot 1 replaced 2026-09-22 01-16-39-006].state",
+        "2026-09-22T01:16:39Z",
+        { id: 9 },
+      ),
+    ],
+    local: [],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0]?.state.fileName, "Zelda [laptop slot 1].state");
 });
 
 test("a slot holding something newer is left alone", () => {
