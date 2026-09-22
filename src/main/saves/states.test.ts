@@ -16,6 +16,7 @@ import {
   stateAssetName,
   stateLoadsIn,
   stateSlot,
+  type PushedRow,
   type RemoteState,
   type StateEntry,
 } from "./states.ts";
@@ -154,6 +155,15 @@ function remote(
     screenshotId: null,
     ...over,
   };
+}
+
+/** The record entry a push leaves for a slot: the row it got back, and the
+ *  file it pushed. */
+function pushedEntry(
+  file: StateEntry,
+  row: Pick<PushedRow, "id" | "updatedAt">,
+): PushedRow {
+  return { id: row.id, updatedAt: row.updatedAt, mtimeMs: file.modifiedAt };
 }
 
 test("the slot comes back out of the name the mirror wrote", () => {
@@ -492,7 +502,7 @@ test("a slot holding this machine's own copy is left alone", () => {
   assert.deepEqual(
     planStateRestore({
       ...options,
-      pushed: { "slot 1": { id: 12, updatedAt: own.updatedAt } },
+      pushed: { "slot 1": pushedEntry(local, own) },
     }),
     [],
   );
@@ -503,10 +513,34 @@ test("a slot holding this machine's own copy is left alone", () => {
   assert.deepEqual(alone[0]?.displaces, local);
 });
 
+test("a slot rewritten behind the mirror is not this machine's copy", () => {
+  // The record says the slot holds the bytes that were pushed, and an older
+  // copy put there by something else no longer does: freshness alone replaces
+  // it, and without the file check the record would keep it instead.
+  const was = entry("Zelda.state1", Date.parse("2026-01-01T00:00:00Z"));
+  const now = entry("Zelda.state1", Date.parse("2025-06-01T00:00:00Z"));
+  const own = remote("Zelda [study-pc slot 1].state", "2026-01-01T00:00:09Z", {
+    id: 12,
+  });
+  const plan = planStateRestore({
+    remote: [own],
+    local: [now],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+    pushed: { "slot 1": pushedEntry(was, own) },
+  });
+
+  assert.equal(plan.length, 1);
+  assert.deepEqual(plan[0]?.displaces, now);
+});
+
 test("only the row this machine pushed for a slot is its own", () => {
   const local = entry("Zelda.state1", Date.parse("2025-12-01T00:00:00Z"));
   const pushed = {
-    "slot 1": { id: 12, updatedAt: Date.parse("2025-12-01T00:00:09Z") },
+    "slot 1": pushedEntry(local, {
+      id: 12,
+      updatedAt: Date.parse("2025-12-01T00:00:09Z"),
+    }),
   };
 
   // Two machines can read as one name, so the stamp moving has to count too.
@@ -544,6 +578,7 @@ test("only the row this machine pushed for a slot is its own", () => {
 
 test("an empty slot is filled from this machine's own row as well", () => {
   // The record says the row is this machine's, not that the slot holds it.
+  const was = entry("Zelda.state2", Date.parse("2026-01-01T00:00:00Z"));
   const own = remote("Zelda [study-pc slot 2].state", "2026-01-01T00:00:09Z", {
     id: 12,
   });
@@ -552,7 +587,7 @@ test("an empty slot is filled from this machine's own row as well", () => {
     local: [],
     emulator: "snes9x",
     bases: ["Zelda"],
-    pushed: { "slot 2": { id: 12, updatedAt: own.updatedAt } },
+    pushed: { "slot 2": pushedEntry(was, own) },
   });
 
   assert.equal(plan.length, 1);
@@ -665,48 +700,58 @@ test("a malformed state list costs the rows it broke, not the launch", () => {
 });
 
 test("the row an upload left is read off the answer it came with", () => {
+  // The stamp is as the server serialises it, offset and all.
   assert.deepEqual(
-    pushedRowFrom({
+    pushedRowFrom(
+      {
+        id: 4,
+        file_name: "Zelda [study-pc slot 1].state",
+        updated_at: "2026-01-01T00:00:00+00:00",
+      },
+      1_767_225_600_000,
+    ),
+    {
       id: 4,
-      file_name: "Zelda [study-pc slot 1].state",
-      updated_at: "2026-01-01T00:00:00Z",
-    }),
-    { id: 4, updatedAt: Date.parse("2026-01-01T00:00:00Z") },
+      updatedAt: Date.parse("2026-01-01T00:00:00Z"),
+      mtimeMs: 1_767_225_600_000,
+    },
   );
 
   // Anything else the server answers with reads as no row at all.
-  assert.equal(pushedRowFrom({ file_name: "a.state" }), null);
+  assert.equal(pushedRowFrom({ file_name: "a.state" }, 1), null);
   assert.equal(
-    pushedRowFrom({ id: 0, updated_at: "2026-01-01T00:00:00Z" }),
+    pushedRowFrom({ id: 0, updated_at: "2026-01-01T00:00:00Z" }, 1),
     null,
   );
-  assert.equal(pushedRowFrom({ id: 4 }), null);
-  assert.equal(pushedRowFrom(null), null);
-  assert.equal(pushedRowFrom("a row"), null);
+  assert.equal(pushedRowFrom({ id: 4 }, 1), null);
+  assert.equal(pushedRowFrom(null, 1), null);
+  assert.equal(pushedRowFrom("a row", 1), null);
 });
 
 test("a pushed record is read back as far as it can be, and no further", () => {
-  const one = { id: 4, updatedAt: Date.parse("2026-01-01T00:00:00Z") };
+  const one = { id: 4, updatedAt: Date.parse("2026-01-01T00:00:00Z"), mtimeMs: 5 };
   const rows = readPushedRows({
     "slot 1": one,
-    auto: { id: 7, updatedAt: 1 },
-    // Keys this module cannot name, and entries missing what it compares.
-    "slot 2": { id: 0, updatedAt: 1 },
-    "slot 3": { id: 5 },
-    "slot 4": { id: 6, updatedAt: "yesterday" },
+    // A name no restore looks a slot up under, and entries missing a fact the
+    // record is only good for when it has all of.
+    auto: { ...one, id: 7 },
+    "slot 2": { ...one, id: 0 },
+    "slot 3": { id: 5, mtimeMs: 5 },
+    "slot 4": { ...one, updatedAt: "yesterday" },
+    "slot 5": { ...one, updatedAt: 1.5 },
+    "slot 6": { id: 6, updatedAt: 1 },
     "": one,
     "not a slot": one,
-    "slot 5": null,
+    "slot 7": null,
   });
 
-  assert.deepEqual(rows, {
-    "slot 1": one,
-    auto: { id: 7, updatedAt: 1 },
-  });
+  assert.deepEqual(rows, { "slot 1": one });
   // A record parsed from JSON can carry `__proto__` as an own key, which is
   // dropped with the rest rather than becoming this object's prototype.
   assert.deepEqual(
-    readPushedRows(JSON.parse('{"__proto__": {"id": 9, "updatedAt": 1}}')),
+    readPushedRows(
+      JSON.parse('{"__proto__": {"id": 9, "updatedAt": 1, "mtimeMs": 1}}'),
+    ),
     {},
   );
   assert.deepEqual(readPushedRows([one]), {});

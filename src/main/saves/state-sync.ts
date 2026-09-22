@@ -54,6 +54,8 @@ async function upload(options: {
   emulator: string | null;
   fileName: string;
   bytes: Uint8Array;
+  /** The mtime of the file those bytes came from, for the record to carry. */
+  mtimeMs: number;
   screenshot: { fileName: string; bytes: Uint8Array } | null;
   signal: AbortSignal;
 }): Promise<{ ok: true; row: PushedRow | null } | { ok: false; detail: string }> {
@@ -85,7 +87,7 @@ async function upload(options: {
   if (response.status >= 300) {
     return { ok: false, detail: `server returned ${response.status}` };
   }
-  return { ok: true, row: pushedRowFrom(response.body) };
+  return { ok: true, row: pushedRowFrom(response.body, options.mtimeMs) };
 }
 
 export interface PushStatesOptions {
@@ -158,53 +160,63 @@ async function runPush(
   // A state too large to send did not make it either, so it counts here.
   let failed = tooLarge.length;
 
-  for (const { entry, slot } of send) {
-    if (signal.aborted) break;
+  // Recorded on the way out either way, because a cancel throws out of the send
+  // loop: rows already pushed are rows the next pull has to recognise, even when
+  // the run that pushed them was cut short.
+  try {
+    for (const { entry, slot } of send) {
+      if (signal.aborted) break;
 
-    const bytes = await readFile(join(stateDir, entry.name)).catch(() => null);
-    if (!bytes) {
-      // Written while this run was reading the directory and gone again by the
-      // time it got here, which is the emulator's business rather than a fault.
-      failed += 1;
-      continue;
-    }
-
-    const fileName = stateAssetName(base, host, slot);
-    // RomM binds a thumbnail to its state by stem, so the picture goes up as
-    // the state's own name with .png on the end.
-    const thumbnail = `${entry.name}${THUMBNAIL_SUFFIX}`;
-    const picture = pictures.has(thumbnail)
-      ? await readFile(join(stateDir, thumbnail)).catch(() => null)
-      : null;
-
-    const result = await upload({
-      serverUrl,
-      session,
-      romId,
-      emulator: options.emulator,
-      fileName,
-      bytes,
-      screenshot: picture
-        ? { fileName: `${fileName}${THUMBNAIL_SUFFIX}`, bytes: picture }
-        : null,
-      signal,
-    });
-    if (result.ok) {
-      uploaded += 1;
-      if (result.row) landed[slot] = result.row;
-      console.info(
-        `[states] rom ${romId}: sent ${slot} as ${fileName} (${entry.size} bytes)`,
+      const bytes = await readFile(join(stateDir, entry.name)).catch(
+        () => null,
       );
-    } else {
-      failed += 1;
-      console.warn(
-        `[states] rom ${romId}: could not send ${slot}, ${result.detail}`,
-      );
-    }
-  }
+      if (!bytes) {
+        // Written while this run was reading the directory and gone again by
+        // the time it got here, which is the emulator's business not a fault.
+        failed += 1;
+        continue;
+      }
 
-  if (Object.keys(landed).length > 0) {
-    await rememberPushedRows(stateDir, landed);
+      const fileName = stateAssetName(base, host, slot);
+      // RomM binds a thumbnail to its state by stem, so the picture goes up as
+      // the state's own name with .png on the end.
+      const thumbnail = `${entry.name}${THUMBNAIL_SUFFIX}`;
+      const picture = pictures.has(thumbnail)
+        ? await readFile(join(stateDir, thumbnail)).catch(() => null)
+        : null;
+
+      const result = await upload({
+        serverUrl,
+        session,
+        romId,
+        emulator: options.emulator,
+        fileName,
+        bytes,
+        mtimeMs: entry.modifiedAt,
+        screenshot: picture
+          ? { fileName: `${fileName}${THUMBNAIL_SUFFIX}`, bytes: picture }
+          : null,
+        signal,
+      });
+      if (result.ok) {
+        uploaded += 1;
+        // The automatic state is never restored, so the pull never looks a slot
+        // up under that name and there is no row of it worth keeping.
+        if (result.row && slot !== "auto") landed[slot] = result.row;
+        console.info(
+          `[states] rom ${romId}: sent ${slot} as ${fileName} (${entry.size} bytes)`,
+        );
+      } else {
+        failed += 1;
+        console.warn(
+          `[states] rom ${romId}: could not send ${slot}, ${result.detail}`,
+        );
+      }
+    }
+  } finally {
+    if (Object.keys(landed).length > 0) {
+      await rememberPushedRows(stateDir, landed);
+    }
   }
   return { uploaded, failed };
 }
@@ -546,6 +558,7 @@ async function archive(
     emulator,
     fileName,
     bytes,
+    mtimeMs: displaced.modifiedAt,
     screenshot: picture
       ? { fileName: `${fileName}${THUMBNAIL_SUFFIX}`, bytes: picture }
       : null,

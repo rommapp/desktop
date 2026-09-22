@@ -328,18 +328,25 @@ function screenshotId(screenshot: unknown): number | null {
   return id;
 }
 
-/** A row a push left in RomM: its id on the server and the stamp it carries,
- *  the pair telling this machine's own copy from one it has not written. A
- *  write to the same filename keeps the id and moves the stamp. */
+/** A row a push left in RomM: its id on the server, the stamp it carries, and
+ *  the mtime of the slot file it was pushed from. The id and the stamp tell
+ *  this machine's own copy from one it has not written -- a write to the same
+ *  filename keeps the id and moves the stamp -- and the mtime is what says the
+ *  slot still holds the bytes that were pushed, rather than a copy some other
+ *  tool has put there since. */
 export interface PushedRow {
   id: number;
   updatedAt: number;
+  mtimeMs: number;
 }
 
-/** The row an upload left, as the server reported it, or null for a body this
- *  does not read as one. Null costs the next launch one transfer, nothing
- *  else. */
-export function pushedRowFrom(body: unknown): PushedRow | null {
+/** The row an upload left, as the server reported it and the file it came from,
+ *  or null for a body this does not read as one. Null costs the next launch one
+ *  transfer, nothing else. */
+export function pushedRowFrom(
+  body: unknown,
+  mtimeMs: number,
+): PushedRow | null {
   if (typeof body !== "object" || body === null) return null;
   const { id, updated_at: stamp } = body as {
     id?: unknown;
@@ -347,7 +354,7 @@ export function pushedRowFrom(body: unknown): PushedRow | null {
   };
   if (typeof id !== "number" || !Number.isInteger(id) || id <= 0) return null;
   const at = typeof stamp === "string" ? Date.parse(stamp) : Number.NaN;
-  return Number.isFinite(at) ? { id, updatedAt: at } : null;
+  return Number.isInteger(at) ? { id, updatedAt: at, mtimeMs } : null;
 }
 
 /** The pushed rows as the file holds them, reduced to the entries worth reading.
@@ -360,17 +367,20 @@ export function readPushedRows(body: unknown): Record<string, PushedRow> {
   }
   const found: Record<string, PushedRow> = {};
   for (const [slot, entry] of Object.entries(body as Record<string, unknown>)) {
-    // Only the slots the mirror writes, which is also what keeps a key like
-    // `__proto__`, own property or not, out of the record this returns.
-    if (slotNumber(slot) === null && slot !== "auto") continue;
+    // Only the numbered slots, which are the only ones a restore looks up, and
+    // which is also what keeps a key like `__proto__`, own property or not, out
+    // of the record this returns.
+    if (slotNumber(slot) === null) continue;
     if (typeof entry !== "object" || entry === null) continue;
-    const { id, updatedAt: stamp } = entry as {
+    const { id, updatedAt: stamp, mtimeMs } = entry as {
       id?: unknown;
       updatedAt?: unknown;
+      mtimeMs?: unknown;
     };
     if (typeof id !== "number" || !Number.isInteger(id) || id <= 0) continue;
-    if (typeof stamp !== "number" || !Number.isFinite(stamp)) continue;
-    found[slot] = { id, updatedAt: stamp };
+    if (typeof stamp !== "number" || !Number.isInteger(stamp)) continue;
+    if (typeof mtimeMs !== "number" || !Number.isFinite(mtimeMs)) continue;
+    found[slot] = { id, updatedAt: stamp, mtimeMs };
   }
   return found;
 }
@@ -520,8 +530,9 @@ export function planStateRestore(options: {
   /** The names this launch's states could go by, best first, for a directory
    *  that is empty and so has nothing to demonstrate. */
   bases: readonly string[];
-  /** The rows this machine's own pushes left, by slot. A slot whose row is
-   *  among them holds what RomM has, so it is not fetched back over itself. */
+  /** The rows this machine's own pushes left, by slot. A slot still holding the
+   *  file one of them was pushed from holds what RomM has, so it is not fetched
+   *  back over itself. */
   pushed: Readonly<Record<string, PushedRow>>;
 }): StateRestore[] {
   const { remote, local, emulator } = options;
@@ -585,11 +596,15 @@ export function planStateRestore(options: {
   for (const [slot, state] of newest) {
     const displaces = onDisk.get(slot) ?? null;
     const pushed = options.pushed[slot];
+    // The slot holds RomM's copy when the row is the one this machine pushed
+    // and the file is the one it pushed that row from.
     const ours =
+      displaces !== null &&
       pushed !== undefined &&
       pushed.id === state.id &&
-      pushed.updatedAt === state.updatedAt;
-    if (displaces && (ours || state.updatedAt <= displaces.modifiedAt)) continue;
+      pushed.updatedAt === state.updatedAt &&
+      pushed.mtimeMs === displaces.modifiedAt;
+    if (ours || (displaces && state.updatedAt <= displaces.modifiedAt)) continue;
     // Always the name this launch's emulator would read, never the spelling of
     // whatever was found in the way: `base` is already the directory's own
     // spelling wherever the directory demonstrated one, so the two differ only
