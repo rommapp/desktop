@@ -6,7 +6,15 @@
 // and writes into the state directory.
 
 import { type Session } from "electron";
-import { mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { type DesktopConfig } from "../../shared/types.ts";
 import { isSignedOut } from "../auth/status.ts";
@@ -21,15 +29,24 @@ import {
   MAX_THUMBNAIL_BYTES,
   planStateRestore,
   planStates,
+  PUSHED_FILE,
+  pushedRowFrom,
+  readPushedRows,
   readStateDir,
   readStateList,
   stateAssetName,
   THUMBNAIL_SUFFIX,
+  type PushedRow,
   type StateEntry,
   type StateRestore,
 } from "./states.ts";
 
-/** Send one state, with its picture when the emulator took one. */
+/** Send one state, with its picture when the emulator took one.
+ *
+ *  `row` is the row the upload left, which is what the next pull reads to
+ *  recognise its own machine's copy. Null when the server answered with a body
+ *  this does not read as one.
+ */
 async function upload(options: {
   serverUrl: string;
   session: Session;
@@ -39,7 +56,7 @@ async function upload(options: {
   bytes: Uint8Array;
   screenshot: { fileName: string; bytes: Uint8Array } | null;
   signal: AbortSignal;
-}): Promise<{ ok: true } | { ok: false; detail: string }> {
+}): Promise<{ ok: true; row: PushedRow | null } | { ok: false; detail: string }> {
   const { serverUrl, session, romId, emulator, signal } = options;
 
   const params = new URLSearchParams({ rom_id: String(romId) });
@@ -68,7 +85,7 @@ async function upload(options: {
   if (response.status >= 300) {
     return { ok: false, detail: `server returned ${response.status}` };
   }
-  return { ok: true };
+  return { ok: true, row: pushedRowFrom(response.body) };
 }
 
 export interface PushStatesOptions {
@@ -134,6 +151,9 @@ async function runPush(
   }
 
   const pictures = new Set(after.map((entry) => entry.name));
+  // The rows this run left, by slot: what the next pull reads to tell this
+  // machine's own copy of a slot from one it has never seen.
+  const landed: Record<string, PushedRow> = {};
   let uploaded = 0;
   // A state too large to send did not make it either, so it counts here.
   let failed = tooLarge.length;
@@ -171,6 +191,7 @@ async function runPush(
     });
     if (result.ok) {
       uploaded += 1;
+      if (result.row) landed[slot] = result.row;
       console.info(
         `[states] rom ${romId}: sent ${slot} as ${fileName} (${entry.size} bytes)`,
       );
@@ -182,7 +203,47 @@ async function runPush(
     }
   }
 
+  if (Object.keys(landed).length > 0) {
+    await rememberPushedRows(stateDir, landed);
+  }
   return { uploaded, failed };
+}
+
+/** The rows this ROM's directory has recorded, or none when it has none. */
+async function readPushedFile(
+  directory: string,
+): Promise<Record<string, PushedRow>> {
+  const raw = await readFile(join(directory, PUSHED_FILE), "utf8").catch(
+    () => null,
+  );
+  if (raw === null) return {};
+  try {
+    return readPushedRows(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+}
+
+/** Record the rows this run left, so the next pull does not fetch them back.
+ *
+ *  Read and rewritten whole, through a temporary name: a record written half
+ *  way reads as one with rows missing. */
+async function rememberPushedRows(
+  directory: string,
+  landed: Record<string, PushedRow>,
+): Promise<void> {
+  const temp = join(directory, tempNameFor(PUSHED_FILE));
+  try {
+    const known = await readPushedFile(directory);
+    await mkdir(directory, { recursive: true });
+    await writeFile(temp, JSON.stringify({ ...known, ...landed }));
+    await rename(temp, join(directory, PUSHED_FILE));
+  } catch (error) {
+    await rm(temp, { force: true }).catch(() => {});
+    console.warn(
+      `[states] could not record what this run pushed, ${String(error)}`,
+    );
+  }
 }
 
 /** Whether a filesystem error is the file simply not being there, as opposed
@@ -195,7 +256,7 @@ function isMissing(error: unknown): boolean {
   );
 }
 
-/** Where a half-written transfer sits until it is complete. Leading dot, so
+/** Where a half-written file sits until it is complete. Leading dot, so
  *  nothing listing the directory reads it as a slot: `stateSlot` would call
  *  `.Game.state3.part` nothing at all, and the emulator ignores it too. */
 function tempNameFor(fileName: string): string {
@@ -365,11 +426,13 @@ async function runPull(
   // rather than after, so a launch cancelled mid-state is swept by the next one
   // instead of a sweep having to tell a dead transfer from a live one.
   await sweepOrphanedTemporaries(stateDir);
+  const pushed = await readPushedFile(stateDir);
   const plan = planStateRestore({
     remote: readStateList(response.body),
     local,
     emulator,
     bases: options.localBases,
+    pushed,
   });
   if (plan.length === 0) return { restored: 0 };
 

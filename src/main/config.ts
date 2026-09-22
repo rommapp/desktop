@@ -38,9 +38,8 @@ function emptyConfig(): DesktopConfig {
     // already knows how to do, and both fail quietly rather than failing a
     // launch, so the cost of the default being wrong is one setting away.
     syncSaves: true,
-    // On for the same reason again, and safe to be: a state is only ever sent,
-    // never fetched over a local one, and each slot keeps one row rather than
-    // growing one per run.
+    // On for the same reason again: a slot's own bytes go up before anything
+    // replaces them, and a state this machine pushed is not fetched back.
     syncStates: true,
     retroarchAutosaveSeconds: DEFAULT_RETROARCH_AUTOSAVE_SECONDS,
     logEmulatorOutput: false,
