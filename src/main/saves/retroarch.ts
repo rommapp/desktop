@@ -85,6 +85,10 @@ export interface LaunchSettings {
    *  directories to the user's own settings. */
   saveDir?: string;
   stateDir?: string;
+  /** Whether to ask RetroArch to write a picture beside each state it saves.
+   *  False and undefined both ask for nothing, which leaves the user's own
+   *  setting alone. */
+  stateThumbnails?: boolean;
 }
 
 /**
@@ -153,6 +157,16 @@ export function retroarchLaunchConfig(settings: LaunchSettings): string | null {
     lines.push(`video_fullscreen = "${fullscreen ? "true" : "false"}"`);
   }
   lines.push(...saveDirectoryLines(settings));
+
+  // The picture a mirrored state carries in RomM is the one RetroArch takes as
+  // it writes the state, and it takes none unless asked: savestate thumbnails
+  // are off by default, so a launch that says nothing sends every state up
+  // bare. Only ever turned on, never off. A launch not mirroring its states
+  // has no use for the picture, and a user who keeps thumbnails for
+  // RetroArch's own slot menu keeps them.
+  if (settings.stateThumbnails) {
+    lines.push('savestate_thumbnail_enable = "true"');
+  }
 
   if (lines.length === 0) return null;
   return [...GENERATED_HEADER, ...lines, ""].join("\n");

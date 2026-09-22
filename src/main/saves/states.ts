@@ -40,7 +40,9 @@ import { safeFileName, safeFileNameComponent } from "../safety.ts";
  */
 export const MAX_STATE_BYTES = 128 * 1024 * 1024;
 
-/** The picture RetroArch writes beside a state when thumbnails are on. */
+/** The picture RetroArch writes beside a state when thumbnails are on, which
+ *  is what the generated config asks for in `retroarch.ts`: the setting is off
+ *  by default, so without that a mirrored state never has one. */
 export const THUMBNAIL_SUFFIX = ".png";
 
 /** Whether a launch should mirror its states at all. */
