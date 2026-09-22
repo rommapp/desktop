@@ -340,6 +340,20 @@ export interface PushedRow {
   mtimeMs: number;
 }
 
+/** A record entry from its three parts, or null for a set that is not one. The
+ *  shape is checked here so the row the server reports and the row read back off
+ *  the disk are held to the same one. */
+function toPushedRow(
+  id: unknown,
+  updatedAt: unknown,
+  mtimeMs: unknown,
+): PushedRow | null {
+  if (typeof id !== "number" || !Number.isInteger(id) || id <= 0) return null;
+  if (typeof updatedAt !== "number" || !Number.isInteger(updatedAt)) return null;
+  if (typeof mtimeMs !== "number" || !Number.isFinite(mtimeMs)) return null;
+  return { id, updatedAt, mtimeMs };
+}
+
 /** The row an upload left, as the server reported it and the file it came from,
  *  or null for a body this does not read as one. Null costs the next launch one
  *  transfer, nothing else. */
@@ -352,9 +366,8 @@ export function pushedRowFrom(
     id?: unknown;
     updated_at?: unknown;
   };
-  if (typeof id !== "number" || !Number.isInteger(id) || id <= 0) return null;
   const at = typeof stamp === "string" ? Date.parse(stamp) : Number.NaN;
-  return Number.isInteger(at) ? { id, updatedAt: at, mtimeMs } : null;
+  return toPushedRow(id, at, mtimeMs);
 }
 
 /** The pushed rows as the file holds them, reduced to the entries worth reading.
@@ -377,10 +390,8 @@ export function readPushedRows(body: unknown): Record<string, PushedRow> {
       updatedAt?: unknown;
       mtimeMs?: unknown;
     };
-    if (typeof id !== "number" || !Number.isInteger(id) || id <= 0) continue;
-    if (typeof stamp !== "number" || !Number.isInteger(stamp)) continue;
-    if (typeof mtimeMs !== "number" || !Number.isFinite(mtimeMs)) continue;
-    found[slot] = { id, updatedAt: stamp, mtimeMs };
+    const row = toPushedRow(id, stamp, mtimeMs);
+    if (row) found[slot] = row;
   }
   return found;
 }
