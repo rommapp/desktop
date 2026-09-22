@@ -623,10 +623,16 @@ The name a restored state lands under is read out of the state directory rather
 than assumed, because the emulator names the state and not the shell. The launch
 offers two names of its own -- the one it pins (`-S`, or a mapping's
 `{statefile}`) and the one the emulator would derive from the content it was
-handed -- and the spelling already on disk decides between them. A name on disk
-that is neither does not, since a [disc set](#multi-disc-games) launched whole
-leaves `discs.state1` behind and a later launch of one disc would restore into
-a name that launch's emulator never reads.
+handed -- and the spelling already on disk decides between them, down to its
+case. A name on disk that is neither does not decide, since a
+[disc set](#multi-disc-games) launched whole leaves `discs.state1` behind and a
+later launch of one disc would restore into a name that launch's emulator never
+reads.
+
+Anything that might be that same file is archived first regardless, since two
+spellings of one name are one file on Windows and macOS and two on Linux: a
+backup of a file that turns out not to be in the way costs a transfer, and the
+other way round costs a state.
 
 ### Play sessions reported to RomM
 

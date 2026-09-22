@@ -105,7 +105,26 @@ export function stateSlot(name: string): string | null {
   if (!match) return null;
   const [, number, auto] = match;
   if (auto) return number ? null : "auto";
-  return `slot ${number || "0"}`;
+  return numberedSlot(number ?? "");
+}
+
+/**
+ * The one spelling of a numbered slot.
+ *
+ * Canonical because the slot string is used two ways -- as the key a local
+ * file and a remote row meet under, and as what `localStateName` turns into a
+ * filename -- and those two cannot be allowed to disagree. A padded "slot 01"
+ * and "slot 1" are one slot and one file, so if both spellings survived, a
+ * remote row keyed the padded way would miss the local file, find no slot to
+ * displace, and overwrite it without archiving it first.
+ *
+ * Null for a number too large to be exact, which is not a slot any emulator
+ * has: better no restore than one keyed on a rounded number.
+ */
+function numberedSlot(digits: string): string | null {
+  const number = Number(digits || "0");
+  if (!Number.isSafeInteger(number)) return null;
+  return `slot ${number}`;
 }
 
 /** What `safeFileName` truncates a name to, and the share of it a machine's
@@ -310,8 +329,10 @@ function screenshotId(screenshot: unknown): number | null {
  * own title ends in brackets cannot read as a slot.
  */
 export function slotFromAssetName(fileName: string): string | null {
-  const match = /\[[^[\]]*?(slot \d+|auto)\]\.state$/.exec(fileName);
-  return match?.[1] ?? null;
+  const match = /\[[^[\]]*?(?:slot (\d+)|(auto))\]\.state$/.exec(fileName);
+  if (!match) return null;
+  // Through the same canonicalisation as the name on disk, so the two meet.
+  return match[2] ? "auto" : numberedSlot(match[1] ?? "");
 }
 
 /** Whether this launch's emulator is the one that wrote the state. Compared
@@ -347,7 +368,9 @@ export function localStateName(base: string, slot: string): string | null {
  */
 function slotNumber(slot: string): number | null {
   const match = /^slot (\d+)$/.exec(slot);
-  return match ? Number(match[1]) : null;
+  if (!match) return null;
+  const number = Number(match[1]);
+  return Number.isSafeInteger(number) ? number : null;
 }
 
 /**
@@ -394,7 +417,13 @@ export function stateBaseIn(
   // authoritative without a name from a different content choice becoming so:
   // a whole-set launch leaves "discs.state1" behind, and restoring into it for
   // a launch that boots one disc puts the state where nothing reads it.
-  if (inUse && (offered.length === 0 || offered.includes(inUse))) return inUse;
+  // Compared without regard to case, and the directory's own spelling is what
+  // is returned: a name differing from a candidate only in case is that
+  // candidate, spelled the way the emulator actually spelled it.
+  const agrees =
+    offered.length === 0 ||
+    offered.some((base) => base.toLowerCase() === inUse?.toLowerCase());
+  if (inUse && agrees) return inUse;
   return offered[0] ?? inUse ?? null;
 }
 
@@ -402,10 +431,11 @@ export function stateBaseIn(
 export interface StateRestore {
   state: RemoteState;
   slot: string;
-  /** The file inside the state directory it lands in. */
+  /** The file inside the state directory it lands in, which is the one this
+   *  launch's emulator reads for the slot. */
   fileName: string;
-  /** The local state it replaces, which goes up before it is written over.
-   *  Null when the slot was empty. */
+  /** The local state that may be that same file, which goes up before it is
+   *  written over. Null when nothing is in the way. */
   displaces: StateEntry | null;
 }
 
@@ -437,13 +467,18 @@ export function planStateRestore(options: {
   // pinned none and boots content the shell cannot name either.
   if (base === null) return [];
 
-  // What this launch's emulator would read for each slot, and only that: a
-  // state left under a different content's name is that launch's, and writing
-  // over it would cost a state nothing here even reads.
+  // What a restore of each slot might write over: the file whose name is the
+  // one this launch would write, compared without regard to case.
   //
-  // Matched without regard to case, with the file's own spelling kept for the
-  // write. On Windows and macOS two spellings are one file, so reading the slot
-  // as empty is how it gets overwritten without being archived first.
+  // Loose on purpose, and only for this question. On Windows and macOS two
+  // spellings are one file, so an exact test would read the slot as empty and
+  // overwrite it without archiving it first; on Linux they are two files, and
+  // archiving one that turns out not to be in the way costs a transfer where
+  // the other way round costs a state. Where to write is decided separately,
+  // and exactly, below.
+  //
+  // A state left under a different content's name is not in the way at all: it
+  // is that launch's, and this one neither reads nor touches it.
   const onDisk = new Map<string, StateEntry>();
   for (const entry of local) {
     const slot = stateSlot(entry.name);
@@ -473,9 +508,11 @@ export function planStateRestore(options: {
   for (const [slot, state] of newest) {
     const displaces = onDisk.get(slot) ?? null;
     if (displaces && state.updatedAt <= displaces.modifiedAt) continue;
-    // The file that is already the slot when there is one, so a restore lands
-    // where the emulator is looking rather than beside it.
-    const fileName = displaces?.name ?? localStateName(base, slot);
+    // Always the name this launch's emulator would read, never the spelling of
+    // whatever was found in the way: `base` is already the directory's own
+    // spelling wherever the directory demonstrated one, so the two differ only
+    // where the file in the way is not the file this launch reads.
+    const fileName = localStateName(base, slot);
     if (!fileName) continue;
     restore.push({ state, slot, fileName, displaces });
   }

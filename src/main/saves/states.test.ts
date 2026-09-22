@@ -302,10 +302,10 @@ test("a slot's own file is the one this launch's emulator would read", () => {
   assert.equal(plan[0]?.displaces, null);
 });
 
-test("a slot spelled differently is still the same file to displace", () => {
-  // On Windows and macOS these are one file, so reading the slot as empty is
-  // how it gets overwritten without being archived first. The file's own
-  // spelling is what gets written.
+test("a slot spelled differently is the emulator's own spelling of it", () => {
+  // The directory demonstrated the case, so that is the name written and the
+  // file in the way. On Windows and macOS the two spellings are one file
+  // anyway; on Linux this is the one the emulator has been using.
   const local = entry("zelda.state1", Date.parse("2025-12-01T00:00:00Z"));
   const plan = planStateRestore({
     remote: [remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z")],
@@ -316,6 +316,52 @@ test("a slot spelled differently is still the same file to displace", () => {
 
   assert.equal(plan[0]?.fileName, "zelda.state1");
   assert.deepEqual(plan[0]?.displaces, local);
+});
+
+test("a file in the way is archived even where it is not the name written", () => {
+  // Nothing in the directory demonstrates a spelling for slot 1, so the
+  // launch's own name is written -- and the file that may be that same file on
+  // a case-insensitive filesystem still goes up first. Archiving one that
+  // turns out not to be in the way costs a transfer; the other way round
+  // costs a state.
+  const local = entry("zelda.state1", Date.parse("2025-12-01T00:00:00Z"));
+  const plan = planStateRestore({
+    remote: [remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z")],
+    local: [local, entry("Zelda.state4", Date.parse("2026-06-01T00:00:00Z"))],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  });
+
+  assert.equal(plan[0]?.fileName, "Zelda.state1");
+  assert.deepEqual(plan[0]?.displaces, local);
+});
+
+test("a padded slot is the same slot as the plain one", () => {
+  // Both spell one slot and one file. Keyed apart, a padded row would find no
+  // local file to displace and overwrite it without archiving it first.
+  assert.equal(stateSlot("Game.state01"), "slot 1");
+  assert.equal(slotFromAssetName("Game [pc slot 01].state"), "slot 1");
+  assert.equal(localStateName("Game", "slot 01"), "Game.state1");
+
+  const local = entry("Game.state1", Date.parse("2025-12-01T00:00:00Z"));
+  const plan = planStateRestore({
+    remote: [remote("Game [laptop slot 01].state", "2026-01-01T00:00:00Z")],
+    local: [local],
+    emulator: "snes9x",
+    bases: ["Game"],
+  });
+
+  assert.equal(plan[0]?.fileName, "Game.state1");
+  assert.deepEqual(plan[0]?.displaces, local);
+});
+
+test("a slot number too large to be exact is not a slot", () => {
+  // "slot 99999999999999999999" rounds, and a key derived from a rounded
+  // number is a key that meets the wrong file.
+  const huge = "9".repeat(20);
+  assert.equal(stateSlot(`Game.state${huge}`), null);
+  assert.equal(slotFromAssetName(`Game [pc slot ${huge}].state`), null);
+  assert.equal(localStateName("Game", `slot ${huge}`), null);
 });
 
 test("a slot holding something newer is left alone", () => {
