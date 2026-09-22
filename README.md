@@ -547,8 +547,9 @@ A state goes up with the picture RetroArch takes as it writes it. RetroArch
 takes one only when savestate thumbnails are on, and they are off by default,
 so the built-in RetroArch launch asks for them in its generated config whenever
 it is mirroring that launch's states. It asks only for that launch, and never
-asks for them to be turned off. A custom mapping gets no generated config, so
-there the picture goes up if you have thumbnails switched on yourself.
+asks for them to be turned off. Only that path writes a generated config, so on
+a platform answered by a mapping (one you wrote, or a detected standalone
+emulator) the picture goes up if you have thumbnails switched on yourself.
 
 Only the slots a run actually wrote are sent, and anything over 128 MiB is
 logged rather than sent: a state and the request framing it are both in memory

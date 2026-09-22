@@ -85,8 +85,9 @@ export interface LaunchSettings {
    *  directories to the user's own settings. */
   saveDir?: string;
   stateDir?: string;
-  /** Whether to ask for the picture RetroArch files beside a state. False and
-   *  undefined both ask for nothing, which leaves the user's setting alone. */
+  /** Whether to ask RetroArch to write a picture beside each state it saves.
+   *  False and undefined both ask for nothing, which leaves the user's own
+   *  setting alone. */
   stateThumbnails?: boolean;
 }
 
