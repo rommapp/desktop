@@ -303,9 +303,11 @@ export interface DesktopConfig {
    *  Each slot lands under a name of its own, so a run rewrites that slot
    *  rather than adding to a pile, and before a launch the states RomM holds
    *  for the emulator it is about to run come back into the slots they were
-   *  written from. Nothing is deleted, and a slot holding something newer than
-   *  RomM's copy keeps it: a state belongs to the core and build that wrote it,
-   *  so only a state that core wrote is ever offered to it. */
+   *  written from -- other than the copy this machine's own last run sent,
+   *  which the slot already holds. Nothing is deleted, and a slot holding
+   *  something newer than RomM's copy keeps it: a state belongs to the core and
+   *  build that wrote it, so only a state that core wrote is ever offered to
+   *  it. */
   syncStates: boolean;
   /** How often the built-in RetroArch launch is asked to write the save to
    *  disk, in seconds. RetroArch otherwise writes it once, when the content

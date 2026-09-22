@@ -177,8 +177,7 @@ export async function installCore({
     } catch (error) {
       await rm(temp, { force: true });
       // Losing the rename to a concurrent launch is success, not failure:
-      // Windows refuses to rename onto an existing file, and that file is the
-      // same core.
+      // Windows fails a rename onto a core the emulator already has loaded.
       if (existsSync(target)) return { name: core, path: target };
       throw new LaunchError(
         "download-failed",

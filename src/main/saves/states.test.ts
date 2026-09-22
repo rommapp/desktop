@@ -8,11 +8,15 @@ import {
   MAX_STATE_BYTES,
   planStateRestore,
   planStates,
+  PUSHED_FILE,
+  pushedRowFrom,
+  readPushedRows,
   readStateList,
   slotFromAssetName,
   stateAssetName,
   stateLoadsIn,
   stateSlot,
+  type PushedRow,
   type RemoteState,
   type StateEntry,
 } from "./states.ts";
@@ -36,6 +40,8 @@ test("what is not a slot is not mirrored", () => {
   assert.equal(stateSlot("Game.state1.png"), null);
   assert.equal(stateSlot("Game.srm"), null);
   assert.equal(stateSlot("Game.state1.auto"), null);
+  // The mirror's own record of what it has pushed sits there too.
+  assert.equal(stateSlot(PUSHED_FILE), null);
 });
 
 test("the emulator naming the file its own way is still this game's slot", () => {
@@ -151,6 +157,15 @@ function remote(
   };
 }
 
+/** The record entry a push leaves for a slot: the row it got back, and the
+ *  file it pushed. */
+function pushedEntry(
+  file: StateEntry,
+  row: Pick<PushedRow, "id" | "updatedAt">,
+): PushedRow {
+  return { id: row.id, updatedAt: row.updatedAt, mtimeMs: file.modifiedAt };
+}
+
 test("the slot comes back out of the name the mirror wrote", () => {
   assert.equal(slotFromAssetName("Zelda [study-pc slot 3].state"), "slot 3");
   assert.equal(slotFromAssetName("Zelda [study-pc auto].state"), "auto");
@@ -191,6 +206,7 @@ test("an empty slot is filled from the name the launch pinned", () => {
     local: [],
     emulator: "snes9x",
     bases: ["Zelda (USA)", "discs"],
+    pushed: {},
   });
 
   assert.equal(plan.length, 1);
@@ -207,6 +223,7 @@ test("a directory that already names this game's states wins over the guess", ()
     local: [entry("discs.state1", 1_000)],
     emulator: "snes9x",
     bases: ["Zelda (USA)", "discs"],
+    pushed: {},
   });
 
   assert.equal(plan[0]?.fileName, "discs.state2");
@@ -221,6 +238,7 @@ test("a name left by a different content choice does not decide", () => {
     local: [entry("discs.state1", 1_000)],
     emulator: "snes9x",
     bases: ["Disc 2"],
+    pushed: {},
   });
 
   assert.equal(plan[0]?.fileName, "Disc 2.state2");
@@ -280,6 +298,7 @@ test("an archived state is not a candidate the restore can pick", () => {
     local: [],
     emulator: "snes9x",
     bases: ["Zelda"],
+    pushed: {},
   });
 
   assert.equal(plan.length, 1);
@@ -295,6 +314,7 @@ test("a slot's own file is the one this launch's emulator would read", () => {
     local: [entry("discs.state2", Date.parse("2026-06-01T00:00:00Z"))],
     emulator: "snes9x",
     bases: ["Disc 2"],
+    pushed: {},
   });
 
   assert.equal(plan.length, 1);
@@ -312,6 +332,7 @@ test("a slot spelled differently is the emulator's own spelling of it", () => {
     local: [local],
     emulator: "snes9x",
     bases: ["Zelda"],
+    pushed: {},
   });
 
   assert.equal(plan[0]?.fileName, "zelda.state1");
@@ -330,6 +351,7 @@ test("a file in the way is archived even where it is not the name written", () =
     local: [local, entry("Zelda.state4", Date.parse("2026-06-01T00:00:00Z"))],
     emulator: "snes9x",
     bases: ["Zelda"],
+    pushed: {},
   });
 
   assert.equal(plan[0]?.fileName, "Zelda.state1");
@@ -352,6 +374,7 @@ test("the exact spelling is the one at risk, whatever order it is found in", () 
       local: [exact, other],
       emulator: "snes9x",
       bases: ["Zelda"],
+      pushed: {},
     }),
     [],
   );
@@ -363,6 +386,7 @@ test("the exact spelling is the one at risk, whatever order it is found in", () 
     local: [exact, other],
     emulator: "snes9x",
     bases: ["Zelda"],
+    pushed: {},
   });
   assert.equal(plan[0]?.fileName, "Zelda.state1");
   assert.deepEqual(plan[0]?.displaces, exact);
@@ -384,6 +408,7 @@ test("spellings that all differ in case leave nothing in the way", () => {
     ],
     emulator: "snes9x",
     bases: ["Zelda"],
+    pushed: {},
   });
 
   assert.equal(plan[0]?.fileName, "Zelda.state1");
@@ -399,6 +424,7 @@ test("one spelling differing in case is still the file the write reaches", () =>
     local: [entry("Playlist.state2", Date.parse("2026-01-01T00:00:00Z")), only],
     emulator: "snes9x",
     bases: ["Zelda"],
+    pushed: {},
   });
 
   assert.equal(plan[0]?.fileName, "Zelda.state1");
@@ -418,6 +444,7 @@ test("a padded slot is the same slot as the plain one", () => {
     local: [local],
     emulator: "snes9x",
     bases: ["Game"],
+    pushed: {},
   });
 
   assert.equal(plan[0]?.fileName, "Game.state1");
@@ -439,6 +466,7 @@ test("a slot holding something newer is left alone", () => {
     local: [entry("Zelda.state1", Date.parse("2026-02-01T00:00:00Z"))],
     emulator: "snes9x",
     bases: ["Zelda"],
+    pushed: {},
   });
 
   assert.deepEqual(plan, []);
@@ -451,11 +479,119 @@ test("a slot holding something older is replaced, and its own bytes go up", () =
     local: [older],
     emulator: "snes9x",
     bases: ["Zelda"],
+    pushed: {},
   });
 
   assert.equal(plan.length, 1);
   assert.equal(plan[0]?.fileName, "Zelda.state1");
   assert.deepEqual(plan[0]?.displaces, older);
+});
+
+test("a slot holding this machine's own copy is left alone", () => {
+  const local = entry("Zelda.state1", Date.parse("2026-01-01T00:00:00Z"));
+  const own = remote("Zelda [study-pc slot 1].state", "2026-01-01T00:00:09Z", {
+    id: 12,
+  });
+  const options = {
+    remote: [own],
+    local: [local],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+  };
+
+  assert.deepEqual(
+    planStateRestore({
+      ...options,
+      pushed: { "slot 1": pushedEntry(local, own) },
+    }),
+    [],
+  );
+
+  // Without the record it is a row newer than the file, which is the loop.
+  const alone = planStateRestore({ ...options, pushed: {} });
+  assert.equal(alone.length, 1);
+  assert.deepEqual(alone[0]?.displaces, local);
+});
+
+test("a slot rewritten behind the mirror is not this machine's copy", () => {
+  // The record says the slot holds the bytes that were pushed; an older copy put
+  // there by something else no longer does, so freshness has to replace it.
+  const was = entry("Zelda.state1", Date.parse("2026-01-01T00:00:00Z"));
+  const now = entry("Zelda.state1", Date.parse("2025-06-01T00:00:00Z"));
+  const own = remote("Zelda [study-pc slot 1].state", "2026-01-01T00:00:09Z", {
+    id: 12,
+  });
+  const plan = planStateRestore({
+    remote: [own],
+    local: [now],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+    pushed: { "slot 1": pushedEntry(was, own) },
+  });
+
+  assert.equal(plan.length, 1);
+  assert.deepEqual(plan[0]?.displaces, now);
+});
+
+test("only the row this machine pushed for a slot is its own", () => {
+  const local = entry("Zelda.state1", Date.parse("2025-12-01T00:00:00Z"));
+  const pushed = {
+    "slot 1": pushedEntry(local, {
+      id: 12,
+      updatedAt: Date.parse("2025-12-01T00:00:09Z"),
+    }),
+  };
+
+  // Two machines can read as one name, so the stamp moving has to count too.
+  const rewritten = remote(
+    "Zelda [study-pc slot 1].state",
+    "2026-02-01T00:00:00Z",
+    { id: 12 },
+  );
+  assert.equal(
+    planStateRestore({
+      remote: [rewritten],
+      local: [local],
+      emulator: "snes9x",
+      bases: ["Zelda"],
+      pushed,
+    }).length,
+    1,
+  );
+
+  // Another machine's name for the slot is another row, which is the one case
+  // the record must not suppress.
+  const theirs = remote("Zelda [laptop slot 1].state", "2026-01-01T00:00:00Z", {
+    id: 13,
+  });
+  const plan = planStateRestore({
+    remote: [theirs],
+    local: [local],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+    pushed,
+  });
+  assert.equal(plan.length, 1);
+  assert.deepEqual(plan[0]?.displaces, local);
+});
+
+test("an empty slot is filled from this machine's own row as well", () => {
+  // The record says the row is this machine's, not that the slot holds it.
+  const was = entry("Zelda.state2", Date.parse("2026-01-01T00:00:00Z"));
+  const own = remote("Zelda [study-pc slot 2].state", "2026-01-01T00:00:09Z", {
+    id: 12,
+  });
+  const plan = planStateRestore({
+    remote: [own],
+    local: [],
+    emulator: "snes9x",
+    bases: ["Zelda"],
+    pushed: { "slot 2": pushedEntry(was, own) },
+  });
+
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0]?.fileName, "Zelda.state2");
+  assert.equal(plan[0]?.displaces, null);
 });
 
 test("one state per slot, the most recently written of them", () => {
@@ -469,6 +605,7 @@ test("one state per slot, the most recently written of them", () => {
     local: [],
     emulator: "snes9x",
     bases: ["Zelda"],
+    pushed: {},
   });
 
   assert.equal(plan.length, 1);
@@ -481,6 +618,7 @@ test("the automatic state is never restored", () => {
     local: [],
     emulator: "snes9x",
     bases: ["Zelda"],
+    pushed: {},
   });
 
   assert.deepEqual(plan, []);
@@ -499,6 +637,7 @@ test("another core's states and oversized ones are not brought down", () => {
     local: [],
     emulator: "snes9x",
     bases: ["Zelda"],
+    pushed: {},
   });
 
   assert.deepEqual(plan, []);
@@ -510,6 +649,7 @@ test("a launch with no name to give its states restores none", () => {
     local: [],
     emulator: "snes9x",
     bases: [],
+    pushed: {},
   });
 
   assert.deepEqual(plan, []);
@@ -556,4 +696,63 @@ test("a malformed state list costs the rows it broke, not the launch", () => {
   assert.equal(rows[0]?.screenshotId, 9);
   assert.equal(rows[0]?.updatedAt, Date.parse("2026-01-01T00:00:00Z"));
   assert.deepEqual(readStateList("not a list"), []);
+});
+
+test("the row an upload left is read off the answer it came with", () => {
+  // The stamp is as the server serialises it, offset and all.
+  assert.deepEqual(
+    pushedRowFrom(
+      {
+        id: 4,
+        file_name: "Zelda [study-pc slot 1].state",
+        updated_at: "2026-01-01T00:00:00+00:00",
+      },
+      1_767_225_600_000,
+    ),
+    {
+      id: 4,
+      updatedAt: Date.parse("2026-01-01T00:00:00Z"),
+      mtimeMs: 1_767_225_600_000,
+    },
+  );
+
+  // Anything else the server answers with reads as no row at all.
+  assert.equal(pushedRowFrom({ file_name: "a.state" }, 1), null);
+  assert.equal(
+    pushedRowFrom({ id: 0, updated_at: "2026-01-01T00:00:00Z" }, 1),
+    null,
+  );
+  assert.equal(pushedRowFrom({ id: 4 }, 1), null);
+  assert.equal(pushedRowFrom(null, 1), null);
+  assert.equal(pushedRowFrom("a row", 1), null);
+});
+
+test("a pushed record is read back as far as it can be, and no further", () => {
+  const one = { id: 4, updatedAt: Date.parse("2026-01-01T00:00:00Z"), mtimeMs: 5 };
+  const rows = readPushedRows({
+    "slot 1": one,
+    // A name no restore looks a slot up under, and entries missing a fact the
+    // record is only good for when it has all of.
+    auto: { ...one, id: 7 },
+    "slot 2": { ...one, id: 0 },
+    "slot 3": { id: 5, mtimeMs: 5 },
+    "slot 4": { ...one, updatedAt: "yesterday" },
+    "slot 5": { ...one, updatedAt: 1.5 },
+    "slot 6": { id: 6, updatedAt: 1 },
+    "": one,
+    "not a slot": one,
+    "slot 7": null,
+  });
+
+  assert.deepEqual(rows, { "slot 1": one });
+  // A record parsed from JSON can carry `__proto__` as an own key, which is
+  // dropped with the rest rather than becoming this object's prototype.
+  assert.deepEqual(
+    readPushedRows(
+      JSON.parse('{"__proto__": {"id": 9, "updatedAt": 1, "mtimeMs": 1}}'),
+    ),
+    {},
+  );
+  assert.deepEqual(readPushedRows([one]), {});
+  assert.deepEqual(readPushedRows("not a record"), {});
 });

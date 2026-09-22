@@ -22,9 +22,9 @@
 // destroying each other's, and a state from the wrong machine is worse than no
 // state at all. That same name is what the restore reads the slot back out of.
 //
-// Two things decide whether a state comes down, and both are strict, because a
-// state belongs to the core and the build that wrote it, and one loaded into
-// the wrong core crashes rather than merely disagreeing:
+// Whether a state comes down turns on strict tests, because a state belongs to
+// the core and the build that wrote it, and one loaded into the wrong core
+// crashes rather than merely disagreeing:
 //
 //   - the emulator recorded on it is the one this launch runs. A state naming
 //     no emulator is nobody's rather than everybody's, and stays put.
@@ -37,6 +37,12 @@
 // overwritten. The slot's own bytes go up first, under an archive name no
 // restore will pick again, and a slot whose upload does not land is left
 // alone -- the same rule the save pull follows, for the same reason.
+//
+// Nor does a row this machine's own push left come back down. The upload runs
+// after the exit that wrote the state, so RomM's stamp on it is always later
+// than the local file's, and freshness alone would fetch those bytes straight
+// back at every launch. A push records the row it left, beside the slots, and a
+// row that record names is this machine's copy of what the slot holds.
 
 import { readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -66,6 +72,11 @@ export const THUMBNAIL_SUFFIX = ".png";
  *  game is kilobytes; this is only here so a row claiming otherwise is refused
  *  before the transfer rather than after it. */
 export const MAX_THUMBNAIL_BYTES = 16 * 1024 * 1024;
+
+/** Where a push records the rows it left, inside the state directory: this
+ *  ROM's and this directory's own, so a second save data root has a record of
+ *  its own. The leading dot keeps it out of the emulator's listing. */
+export const PUSHED_FILE = ".pushed-rows.json";
 
 /** Whether a launch should mirror its states at all. */
 export function stateSyncEnabled(config: DesktopConfig): boolean {
@@ -317,6 +328,70 @@ function screenshotId(screenshot: unknown): number | null {
   return id;
 }
 
+/** A row a push left in RomM: its id, the stamp it carries, and the mtime of the
+ *  slot file it was pushed from. The id and stamp name the row; the mtime is what
+ *  says the slot still holds the bytes that were pushed, rather than a copy some
+ *  other tool has put there since. */
+export interface PushedRow {
+  id: number;
+  updatedAt: number;
+  mtimeMs: number;
+}
+
+/** A record entry from its three parts, or null for a set that is not one. */
+function toPushedRow(
+  id: unknown,
+  updatedAt: unknown,
+  mtimeMs: unknown,
+): PushedRow | null {
+  if (typeof id !== "number" || !Number.isInteger(id) || id <= 0) return null;
+  if (typeof updatedAt !== "number" || !Number.isInteger(updatedAt)) return null;
+  if (typeof mtimeMs !== "number" || !Number.isFinite(mtimeMs)) return null;
+  return { id, updatedAt, mtimeMs };
+}
+
+/** The row an upload left, as the server reported it and the file it came from,
+ *  or null for a body this does not read as one. Null costs the next launch one
+ *  transfer, nothing else. */
+export function pushedRowFrom(
+  body: unknown,
+  mtimeMs: number,
+): PushedRow | null {
+  if (typeof body !== "object" || body === null) return null;
+  const { id, updated_at: stamp } = body as {
+    id?: unknown;
+    updated_at?: unknown;
+  };
+  const at = typeof stamp === "string" ? Date.parse(stamp) : Number.NaN;
+  return toPushedRow(id, at, mtimeMs);
+}
+
+/** The pushed rows as the file holds them, reduced to the entries worth reading.
+ *  Read defensively like the state list: it is a file on the user's disk,
+ *  written by whichever version of the shell last pushed, so an entry that does
+ *  not read is dropped rather than trusted. */
+export function readPushedRows(body: unknown): Record<string, PushedRow> {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return {};
+  }
+  const found: Record<string, PushedRow> = {};
+  for (const [slot, entry] of Object.entries(body as Record<string, unknown>)) {
+    // Only the numbered slots, which are the only ones a restore looks up, and
+    // which is also what keeps a key like `__proto__`, own property or not, out
+    // of the record this returns.
+    if (slotNumber(slot) === null) continue;
+    if (typeof entry !== "object" || entry === null) continue;
+    const { id, updatedAt: stamp, mtimeMs } = entry as {
+      id?: unknown;
+      updatedAt?: unknown;
+      mtimeMs?: unknown;
+    };
+    const row = toPushedRow(id, stamp, mtimeMs);
+    if (row) found[slot] = row;
+  }
+  return found;
+}
+
 /**
  * The slot a mirrored state's name carries, or null when it carries none.
  *
@@ -448,9 +523,11 @@ export interface StateRestore {
  *
  * A slot with nothing on disk is filled outright. A slot holding something is
  * filled only when RomM's copy is newer, which is the one judgement here that
- * rests on two clocks agreeing. Neither way round loses a state: the local
- * bytes go up before they are replaced, so a skewed clock costs a transfer and
- * an extra row, not a savestate.
+ * rests on two clocks agreeing, and never when that copy is the row this
+ * machine's own push left: the push is what put it there, and the slot holds
+ * those bytes already. Neither way round loses a state: the local bytes go up
+ * before they are replaced, so a skewed clock costs a transfer and an extra
+ * row, not a savestate.
  */
 export function planStateRestore(options: {
   remote: readonly RemoteState[];
@@ -460,6 +537,10 @@ export function planStateRestore(options: {
   /** The names this launch's states could go by, best first, for a directory
    *  that is empty and so has nothing to demonstrate. */
   bases: readonly string[];
+  /** The rows this machine's own pushes left, by slot. A slot still holding the
+   *  file one of them was pushed from holds what RomM has, so it is not fetched
+   *  back over itself. */
+  pushed: Readonly<Record<string, PushedRow>>;
 }): StateRestore[] {
   const { remote, local, emulator } = options;
   const base = stateBaseIn(local, options.bases);
@@ -521,7 +602,19 @@ export function planStateRestore(options: {
   const restore: StateRestore[] = [];
   for (const [slot, state] of newest) {
     const displaces = onDisk.get(slot) ?? null;
-    if (displaces && state.updatedAt <= displaces.modifiedAt) continue;
+    const pushed = options.pushed[slot];
+    // The slot holds RomM's copy when the row is the one this machine pushed
+    // and the file is the one it pushed that row from. A write from somewhere
+    // else inside the same second ties on the stamp and reads as this machine's
+    // too, which is the one case here that leaves a slot as it found it; the
+    // stamp is second-resolution, so the two cannot be told apart.
+    const ours =
+      displaces !== null &&
+      pushed !== undefined &&
+      pushed.id === state.id &&
+      pushed.updatedAt === state.updatedAt &&
+      pushed.mtimeMs === displaces.modifiedAt;
+    if (ours || (displaces && state.updatedAt <= displaces.modifiedAt)) continue;
     // Always the name this launch's emulator would read, never the spelling of
     // whatever was found in the way: `base` is already the directory's own
     // spelling wherever the directory demonstrated one, so the two differ only
