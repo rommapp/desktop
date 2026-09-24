@@ -4,9 +4,13 @@
 // `compute_content_hash` is `hashlib.md5(usedforsecurity=False).hexdigest()`
 // over the raw bytes of anything that is not a zip, and a `.srm` never is. The
 // shell has to produce the same digest for the same bytes or every negotiate
-// would read as a conflict, so this is md5 over the file and nothing else. The
-// zip branch the server also has is deliberately not reproduced, because the
-// only file this ever hashes is the one an emulator writes.
+// would read as a conflict, so a file an emulator writes is md5 over its bytes
+// and nothing else.
+//
+// A zip is the exception on the server, and a standalone emulator's save set
+// travels as one: `hash_zip_contents` digests the entries rather than the
+// archive, so two archives of the same files compare equal however they were
+// compressed. `zipContentHash` reproduces that from the files themselves.
 
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -39,4 +43,32 @@ export async function hashFile(path: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/** Order two names the way Python's `sorted` does: by code point. UTF-16 code
+ *  units disagree for anything past U+FFFF, which sorts below U+E000 there. */
+function byCodePoint(a: string, b: string): number {
+  const left = [...a];
+  const right = [...b];
+  for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+    const difference =
+      left[index]!.codePointAt(0)! - right[index]!.codePointAt(0)!;
+    if (difference !== 0) return difference;
+  }
+  return left.length - right.length;
+}
+
+/**
+ * The digest RomM's `hash_zip_contents` gives an archive of these files.
+ *
+ * The md5 of every file's `name:md5` line, sorted by name and joined with
+ * newlines. Directory entries are left out there, and never passed here.
+ */
+export function zipContentHash(
+  files: readonly { name: string; contents: Uint8Array }[],
+): string {
+  const lines = [...files]
+    .sort((a, b) => byCodePoint(a.name, b.name))
+    .map((file) => `${file.name}:${md5Hex(file.contents)}`);
+  return md5Hex(new TextEncoder().encode(lines.join("\n")));
 }

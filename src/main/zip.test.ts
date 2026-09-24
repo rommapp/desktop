@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { crc32, deflateRawSync } from "node:zlib";
-import { ZipError, extractZipEntry, listZipEntries } from "./zip.ts";
+import {
+  ZipError,
+  extractZipEntry,
+  listZipEntries,
+  readZipFiles,
+  writeZip,
+} from "./zip.ts";
 
 // Built by Python's zipfile rather than by this module's own writer, so the
 // reader is checked against an independent implementation of the format.
@@ -170,4 +176,93 @@ test("still reads an archive at the size limit", () => {
   const body = Buffer.alloc(1024, 7);
   const archive = buildZip(CORE_NAME, body);
   assert.equal(extractZipEntry(archive, CORE_NAME, 1024).length, 1024);
+});
+
+const SAVE_LIMITS = { maxEntries: 64, maxTotalBytes: 1024 * 1024 };
+
+/** A directory entry and a file inside it, built by Python's zipfile. */
+const WITH_DIRECTORY =
+  "UEsDBBQAAAAAAMVjNF0AAAAAAAAAAAAAAAAHAAAAQ2FyZCBBL1BLAwQUAAAACADFYzRdTc4sdwgAAAA8AAAAFwAAAENhcmQgQS8wMS1HQUxFLXNhdmUuZ2NpS0/OTCcXAQBQSwECFAMUAAAAAADFYzRdAAAAAAAAAAAAAAAABwAAAAAAAAAAAAAAgAEAAAAAQ2FyZCBBL1BLAQIUAxQAAAAIAMVjNF1Nzix3CAAAADwAAAAXAAAAAAAAAAAAAACAASUAAABDYXJkIEEvMDEtR0FMRS1zYXZlLmdjaVBLBQYAAAAAAgACAHoAAABiAAAAAAA=";
+
+/** One entry whose unix mode says symlink, pointing at /etc/passwd. */
+const SYMLINK =
+  "UEsDBBQAAAAAAAAAIQAKuR8pCwAAAAsAAAAEAAAAbGluay9ldGMvcGFzc3dkUEsBAhQDFAAAAAAAAAAhAAq5HykLAAAACwAAAAQAAAAAAAAAAAAAAP+hAAAAAGxpbmtQSwUGAAAAAAEAAQAyAAAALQAAAAAA";
+
+test("a Python-built archive reads as its files, without the directory entry", () => {
+  const files = readZipFiles(
+    Buffer.from(WITH_DIRECTORY, "base64"),
+    SAVE_LIMITS,
+  );
+  assert.deepEqual(
+    files.map((file) => [file.name, file.contents.toString()]),
+    [["Card A/01-GALE-save.gci", "gci".repeat(20)]],
+  );
+  // Local time, as zip tools write it.
+  assert.equal(
+    files[0]?.modifiedAt,
+    new Date(2026, 8, 20, 12, 30, 10).getTime(),
+  );
+});
+
+test("a symlink entry is refused rather than read as a file", () => {
+  assert.throws(
+    () => readZipFiles(Buffer.from(SYMLINK, "base64"), SAVE_LIMITS),
+    (error: unknown) =>
+      error instanceof ZipError && /symlink/.test(error.message),
+  );
+});
+
+test("written files read back with their names, bytes and times", () => {
+  const modifiedAt = new Date(2026, 0, 2, 3, 4, 6).getTime();
+  const files = [
+    // Compressible, so it is deflated.
+    {
+      name: "GC/USA/Card A/save.gci",
+      contents: Buffer.alloc(8192, 7),
+      modifiedAt,
+    },
+    // Random-looking and tiny, so storing it wins.
+    {
+      name: "Wii/data/bänner.bin",
+      contents: Buffer.from([9, 200, 3]),
+      modifiedAt,
+    },
+    { name: "empty", contents: Buffer.alloc(0), modifiedAt },
+  ];
+  const archive = writeZip(files);
+  assert.ok(archive.length < 8192, "the compressible entry was deflated");
+  assert.deepEqual(readZipFiles(archive, SAVE_LIMITS), files);
+  assert.deepEqual(
+    listZipEntries(archive),
+    files.map((file) => file.name),
+  );
+});
+
+test("an empty archive is still a valid one", () => {
+  assert.deepEqual(readZipFiles(writeZip([]), SAVE_LIMITS), []);
+});
+
+test("an archive past the entry limit is refused before anything is inflated", () => {
+  const files = Array.from({ length: 3 }, (_, index) => ({
+    name: `f${index}`,
+    contents: Buffer.from("x"),
+    modifiedAt: Date.now(),
+  }));
+  assert.throws(
+    () => readZipFiles(writeZip(files), { maxEntries: 2, maxTotalBytes: 1024 }),
+    ZipError,
+  );
+});
+
+test("the byte budget covers the whole archive, not each entry", () => {
+  const files = ["a", "b", "c"].map((name) => ({
+    name,
+    contents: Buffer.alloc(400, 1),
+    modifiedAt: Date.now(),
+  }));
+  // Each entry fits on its own; the third does not fit in what is left.
+  assert.throws(
+    () => readZipFiles(writeZip(files), { maxEntries: 8, maxTotalBytes: 1000 }),
+    ZipError,
+  );
 });

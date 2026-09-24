@@ -1,0 +1,159 @@
+// A standalone emulator's saves, looked at around a launch and not yet moved.
+//
+// Moving a save set means knowing three things at once: the emulator's user
+// folder on this machine, which files in it are this game's, and whether the
+// id RomM read out of the ROM names those files the way the emulator does.
+// Each has been worked out from documentation and defaults rather than from a
+// real install, so before anything is written into an emulator's folder this
+// says, in the log, what each one came to: where the saves are, what RomM's
+// save target selects there, and which files the run actually wrote. A launch
+// whose target selects nothing, or selects files the run never touched, is
+// the case to look at.
+//
+// Reads only, like the rest of launch sync, nothing here can fail a launch.
+
+import { type Session } from "electron";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { type DesktopConfig } from "../../shared/types.ts";
+import { apiRequest } from "../saves/http.ts";
+import { standaloneData, type StandaloneData } from "./data.ts";
+import {
+  parseRomIdentity,
+  selectSaveFiles,
+  type RomIdentity,
+} from "./identity.ts";
+import { changedFiles, listTree, type Tree } from "./tree.ts";
+
+/** How many changed paths a line names before it only counts them. */
+const MAX_NAMED = 10;
+
+export interface StandaloneProbe {
+  /** Look again once the emulator has exited, and say what the run wrote. */
+  finish(): Promise<void>;
+}
+
+/** Ask RomM what it read out of this ROM, or nothing when it cannot say. */
+async function fetchIdentity(options: {
+  serverUrl: string;
+  session: Session;
+  romId: number;
+  signal: AbortSignal;
+}): Promise<RomIdentity | null> {
+  const response = await apiRequest({
+    serverUrl: options.serverUrl,
+    session: options.session,
+    path: `/api/roms/${options.romId}`,
+    method: "GET",
+    signal: options.signal,
+  }).catch(() => null);
+  if (!response || response.status >= 300) return null;
+  return parseRomIdentity(response.body);
+}
+
+function describeTarget(identity: RomIdentity | null): string {
+  if (!identity) return "RomM did not say what this game is";
+  if (!identity.saveTarget || !identity.layout) {
+    return identity.titleId
+      ? `RomM knows it as ${identity.titleId} but names no save target`
+      : "RomM has no id for this game";
+  }
+  return `RomM names ${identity.saveTarget} (${identity.layout})`;
+}
+
+function listed(paths: readonly string[]): string {
+  const named = paths.slice(0, MAX_NAMED).join(", ");
+  return paths.length > MAX_NAMED
+    ? `${named} and ${paths.length - MAX_NAMED} more`
+    : named;
+}
+
+/**
+ * Take the before-reading of a standalone launch's save and state folders.
+ *
+ * Awaited before the spawn, since a listing taken after the emulator started
+ * could already include what it wrote. The identity request is not waited on:
+ * it only colours the log, and a slow server should not hold a game back.
+ */
+export async function startStandaloneProbe(options: {
+  config: DesktopConfig;
+  session: Session;
+  romId: number;
+  platformSlug: string;
+  emulatorId: string;
+  command: string;
+  signal: AbortSignal;
+}): Promise<StandaloneProbe | null> {
+  const { config, romId } = options;
+  if (!config.serverUrl || (!config.syncSaves && !config.syncStates)) {
+    return null;
+  }
+  const data = standaloneData({
+    emulatorId: options.emulatorId,
+    platformSlug: options.platformSlug,
+    command: options.command,
+    configured: config.standaloneDataPaths,
+    home: homedir(),
+  });
+  if (!data) return null;
+
+  const identity = fetchIdentity({
+    serverUrl: config.serverUrl,
+    session: options.session,
+    romId,
+    signal: options.signal,
+  });
+  const saveRoot = join(data.folder, data.saveRoot);
+  const stateRoot = data.stateRoot ? join(data.folder, data.stateRoot) : null;
+  const savesBefore = await listTree(saveRoot);
+  const statesBefore = stateRoot ? await listTree(stateRoot) : null;
+
+  void identity.then((known) => logBefore(romId, data, savesBefore, known));
+
+  return {
+    async finish() {
+      const known = await identity;
+      logAfter(romId, "save", savesBefore, await listTree(saveRoot), known);
+      if (stateRoot && statesBefore) {
+        logAfter(romId, "state", statesBefore, await listTree(stateRoot), null);
+      }
+    },
+  };
+}
+
+function logBefore(
+  romId: number,
+  data: StandaloneData,
+  saves: Tree,
+  identity: RomIdentity | null,
+): void {
+  const where = `${data.emulatorId} keeps saves in ${join(data.folder, data.saveRoot)} (${data.source}${data.exists ? "" : ", not there yet"})`;
+  const selected =
+    identity?.saveTarget && identity.layout
+      ? `, which selects ${selectSaveFiles([...saves.keys()], identity.saveTarget, identity.layout).length} of ${saves.size} files there`
+      : "";
+  console.info(
+    `[standalone] rom ${romId}: ${where}; ${describeTarget(identity)}${selected}`,
+  );
+}
+
+function logAfter(
+  romId: number,
+  kind: "save" | "state",
+  before: Tree,
+  after: Tree,
+  identity: RomIdentity | null,
+): void {
+  const changed = changedFiles(before, after);
+  if (changed.length === 0) {
+    console.info(`[standalone] rom ${romId}: the run wrote no ${kind} files`);
+    return;
+  }
+  const target =
+    identity?.saveTarget && identity.layout
+      ? `; RomM's target selects ${selectSaveFiles(changed, identity.saveTarget, identity.layout).length} of them`
+      : "";
+  console.info(
+    `[standalone] rom ${romId}: the run wrote ${changed.length} ${kind} files: ${listed(changed)}${target}`,
+  );
+}
