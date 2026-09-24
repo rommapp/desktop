@@ -78,6 +78,33 @@ test("a Flatpak launch reads the sandbox's folder, not the native one", () => {
   assert.equal(data?.exists, false);
 });
 
+test("a hand-written flatpak run row reads the sandbox's folder too", () => {
+  const options = {
+    emulatorId: "dolphin",
+    platformSlug: "wii",
+    command: "/usr/bin/flatpak",
+    platform: "linux" as const,
+    home: HOME,
+    env: {},
+    exists: present(),
+  };
+  const sandboxed = standaloneData({
+    ...options,
+    args: ["run", "org.DolphinEmu.dolphin-emu", "-b", "-e", "/cache/game.rvz"],
+  });
+  assert.equal(
+    sandboxed?.folder,
+    "/home/sam/.var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu",
+  );
+  assert.equal(sandboxed?.source, "flatpak");
+  // Another app's flatpak run is not this emulator's sandbox.
+  assert.equal(
+    standaloneData({ ...options, args: ["run", "org.libretro.RetroArch"] })
+      ?.source,
+    "default",
+  );
+});
+
 test("a portable marker beside the executable wins over the default", () => {
   const dolphin = standaloneData({
     emulatorId: "dolphin",

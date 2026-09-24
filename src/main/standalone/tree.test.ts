@@ -27,8 +27,12 @@ test("a listing names every file by its path under the root", async () => {
     await writeFile(join(dir, "USA", "Card A", "save.gci"), "abc");
     await writeFile(join(dir, "top.raw"), "x");
     const tree = await listTree(dir);
-    assert.deepEqual([...tree.keys()], ["USA/Card A/save.gci", "top.raw"]);
-    assert.equal(tree.get("top.raw")?.size, 1);
+    assert.deepEqual(
+      [...tree.files.keys()],
+      ["USA/Card A/save.gci", "top.raw"],
+    );
+    assert.equal(tree.files.get("top.raw")?.size, 1);
+    assert.equal(tree.complete, true);
   });
 });
 
@@ -41,13 +45,31 @@ test("a symlink is not followed or listed", async (context) => {
       context.skip("symlinks need privileges here");
       return;
     }
-    assert.deepEqual([...(await listTree(dir)).keys()], ["real"]);
+    assert.deepEqual([...(await listTree(dir)).files.keys()], ["real"]);
   });
 });
 
-test("a missing root is an empty listing, not a throw", async () => {
+test("a symlinked root is not walked, and the listing says so", async (context) => {
   await withDir(async (dir) => {
-    assert.equal((await listTree(join(dir, "missing"))).size, 0);
+    await mkdir(join(dir, "elsewhere"));
+    await writeFile(join(dir, "elsewhere", "secret"), "x");
+    try {
+      await symlink(join(dir, "elsewhere"), join(dir, "root"));
+    } catch {
+      context.skip("symlinks need privileges here");
+      return;
+    }
+    const tree = await listTree(join(dir, "root"));
+    assert.equal(tree.files.size, 0);
+    assert.equal(tree.complete, false);
+  });
+});
+
+test("a missing root is a complete, empty listing, not a throw", async () => {
+  await withDir(async (dir) => {
+    const tree = await listTree(join(dir, "missing"));
+    assert.equal(tree.files.size, 0);
+    assert.equal(tree.complete, true);
   });
 });
 
@@ -56,14 +78,12 @@ test("a listing stops at its limits rather than walking everything", async () =>
     await mkdir(join(dir, "a", "b"), { recursive: true });
     await writeFile(join(dir, "a", "b", "deep"), "x");
     for (const name of ["1", "2", "3"]) await writeFile(join(dir, name), "x");
-    assert.equal(
-      (await listTree(dir, { maxEntries: 2, maxDepth: 12 })).size,
-      2,
-    );
-    assert.deepEqual(
-      [...(await listTree(dir, { maxEntries: 100, maxDepth: 1 })).keys()],
-      ["1", "2", "3"],
-    );
+    const capped = await listTree(dir, { maxEntries: 2, maxDepth: 12 });
+    assert.equal(capped.files.size, 2);
+    assert.equal(capped.complete, false);
+    const shallow = await listTree(dir, { maxEntries: 100, maxDepth: 1 });
+    assert.deepEqual([...shallow.files.keys()], ["1", "2", "3"]);
+    assert.equal(shallow.complete, false);
   });
 });
 
@@ -87,5 +107,17 @@ test("what a run changed is what it added or rewrote", async () => {
       "kept",
       "rewritten",
     ]);
+  });
+});
+
+test("a diff against an incomplete listing is refused, not guessed", async () => {
+  await withDir(async (dir) => {
+    for (const name of ["a", "b", "c"]) await writeFile(join(dir, name), "x");
+    const limits = { maxEntries: 2, maxDepth: 12 };
+    const before = await listTree(dir, limits);
+    // Deleting "a" lets "c" into the capped listing, which would otherwise
+    // read as a file the run wrote.
+    await rm(join(dir, "a"));
+    assert.equal(changedFiles(before, await listTree(dir, limits)), null);
   });
 });

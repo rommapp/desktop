@@ -903,6 +903,11 @@ export class Launcher {
           ? await readStateDir(savePaths.stateDir)
           : null;
 
+      // A launch cancelled while the ROM came out of the local library never
+      // passed through an interruptible transfer, so without this the emulator
+      // would still start after the cancel was reported.
+      throwIfCancelled(controller.signal);
+
       // A standalone emulator's own save and state folders, read before it
       // starts so the exit can say what the run wrote there.
       const standalone = launch.emulatorId
@@ -913,13 +918,13 @@ export class Launcher {
             platformSlug: request.platformSlug,
             emulatorId: launch.emulatorId,
             command: launch.command,
+            args: launch.args,
             signal: controller.signal,
           }).catch(() => null)
         : null;
-
-      // A launch cancelled while the ROM came out of the local library never
-      // passed through an interruptible transfer, so without this the emulator
-      // would still start after the cancel was reported.
+      // The listing is not interruptible either, and a cancel during it must
+      // give the folder back rather than hold it for a launch that never ran.
+      if (controller.signal.aborted) standalone?.release();
       throwIfCancelled(controller.signal);
 
       // The whole of what the emulator was told, so a run that syncs nothing
@@ -971,6 +976,7 @@ export class Launcher {
         // the only place the watcher it started can be stopped. Not awaited:
         // nothing was spawned, so nothing of its is in flight.
         if (watch) void this.forget(watch);
+        standalone?.release();
         this.emit({
           romId: request.romId,
           status: "failed",

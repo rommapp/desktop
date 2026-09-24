@@ -294,6 +294,10 @@ export function readZipFiles(archive: Buffer, limits: ZipLimits): ZipFile[] {
     if (isSymlink(entry)) {
       throw new ZipError(`${entry.name} is a symlink, which is not read.`);
     }
+    // Before the directory skip, so an encrypted directory is refused too.
+    if (entry.flags & FLAG_ENCRYPTED) {
+      throw new ZipError(`${entry.name} is encrypted, which is not read.`);
+    }
     if (isDirectory(entry)) continue;
     const contents = inflateEntry(archive, entry, budget);
     budget -= contents.length;

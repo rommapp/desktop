@@ -266,3 +266,16 @@ test("the byte budget covers the whole archive, not each entry", () => {
     ZipError,
   );
 });
+
+/** A directory entry built by Python's zipfile, with the encrypted bit then
+ *  set in both headers, since zipfile clears it on write. */
+const ENCRYPTED_DIRECTORY =
+  "UEsDBBQAAQAAAAAAIQAAAAAAAAAAAAAAAAAHAAAAbG9ja2VkL1BLAQIUAxQAAQAAAAAAIQAAAAAAAAAAAAAAAAAHAAAAAAAAAAAAAACAAQAAAABsb2NrZWQvUEsFBgAAAAABAAEANQAAACUAAAAAAA==";
+
+test("an encrypted directory entry is refused, though no file is read", () => {
+  assert.throws(
+    () => readZipFiles(Buffer.from(ENCRYPTED_DIRECTORY, "base64"), SAVE_LIMITS),
+    (error: unknown) =>
+      error instanceof ZipError && /encrypted/.test(error.message),
+  );
+});

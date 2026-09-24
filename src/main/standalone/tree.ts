@@ -7,9 +7,14 @@
 // A listing before the emulator starts and another after it exits say which
 // files the run wrote, and a run only plays one game.
 //
-// Symlinks are listed as nothing. A save folder holds files the emulator
-// wrote, and following a link would read, and later archive, whatever it
-// points at.
+// Symlinks are listed as nothing, the root included. A save folder holds files
+// the emulator wrote, and following a link would read, and later archive,
+// whatever it points at.
+//
+// A listing says whether it saw everything. One cut short by a limit or an
+// unreadable folder cannot be diffed: a file missing from the before-reading
+// would read as one the run wrote, and a sync acting on that would archive an
+// unrelated save as this game's.
 
 import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -20,8 +25,14 @@ export interface TreeEntry {
   modifiedAt: number;
 }
 
-/** Files under a root, keyed by their path relative to it, "/"-separated. */
-export type Tree = Map<string, TreeEntry>;
+export interface Tree {
+  /** Files under the root, keyed by their path relative to it,
+   *  "/"-separated. */
+  files: Map<string, TreeEntry>;
+  /** False when a limit, an unreadable folder or a symlinked root left
+   *  something out. A root that does not exist is complete and empty. */
+  complete: boolean;
+}
 
 export interface TreeLimits {
   maxEntries: number;
@@ -38,44 +49,75 @@ export const DEFAULT_TREE_LIMITS: TreeLimits = {
   maxDepth: 12,
 };
 
-/**
- * Every file under `root`, or an empty tree when it cannot be read.
- *
- * Stops quietly at a limit rather than throwing. The listing informs a
- * decision about which files to move, and a partial one read as complete
- * would only ever move less, never something that is not a save.
- */
+function isMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
+}
+
+/** Every file under `root`. Never throws; what it could not see is recorded
+ *  as an incomplete listing instead. */
 export async function listTree(
   root: string,
   limits: TreeLimits = DEFAULT_TREE_LIMITS,
 ): Promise<Tree> {
-  const tree: Tree = new Map();
+  const files = new Map<string, TreeEntry>();
+  let complete = true;
+
+  let rootInfo;
+  try {
+    rootInfo = await lstat(root);
+  } catch (error) {
+    return { files, complete: isMissing(error) };
+  }
+  if (!rootInfo.isDirectory()) return { files, complete: false };
+
   const walk = async (directory: string, prefix: string, depth: number) => {
-    if (depth > limits.maxDepth) return;
-    const names = await readdir(directory).catch(() => [] as string[]);
+    if (depth > limits.maxDepth) {
+      complete = false;
+      return;
+    }
+    let names: string[];
+    try {
+      names = await readdir(directory);
+    } catch {
+      complete = false;
+      return;
+    }
     for (const name of names.sort()) {
-      if (tree.size >= limits.maxEntries) return;
+      if (files.size >= limits.maxEntries) {
+        complete = false;
+        return;
+      }
       const path = join(directory, name);
-      const info = await lstat(path).catch(() => null);
-      if (!info) continue;
+      let info;
+      try {
+        info = await lstat(path);
+      } catch (error) {
+        // Deleted between the listing and the stat is simply gone.
+        if (!isMissing(error)) complete = false;
+        continue;
+      }
       const relative = prefix ? `${prefix}/${name}` : name;
       if (info.isDirectory()) {
         await walk(path, relative, depth + 1);
       } else if (info.isFile()) {
-        tree.set(relative, { size: info.size, modifiedAt: info.mtimeMs });
+        files.set(relative, { size: info.size, modifiedAt: info.mtimeMs });
       }
     }
   };
   await walk(root, "", 0);
-  return tree;
+  return { files, complete };
 }
 
-/** The files a run added or rewrote, in path order. A file the run deleted is
- *  not in the answer: there is nothing of it left to send. */
-export function changedFiles(before: Tree, after: Tree): string[] {
-  return [...after]
+/**
+ * The files a run added or rewrote, in path order, or null when either
+ * listing is incomplete and the difference cannot be trusted. A file the run
+ * deleted is not in the answer: there is nothing of it left to send.
+ */
+export function changedFiles(before: Tree, after: Tree): string[] | null {
+  if (!before.complete || !after.complete) return null;
+  return [...after.files]
     .filter(([path, entry]) => {
-      const was = before.get(path);
+      const was = before.files.get(path);
       return (
         !was || was.size !== entry.size || was.modifiedAt !== entry.modifiedAt
       );

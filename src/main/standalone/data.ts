@@ -60,8 +60,8 @@ interface EmulatorData {
   portable(context: PathContext): string | null;
   /** The default folders, the one the emulator would pick first. */
   defaults(context: PathContext): string[];
-  /** The Flatpak's folder, for a launch through its exported launcher. */
-  flatpak: string;
+  /** The Flatpak's app id, and its user folder relative to home. */
+  flatpak: { appId: string; folder: string };
   saveRoot(platformSlug: string): string;
   stateRoot: string | null;
 }
@@ -122,7 +122,10 @@ const DATA: Record<string, EmulatorData> = {
         }
       }
     },
-    flatpak: ".var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu",
+    flatpak: {
+      appId: "org.DolphinEmu.dolphin-emu",
+      folder: ".var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu",
+    },
     // GameCube memory cards and the Wii's own storage are separate trees.
     saveRoot: (platformSlug) => (platformSlug === "wii" ? "Wii/title" : "GC"),
     stateRoot: "StateSaves",
@@ -149,7 +152,10 @@ const DATA: Record<string, EmulatorData> = {
           ];
       }
     },
-    flatpak: ".var/app/net.pcsx2.PCSX2/config/PCSX2",
+    flatpak: {
+      appId: "net.pcsx2.PCSX2",
+      folder: ".var/app/net.pcsx2.PCSX2/config/PCSX2",
+    },
     saveRoot: () => "memcards",
     stateRoot: "sstates",
   },
@@ -169,7 +175,10 @@ const DATA: Record<string, EmulatorData> = {
           ];
       }
     },
-    flatpak: ".var/app/net.rpcs3.RPCS3/config/rpcs3",
+    flatpak: {
+      appId: "net.rpcs3.RPCS3",
+      folder: ".var/app/net.rpcs3.RPCS3/config/rpcs3",
+    },
     saveRoot: () => "dev_hdd0/home/00000001/savedata",
     stateRoot: "savestates",
   },
@@ -197,7 +206,10 @@ const DATA: Record<string, EmulatorData> = {
           ];
       }
     },
-    flatpak: ".var/app/info.cemu.Cemu/data/Cemu",
+    flatpak: {
+      appId: "info.cemu.Cemu",
+      folder: ".var/app/info.cemu.Cemu/data/Cemu",
+    },
     saveRoot: () => "mlc01/usr/save",
     // Cemu has no savestates.
     stateRoot: null,
@@ -207,10 +219,19 @@ const DATA: Record<string, EmulatorData> = {
 /** The ids this module knows the data of, for the detection table's test. */
 export const STANDALONE_DATA_IDS: readonly string[] = Object.keys(DATA);
 
-/** Whether a launch runs a Flatpak, through the launcher its export puts on
- *  the path. */
-function isFlatpakLauncher(command: string): boolean {
-  return /[/\\]flatpak[/\\]exports[/\\]bin[/\\]/.test(command);
+/**
+ * Whether a launch runs this Flatpak: through the launcher its export puts on
+ * the path, which is what detection finds, or as `flatpak run <app id>`,
+ * which is how a hand-written row spells it.
+ */
+function isFlatpakLaunch(
+  command: string,
+  args: readonly string[],
+  appId: string,
+): boolean {
+  const name = posix.basename(command);
+  if (name === appId) return /\/flatpak\/exports\/bin\//.test(command);
+  return name === "flatpak" && args.includes("run") && args.includes(appId);
 }
 
 /**
@@ -225,6 +246,8 @@ export function standaloneData(options: {
   emulatorId: string;
   platformSlug: string;
   command: string;
+  /** The launch's arguments, which name the app a `flatpak run` starts. */
+  args?: readonly string[];
   configured?: Readonly<Record<string, string>>;
   platform?: NodeJS.Platform;
   home: string;
@@ -244,14 +267,17 @@ export function standaloneData(options: {
   const located = ((): { folder: string; source: DataFolderSource } => {
     const configured = options.configured?.[options.emulatorId];
     if (configured) return { folder: configured, source: "configured" };
-    const portable = data.portable(context);
-    if (portable) return { folder: portable, source: "portable" };
-    if (context.platform === "linux" && isFlatpakLauncher(context.command)) {
+    if (
+      context.platform === "linux" &&
+      isFlatpakLaunch(context.command, options.args ?? [], data.flatpak.appId)
+    ) {
       return {
-        folder: posix.join(context.home, data.flatpak),
+        folder: posix.join(context.home, data.flatpak.folder),
         source: "flatpak",
       };
     }
+    const portable = data.portable(context);
+    if (portable) return { folder: portable, source: "portable" };
     const defaults = data.defaults(context);
     return {
       folder:
