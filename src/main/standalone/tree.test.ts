@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   rm,
+  stat,
   symlink,
   utimes,
   writeFile,
@@ -119,5 +120,29 @@ test("a diff against an incomplete listing is refused, not guessed", async () =>
     // read as a file the run wrote.
     await rm(join(dir, "a"));
     assert.equal(changedFiles(before, await listTree(dir, limits)), null);
+  });
+});
+
+test("a same-sized rewrite that kept its modification time still counts", async () => {
+  await withDir(async (dir) => {
+    const path = join(dir, "card.ps2");
+    await writeFile(path, "aaaa");
+    const was = await stat(path);
+    const before = await listTree(dir);
+    // Past any timestamp granularity, then put the old time back, the way a
+    // program preserving timestamps would.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await writeFile(path, "bbbb");
+    await utimes(path, was.atime, was.mtime);
+    assert.deepEqual(changedFiles(before, await listTree(dir)), ["card.ps2"]);
+  });
+});
+
+test("folders count towards the entry limit, not only files", async () => {
+  await withDir(async (dir) => {
+    for (const name of ["a", "b", "c"]) await mkdir(join(dir, name));
+    const tree = await listTree(dir, { maxEntries: 2, maxDepth: 12 });
+    assert.equal(tree.files.size, 0);
+    assert.equal(tree.complete, false);
   });
 });

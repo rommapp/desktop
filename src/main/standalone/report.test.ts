@@ -20,7 +20,7 @@ function tree(paths: Record<string, number>, complete = true): Tree {
     files: new Map(
       Object.entries(paths).map(([path, modifiedAt]) => [
         path,
-        { size: 1, modifiedAt },
+        { size: 1, modifiedAt, changedAt: modifiedAt, inode: 1 },
       ]),
     ),
     complete,

@@ -23,6 +23,11 @@ export interface TreeEntry {
   size: number;
   /** Milliseconds, as `stat` reports it. */
   modifiedAt: number;
+  /** The inode change time, which any write moves and no program can set
+   *  back, unlike the modification time. */
+  changedAt: number;
+  /** A file replaced by a rename is a different inode under the same name. */
+  inode: number;
 }
 
 export interface Tree {
@@ -35,6 +40,8 @@ export interface Tree {
 }
 
 export interface TreeLimits {
+  /** Everything visited, folders included, so a tree of empty folders stops
+   *  too. */
   maxEntries: number;
   maxDepth: number;
 }
@@ -61,6 +68,7 @@ export async function listTree(
 ): Promise<Tree> {
   const files = new Map<string, TreeEntry>();
   let complete = true;
+  let visited = 0;
 
   let rootInfo;
   try {
@@ -83,10 +91,11 @@ export async function listTree(
       return;
     }
     for (const name of names.sort()) {
-      if (files.size >= limits.maxEntries) {
+      if (visited >= limits.maxEntries) {
         complete = false;
         return;
       }
+      visited += 1;
       const path = join(directory, name);
       let info;
       try {
@@ -100,7 +109,12 @@ export async function listTree(
       if (info.isDirectory()) {
         await walk(path, relative, depth + 1);
       } else if (info.isFile()) {
-        files.set(relative, { size: info.size, modifiedAt: info.mtimeMs });
+        files.set(relative, {
+          size: info.size,
+          modifiedAt: info.mtimeMs,
+          changedAt: info.ctimeMs,
+          inode: info.ino,
+        });
       }
     }
   };
@@ -112,6 +126,10 @@ export async function listTree(
  * The files a run added or rewrote, in path order, or null when either
  * listing is incomplete and the difference cannot be trusted. A file the run
  * deleted is not in the answer: there is nothing of it left to send.
+ *
+ * Read from metadata rather than contents, since hashing a whole memory card
+ * folder before every launch would hold the game back. The change time is
+ * what catches a same-sized rewrite that kept its modification time.
  */
 export function changedFiles(before: Tree, after: Tree): string[] | null {
   if (!before.complete || !after.complete) return null;
@@ -119,7 +137,11 @@ export function changedFiles(before: Tree, after: Tree): string[] | null {
     .filter(([path, entry]) => {
       const was = before.files.get(path);
       return (
-        !was || was.size !== entry.size || was.modifiedAt !== entry.modifiedAt
+        !was ||
+        was.size !== entry.size ||
+        was.modifiedAt !== entry.modifiedAt ||
+        was.changedAt !== entry.changedAt ||
+        was.inode !== entry.inode
       );
     })
     .map(([path]) => path)
