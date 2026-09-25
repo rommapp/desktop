@@ -24,6 +24,7 @@ export function testConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     offerStandaloneInstall: false,
     emulatorsBasePath: null,
     emulators: [],
+    standaloneDataPaths: {},
     cachePath: null,
     // Off and unset by default: the mirror reaches the network and the
     // filesystem, so a test that wants it says so.

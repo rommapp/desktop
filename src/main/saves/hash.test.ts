@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { hashFile, md5Hex } from "./hash.ts";
+import { hashFile, md5Hex, zipContentHash } from "./hash.ts";
 
 test("the digest matches what RomM computes for the same bytes", () => {
   // hashlib.md5(b"abc", usedforsecurity=False).hexdigest(), the value the
@@ -42,4 +42,25 @@ test("an unreadable path is null, not a throw", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("a zipped save set hashes the way RomM hashes its entries", () => {
+  const bytes = (text: string) => new TextEncoder().encode(text);
+  // hash_zip_contents over an archive of these files, computed in Python. The
+  // last two names sort differently by UTF-16 unit than by code point.
+  assert.equal(
+    zipContentHash([
+      { name: "b/save.gci", contents: bytes("second") },
+      { name: "a.bin", contents: bytes("first") },
+      { name: "Z.bin", contents: bytes("") },
+      { name: "é", contents: bytes("x") },
+      { name: "\u{1F600}", contents: bytes("y") },
+      { name: "\uffff", contents: bytes("z") },
+    ]),
+    "710eb1927b2beaf1facac1ece9a7ceb2",
+  );
+});
+
+test("an empty save set hashes as the empty string does", () => {
+  assert.equal(zipContentHash([]), "d41d8cd98f00b204e9800998ecf8427e");
 });

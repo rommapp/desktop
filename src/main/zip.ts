@@ -1,13 +1,14 @@
-// A minimal reader for the one shape of archive this shell has to open: a
-// libretro core zip, holding a single file, from the buildbot.
+// A minimal zip reader and writer for the two shapes of archive this shell
+// handles: a libretro core zip from the buildbot, holding a single file, and a
+// standalone emulator's save set, which RomM keeps as one zipped save.
 //
 // Written rather than depended on because the project otherwise ships no
 // runtime dependencies, and pulling one in to read a handful of headers would
 // cost more in supply chain than it saves in code. The tradeoff is that only
-// the two compression methods the buildbot actually uses are supported;
-// anything else is rejected rather than half-handled.
+// store and deflate are supported, and no zip64; anything else is rejected
+// rather than half-handled.
 
-import { crc32, inflateRawSync } from "node:zlib";
+import { crc32, deflateRawSync, inflateRawSync } from "node:zlib";
 
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_SIGNATURE = 0x02014b50;
@@ -22,6 +23,19 @@ const MAX_EOCD_SEARCH = 0xffff + EOCD_MIN_SIZE;
 
 const METHOD_STORE = 0;
 const METHOD_DEFLATE = 8;
+
+const FLAG_ENCRYPTED = 1 << 0;
+/** General purpose bit 11: the name is UTF-8 rather than code page 437. */
+const FLAG_UTF8 = 1 << 11;
+
+/** Unix file type bits, which a unix zipper keeps in the top half of the
+ *  external attributes. */
+const UNIX_TYPE_MASK = 0o170000;
+const UNIX_SYMLINK = 0o120000;
+const UNIX_DIRECTORY = 0o040000;
+const MADE_BY_UNIX = 3;
+/** The MS-DOS directory attribute, in the low byte of the external ones. */
+const DOS_DIRECTORY = 0x10;
 
 /**
  * Ceiling on what one entry may unpack to.
@@ -56,7 +70,11 @@ function findEndOfCentralDirectory(archive: Buffer): number {
 
 interface CentralEntry {
   name: string;
+  flags: number;
   method: number;
+  /** The high byte of "version made by": 3 means the attributes are unix. */
+  madeBy: number;
+  externalAttributes: number;
   crc: number;
   compressedSize: number;
   uncompressedSize: number;
@@ -88,7 +106,10 @@ function readCentralDirectory(archive: Buffer): CentralEntry[] {
       name: archive
         .subarray(at + CENTRAL_FIXED_SIZE, at + CENTRAL_FIXED_SIZE + nameLength)
         .toString("utf8"),
+      flags: archive.readUInt16LE(at + 8),
       method: archive.readUInt16LE(at + 10),
+      madeBy: archive.readUInt8(at + 5),
+      externalAttributes: archive.readUInt32LE(at + 38),
       crc: archive.readUInt32LE(at + 16),
       compressedSize: archive.readUInt32LE(at + 20),
       uncompressedSize: archive.readUInt32LE(at + 24),
@@ -124,6 +145,19 @@ export function extractZipEntry(
     throw new ZipError(
       `Archive holds no entry named ${name}${found ? ` (found ${found})` : ""}.`,
     );
+  }
+  return inflateEntry(archive, entry, maxUncompressedBytes);
+}
+
+/** The bytes of one central directory entry, checked against its header. */
+function inflateEntry(
+  archive: Buffer,
+  entry: CentralEntry,
+  maxUncompressedBytes: number,
+): Buffer {
+  const { name } = entry;
+  if (entry.flags & FLAG_ENCRYPTED) {
+    throw new ZipError(`${name} is encrypted, which is not read.`);
   }
   if (
     entry.compressedSize === ZIP64_MARKER_32 ||
@@ -167,6 +201,13 @@ export function extractZipEntry(
   let contents: Buffer;
   switch (entry.method) {
     case METHOD_STORE:
+      // A stored entry is its own uncompressed bytes, so the two sizes must
+      // agree, and checking before the copy lets the size limit bound it.
+      if (entry.compressedSize !== entry.uncompressedSize) {
+        throw new ZipError(
+          `${name} is stored as ${entry.compressedSize} bytes but declares ${entry.uncompressedSize}.`,
+        );
+      }
       contents = Buffer.from(compressed);
       break;
     case METHOD_DEFLATE:
@@ -197,10 +238,189 @@ export function extractZipEntry(
       `${name} unpacked to ${contents.length} bytes, expected ${entry.uncompressedSize}.`,
     );
   }
-  // The core is about to be loaded into the emulator's address space, so a
-  // transfer that arrived subtly wrong should fail here rather than there.
+  // A core is about to be loaded into the emulator's address space and a save
+  // into a game, so bytes that arrived subtly wrong should fail here instead.
   if (crc32(contents) !== entry.crc) {
     throw new ZipError(`${name} failed its checksum.`);
   }
   return contents;
+}
+
+/** One file in an archive, as read or as about to be written. */
+export interface ZipFile {
+  /** Relative, "/"-separated. */
+  name: string;
+  contents: Buffer;
+  /** Milliseconds. Kept at the two-second precision a zip records. */
+  modifiedAt: number;
+}
+
+export interface ZipLimits {
+  maxEntries: number;
+  /** Across the whole archive, not per entry: a thousand entries at the
+   *  per-entry ceiling is the same allocation as one. */
+  maxTotalBytes: number;
+}
+
+/** A symlink cannot be written out without trusting where it points, and a
+ *  save set never holds one. */
+function isSymlink(entry: CentralEntry): boolean {
+  return (
+    entry.madeBy === MADE_BY_UNIX &&
+    ((entry.externalAttributes >>> 16) & UNIX_TYPE_MASK) === UNIX_SYMLINK
+  );
+}
+
+function isDirectory(entry: CentralEntry): boolean {
+  if (entry.name.endsWith("/")) return true;
+  if (entry.madeBy === MADE_BY_UNIX) {
+    return (
+      ((entry.externalAttributes >>> 16) & UNIX_TYPE_MASK) === UNIX_DIRECTORY
+    );
+  }
+  return (entry.externalAttributes & DOS_DIRECTORY) !== 0;
+}
+
+/**
+ * Every file in the archive, with directory entries dropped.
+ *
+ * Names come back exactly as the archive spells them. Nothing here writes to
+ * disk, so turning a name into a path, and refusing one that escapes, is the
+ * caller's job at the point it becomes one.
+ */
+export function readZipFiles(archive: Buffer, limits: ZipLimits): ZipFile[] {
+  const entries = readCentralDirectory(archive);
+  if (entries.length > limits.maxEntries) {
+    throw new ZipError(
+      `Archive holds ${entries.length} entries, past the ${limits.maxEntries} limit.`,
+    );
+  }
+  const files: ZipFile[] = [];
+  let budget = limits.maxTotalBytes;
+  for (const entry of entries) {
+    if (isSymlink(entry)) {
+      throw new ZipError(`${entry.name} is a symlink, which is not read.`);
+    }
+    // Before the directory skip, so an encrypted directory is refused too.
+    if (entry.flags & FLAG_ENCRYPTED) {
+      throw new ZipError(`${entry.name} is encrypted, which is not read.`);
+    }
+    if (isDirectory(entry)) continue;
+    const contents = inflateEntry(archive, entry, budget);
+    budget -= contents.length;
+    files.push({
+      name: entry.name,
+      contents,
+      modifiedAt: dosTimeOf(archive, entry),
+    });
+  }
+  return files;
+}
+
+/** The modification time the local header records, in local time the way zip
+ *  tools write it. */
+function dosTimeOf(archive: Buffer, entry: CentralEntry): number {
+  const header = entry.localHeaderOffset;
+  const time = archive.readUInt16LE(header + 10);
+  const date = archive.readUInt16LE(header + 12);
+  return new Date(
+    ((date >> 9) & 0x7f) + 1980,
+    ((date >> 5) & 0x0f) - 1,
+    date & 0x1f,
+    (time >> 11) & 0x1f,
+    (time >> 5) & 0x3f,
+    (time & 0x1f) * 2,
+  ).getTime();
+}
+
+/** A time as the two 16-bit fields a zip header carries. The format starts at
+ *  1980, so anything earlier is clamped to it rather than wrapping. */
+function dosTime(modifiedAt: number): { time: number; date: number } {
+  const at = new Date(Math.max(modifiedAt, new Date(1980, 0, 1).getTime()));
+  return {
+    time:
+      (at.getHours() << 11) | (at.getMinutes() << 5) | (at.getSeconds() >> 1),
+    date:
+      ((at.getFullYear() - 1980) << 9) |
+      ((at.getMonth() + 1) << 5) |
+      at.getDate(),
+  };
+}
+
+/**
+ * Build an archive of these files, in the order given.
+ *
+ * Each entry is deflated unless that fails to make it smaller, which is the
+ * case for data that is already compressed. The whole archive is built in
+ * memory, which is what a save set's size allows; zip64 is not written, so
+ * anything near 4 GiB is refused rather than truncated.
+ */
+export function writeZip(files: readonly ZipFile[]): Buffer {
+  const locals: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  let offset = 0;
+
+  for (const file of files) {
+    const name = Buffer.from(file.name, "utf8");
+    if (name.length > 0xffff) {
+      throw new ZipError(`${file.name} is too long a name for a zip entry.`);
+    }
+    if (file.contents.length >= ZIP64_MARKER_32) {
+      throw new ZipError(`${file.name} is too large to write without zip64.`);
+    }
+    const deflated = deflateRawSync(file.contents);
+    const stored = deflated.length >= file.contents.length;
+    const data = stored ? file.contents : deflated;
+    const method = stored ? METHOD_STORE : METHOD_DEFLATE;
+    const checksum = crc32(file.contents);
+    const { time, date } = dosTime(file.modifiedAt);
+
+    const local = Buffer.alloc(LOCAL_FIXED_SIZE);
+    local.writeUInt32LE(LOCAL_SIGNATURE, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(FLAG_UTF8, 6);
+    local.writeUInt16LE(method, 8);
+    local.writeUInt16LE(time, 10);
+    local.writeUInt16LE(date, 12);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(file.contents.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+
+    const central = Buffer.alloc(CENTRAL_FIXED_SIZE);
+    central.writeUInt32LE(CENTRAL_SIGNATURE, 0);
+    // Made by unix, so the mode below is read as one: a plain file, rw-r--r--.
+    central.writeUInt16LE((MADE_BY_UNIX << 8) | 20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(FLAG_UTF8, 8);
+    central.writeUInt16LE(method, 10);
+    central.writeUInt16LE(time, 12);
+    central.writeUInt16LE(date, 14);
+    central.writeUInt32LE(checksum, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(file.contents.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE((0o100644 << 16) >>> 0, 38);
+    central.writeUInt32LE(offset, 42);
+
+    locals.push(local, name, data);
+    centrals.push(central, name);
+    offset += local.length + name.length + data.length;
+    if (offset >= ZIP64_MARKER_32) {
+      throw new ZipError("Archive is too large to write without zip64.");
+    }
+  }
+
+  if (files.length > 0xffff) {
+    throw new ZipError("Too many entries to write without zip64.");
+  }
+  const centralSize = centrals.reduce((sum, part) => sum + part.length, 0);
+  const eocd = Buffer.alloc(EOCD_MIN_SIZE);
+  eocd.writeUInt32LE(EOCD_SIGNATURE, 0);
+  eocd.writeUInt16LE(files.length, 8);
+  eocd.writeUInt16LE(files.length, 10);
+  eocd.writeUInt32LE(centralSize, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, ...centrals, eocd]);
 }
