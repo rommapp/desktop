@@ -279,3 +279,24 @@ test("an encrypted directory entry is refused, though no file is read", () => {
       error instanceof ZipError && /encrypted/.test(error.message),
   );
 });
+
+test("a stored entry whose sizes disagree is refused before it is copied", () => {
+  const archive = writeZip([
+    // Random-looking, so it is stored rather than deflated.
+    {
+      name: "a",
+      contents: Buffer.from([7, 201, 13, 99]),
+      modifiedAt: Date.now(),
+    },
+  ]);
+  // Claim a larger compressed size in the central directory, still inside the
+  // archive, as a malformed one could to make the copy outgrow the
+  // unpacked-size limit.
+  const central = archive.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+  archive.writeUInt32LE(30, central + 20);
+  assert.throws(
+    () => readZipFiles(archive, SAVE_LIMITS),
+    (error: unknown) =>
+      error instanceof ZipError && /stored as/.test(error.message),
+  );
+});

@@ -201,6 +201,13 @@ function inflateEntry(
   let contents: Buffer;
   switch (entry.method) {
     case METHOD_STORE:
+      // A stored entry is its own uncompressed bytes, so the two sizes must
+      // agree, and checking before the copy lets the size limit bound it.
+      if (entry.compressedSize !== entry.uncompressedSize) {
+        throw new ZipError(
+          `${name} is stored as ${entry.compressedSize} bytes but declares ${entry.uncompressedSize}.`,
+        );
+      }
       contents = Buffer.from(compressed);
       break;
     case METHOD_DEFLATE:

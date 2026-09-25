@@ -62,7 +62,11 @@ export function describeAfter(
   before: Tree,
   after: Tree,
   identity: RomIdentity | null,
+  contested = false,
 ): string {
+  if (contested) {
+    return `[standalone] rom ${romId}: another launch used the ${kind} folder during this run, so what this run wrote there is not known`;
+  }
   const changed = changedFiles(before, after);
   if (changed === null) {
     return `[standalone] rom ${romId}: the ${kind} folder could not be read whole, so what the run wrote there is not known`;

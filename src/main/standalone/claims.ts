@@ -4,10 +4,21 @@
 // standalone emulator at once, and both read the same save folder. Neither can
 // tell the other's writes from its own, so whichever arrives second leaves the
 // folder alone rather than claiming files it may not have written.
+//
+// That only keeps the second launch from watching; its emulator still runs and
+// writes. So a claim someone else asked for while it was held is marked
+// contested, and the holder's own reading of the folder is not to be trusted.
 
 import { resolve } from "node:path";
 
-const claimed = new Set<string>();
+export interface FolderClaim {
+  /** Whether another launch wanted this folder while the claim was held. */
+  readonly contested: boolean;
+  /** Give the folder up. Releasing twice is harmless. */
+  release(): void;
+}
+
+const claimed = new Map<string, { contested: boolean }>();
 
 /** One spelling per folder, so two spellings of it collide. Windows and macOS
  *  compare paths without regard to case. */
@@ -16,20 +27,26 @@ function folderKey(folder: string, platform: NodeJS.Platform): string {
   return platform === "linux" ? full : full.toLowerCase();
 }
 
-/**
- * Claim a folder for one launch, returning the function that releases it, or
- * null when another launch holds it. Releasing twice is harmless.
- */
+/** Claim a folder for one launch, or null when another launch holds it, in
+ *  which case that launch's claim is marked contested. */
 export function claimFolder(
   folder: string,
   platform: NodeJS.Platform = process.platform,
-): (() => void) | null {
+): FolderClaim | null {
   const key = folderKey(folder, platform);
-  if (claimed.has(key)) return null;
-  claimed.add(key);
-  let held = true;
-  return () => {
-    if (held) claimed.delete(key);
-    held = false;
+  const holder = claimed.get(key);
+  if (holder) {
+    holder.contested = true;
+    return null;
+  }
+  const state = { contested: false };
+  claimed.set(key, state);
+  return {
+    get contested() {
+      return state.contested;
+    },
+    release() {
+      if (claimed.get(key) === state) claimed.delete(key);
+    },
   };
 }

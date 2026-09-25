@@ -107,3 +107,11 @@ test("a long list is cut short and counted", () => {
     /wrote 12 save files: f00, .*f09 and 2 more$/,
   );
 });
+
+test("a run another launch shared the folder with says nothing is known", () => {
+  const before = tree({ a: 1 });
+  assert.equal(
+    describeAfter(12, "state", before, tree({ a: 1, b: 2 }), null, true),
+    "[standalone] rom 12: another launch used the state folder during this run, so what this run wrote there is not known",
+  );
+});

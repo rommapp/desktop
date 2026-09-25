@@ -79,8 +79,8 @@ export async function startStandaloneProbe(options: {
   });
   if (!data) return null;
 
-  const release = claimFolder(data.folder);
-  if (!release) {
+  const claim = claimFolder(data.folder);
+  if (!claim) {
     console.info(
       `[standalone] rom ${romId}: another launch is using ${data.folder}, so this one leaves it alone`,
     );
@@ -104,22 +104,34 @@ export async function startStandaloneProbe(options: {
 
   return {
     async finish() {
+      // Read and released before the identity is waited on: the request has
+      // no deadline of its own, and a server that never answers must not keep
+      // the folder claimed for launches that come after this one.
+      let savesAfter, statesAfter, contested;
       try {
-        const known = await identity;
-        const savesAfter = await listTree(saveRoot);
-        const statesAfter = stateRoot ? await listTree(stateRoot) : null;
-        console.info(
-          describeAfter(romId, "save", savesBefore, savesAfter, known),
-        );
-        if (statesBefore && statesAfter) {
-          console.info(
-            describeAfter(romId, "state", statesBefore, statesAfter, null),
-          );
-        }
+        savesAfter = await listTree(saveRoot);
+        statesAfter = stateRoot ? await listTree(stateRoot) : null;
+        contested = claim.contested;
       } finally {
-        release();
+        claim.release();
+      }
+      const known = await identity;
+      console.info(
+        describeAfter(romId, "save", savesBefore, savesAfter, known, contested),
+      );
+      if (statesBefore && statesAfter) {
+        console.info(
+          describeAfter(
+            romId,
+            "state",
+            statesBefore,
+            statesAfter,
+            null,
+            contested,
+          ),
+        );
       }
     },
-    release,
+    release: () => claim.release(),
   };
 }
