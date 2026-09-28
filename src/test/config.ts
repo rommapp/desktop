@@ -45,6 +45,10 @@ export function testConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
     fullscreen: false,
     trustedCertificates: [],
+    // Off by default: it starts a process and reads other installations, so a
+    // test that wants it says so.
+    useEmuAtlas: false,
+    emuAtlasPath: null,
     ...patch,
   };
 }

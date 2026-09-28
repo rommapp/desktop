@@ -53,6 +53,11 @@ function emptyConfig(): DesktopConfig {
     cacheLimitBytes: DEFAULT_CACHE_LIMIT_BYTES,
     fullscreen: false,
     trustedCertificates: [],
+    // On because it does nothing until emu-atlas is installed, and once it is,
+    // bringing along a save the player already has is what they installed it
+    // for. It only copies, and only into a directory the shell has not made.
+    useEmuAtlas: true,
+    emuAtlasPath: null,
   };
 }
 

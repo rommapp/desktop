@@ -1,6 +1,7 @@
 import { type BrowserWindow, type Session } from "electron";
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { toLaunchError } from "../shared/ipc.ts";
 import {
   type DesktopConfig,
@@ -12,6 +13,7 @@ import {
   type PlatformSupportQuery,
   type SaveSyncOutcome,
 } from "../shared/types.ts";
+import { findEmuAtlas, runEmuAtlas } from "./atlas/cli.ts";
 import { loadConfig, playQueuePath } from "./config.ts";
 import {
   canInstallCore,
@@ -30,6 +32,7 @@ import {
 } from "./emulator/standalone.ts";
 import {
   applyCorePreference,
+  coreFileName,
   emulatorLabel,
   emulatorPinsStateFile,
   emulatorReadsPlaylist,
@@ -52,6 +55,7 @@ import {
 } from "./play/session.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
+import { adoptLocalSave } from "./saves/adopt.ts";
 import { resolveSavePaths, saveBaseName } from "./saves/paths.ts";
 import { hostFacts } from "./saves/device.ts";
 import {
@@ -721,6 +725,18 @@ export class Launcher {
         romPath = rom.path;
       }
 
+      // Asked before the directories are made, because their absence is what
+      // says this machine has never launched this game. It has to be that and
+      // not a missing save file: a save deleted in RomM is deleted here too,
+      // and bringing another installation's copy back after that would undo
+      // the deletion on the next push.
+      const firstLaunch =
+        savePaths !== null &&
+        (await stat(savePaths.saveDir).then(
+          () => false,
+          () => true,
+        ));
+
       if (savePaths) {
         await mkdir(savePaths.saveDir, { recursive: true });
         await mkdir(savePaths.stateDir, { recursive: true });
@@ -744,6 +760,56 @@ export class Launcher {
       const syncsSaves =
         saveSyncEnabled(config) &&
         emulatorUsesSaveFile(config, request.platformSlug);
+
+      // A save the player already has in another installation, brought along
+      // before the pull so the pull negotiates with it like any local save.
+      // A disc set is left out: the shell named its playlist, so no other
+      // installation keeps a save under that name.
+      const atlasBinary =
+        savePaths && firstLaunch && !discs && config.useEmuAtlas
+          ? findEmuAtlas(config.emuAtlasPath, homedir())
+          : null;
+      if (
+        savePaths &&
+        atlasBinary &&
+        emulatorUsesSaveFile(config, request.platformSlug)
+      ) {
+        // Resolved only for the core it names. The strict resolve below is
+        // the one a spawn relies on, so a failure here is not this code's to
+        // report.
+        let core: string | null = null;
+        try {
+          core = resolveLaunch({
+            config,
+            platformSlug: request.platformSlug,
+            cores,
+            romPath,
+            savePaths,
+          }).core;
+        } catch {
+          core = null;
+        }
+        // A standalone emulator has no core, and keeps its saves in a shape
+        // the shell's one .srm file cannot stand for.
+        if (core) {
+          this.emit({
+            romId: request.romId,
+            status: "downloading",
+            stage: "save",
+          });
+          await adoptLocalSave({
+            ask: runEmuAtlas(atlasBinary),
+            romId: request.romId,
+            platformSlug: request.platformSlug,
+            coreFile: coreFileName(core),
+            romPath,
+            saveFile: savePaths.saveFile,
+            saveDataPath: config.saveDataPath,
+            signal: controller.signal,
+          });
+          throwIfCancelled(controller.signal);
+        }
+      }
 
       let saveSync: PullResult | null = null;
       if (savePaths && syncsSaves) {

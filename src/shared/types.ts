@@ -353,6 +353,15 @@ export interface DesktopConfig {
   fullscreen: boolean;
   /** Trusted certificate fingerprints for self-signed servers. */
   trustedCertificates: string[];
+  /** Ask emu-atlas, when it is installed, where RetroDECK, EmuDeck or another
+   *  RetroArch on this machine already keeps a game's save, and copy that save
+   *  in on the game's first launch here. Only ever copies, only into a save
+   *  directory the shell has not created yet, and nothing about it can fail a
+   *  launch. Does nothing on a machine without emu-atlas. */
+  useEmuAtlas: boolean;
+  /** The emu-atlas executable, for one that is not on PATH or in
+   *  ~/.local/bin (the self-contained release bundle, say). */
+  emuAtlasPath: string | null;
 }
 
 export const DEFAULT_CACHE_LIMIT_BYTES = 20 * 1024 * 1024 * 1024;

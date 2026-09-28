@@ -157,6 +157,8 @@ launch attempt without a restart.
 | `useRommFirmware`          | `true`             | [Mirror RomM's firmware library](#firmware-from-romm)                            |
 | `biosPath`                 | `bios`             | Where that mirror lives                                                          |
 | `fullscreen`               | `false`            | Open the main window with no title bar, for a TV or cabinet                      |
+| `useEmuAtlas`              | `true`             | [Bring along a save another installation has](#saves-you-already-have)           |
+| `emuAtlasPath`             | looked up          | The `emu-atlas` executable, when it is not on `PATH` or in `~/.local/bin`        |
 
 The three unset paths default to directories beside the config file.
 `cachePath`, `saveDataPath` and `biosPath` must not contain one another -- the
@@ -531,6 +533,56 @@ back. A save written after the deletion is new progress and is still sent.
 
 Nothing here can fail a launch.
 
+### Saves you already have
+
+Someone arriving from RetroDECK, EmuDeck or a RetroArch they have played in for
+years has progress on this machine already, just not where the shell keeps it.
+The shell's save directory is new for every game it has not launched before, so
+without help a first launch boots from nothing and then pushes that to RomM.
+
+With [emu-atlas](https://github.com/danielcopper/emu-atlas) installed, the
+first launch of a game asks it where each emulator installation on the machine
+keeps that game's save, and copies the most recently written one in before the
+save sync runs. emu-atlas reads each installation's configs the way RetroArch
+does, sorting options, override files and the core's own library name
+included, so the answer is where that save really is rather than where a path
+list says it usually is.
+
+```bash
+# The wheel attached to each emu-atlas release; it is not published to PyPI.
+pipx install ./emu_atlas-0.21.0-py3-none-any.whl
+```
+
+It is looked for on `PATH` and in `~/.local/bin`, where pipx puts it; the
+self-contained release bundle, which carries its own Python, needs
+`emuAtlasPath` pointed at its `emu-atlas` launcher. The shell never ships or
+installs it, in keeping with having no runtime dependencies of its own.
+
+What it will and will not do:
+
+- **Only copies.** The other installation's file is read and left exactly
+  where it was, and the copy lands only in a save directory the shell has not
+  created yet. A game you have launched here before, including one whose save
+  you then deleted in RomM, is never touched.
+- **Only battery saves, only for a libretro core.** The `.srm` the launch's own
+  core writes. A standalone emulator, a disc set's playlist and savestates are
+  left out.
+- **Then syncs like any other save.** The copy keeps the original's
+  modification time, so a RomM that already holds a newer save still wins the
+  negotiation, and one that holds a different one gets the copy archived beside
+  it rather than overwritten. A RomM that holds nothing takes it on the push.
+- **Linux only, for now.** emu-atlas detects RetroDECK, EmuDeck, the RetroArch
+  Flatpak and a native RetroArch under your home directory. On Windows and
+  macOS it finds nothing, and the launch carries on as before.
+
+RomM's platform slug is looked up in emu-atlas's IGDB crosswalk to find the
+system the installation files the game under, and the ROM folder it keeps for
+that system, since RetroDECK names its save folders after the ROM's. Every
+question is logged under `[atlas]`, and a machine without emu-atlas, a
+question that times out and an installation that does not have the game all
+end the same way: nothing is copied and the game starts. Set `useEmuAtlas` to
+`false` to never ask.
+
 ### When a save does not sync
 
 Every decision a launch makes about saves is logged. A run says what the server
@@ -762,6 +814,11 @@ metadata providers, so the renderer is treated as untrusted:
 - An installer or emulator build is downloaded only after you say yes, only to a
   fixed directory, and only from origins pinned per project. The shell never
   runs it, and a short transfer is deleted rather than opened.
+- A platform slug is handed to [emu-atlas](#saves-you-already-have) only once
+  it matches a plain id alphabet with no leading dash, as is every system and
+  installation name it answers with before it is asked about again. It runs
+  with an argument array, never a shell, and a path it answers with is only
+  read from, never written.
 - ROM and firmware URLs must resolve to the configured server origin and an
   `/api/` route. A firmware filename is used verbatim, because that is the name
   an emulator looks for, so one that is not already a plain filename is refused
@@ -810,6 +867,7 @@ src/
     auth/           Telling a session that has expired from a scope that was
                     never granted, and getting back to a login page
     saves/          Per-game save and state directories
+    atlas/          Asking emu-atlas where other installations keep things
     discs/          Multi-disc sets: disc selection and the .m3u that boots
                     them
     firmware/       Mirroring RomM's own BIOS library, per platform
