@@ -5,10 +5,10 @@
   "description": "Optional desktop shell for RomM that launches games in a locally installed emulator",
   "author": "Sam Dornan <https://github.com/sdornan>",
   "license": "AGPL-3.0-only",
-  "homepage": "https://github.com/sdornan/romm-desktop",
+  "homepage": "https://github.com/rommapp/desktop",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sdornan/romm-desktop.git"
+    "url": "git+https://github.com/rommapp/desktop.git"
   },
   "main": "dist/main/index.js",
   "desktopName": "romm-desktop.desktop",
@@ -35,7 +35,7 @@
     "node": "26"
   },
   "bugs": {
-    "url": "https://github.com/sdornan/romm-desktop/issues"
+    "url": "https://github.com/rommapp/desktop/issues"
   },
   "keywords": [
     "romm",
