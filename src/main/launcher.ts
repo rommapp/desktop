@@ -61,6 +61,7 @@ import {
   type StateEntry,
 } from "./saves/states.ts";
 import { pullStates, pushStates } from "./saves/state-sync.ts";
+import { startStandaloneProbe } from "./standalone/probe.ts";
 import {
   completeSync,
   pullSave,
@@ -856,8 +857,9 @@ export class Launcher {
 
       // What this launch runs. The push records its states against it and the
       // restore below loads only states written by it, so the two agree by
-      // reading the same value rather than by both deriving one.
-      const playedBy = launch.core ?? launch.label;
+      // reading the same value rather than by both deriving one. A standalone
+      // emulator goes by its id, which is what RomM's streaming records too.
+      const playedBy = launch.core ?? launch.emulatorId ?? launch.label;
 
       // The states RomM already holds for this emulator, put back into the
       // slots they were written from. Blocking, like the save pull: a slot has
@@ -904,6 +906,25 @@ export class Launcher {
       // A launch cancelled while the ROM came out of the local library never
       // passed through an interruptible transfer, so without this the emulator
       // would still start after the cancel was reported.
+      throwIfCancelled(controller.signal);
+
+      // A standalone emulator's own save and state folders, read before it
+      // starts so the exit can say what the run wrote there.
+      const standalone = launch.emulatorId
+        ? await startStandaloneProbe({
+            config,
+            session,
+            romId: request.romId,
+            platformSlug: request.platformSlug,
+            emulatorId: launch.emulatorId,
+            command: launch.command,
+            args: launch.args,
+            signal: controller.signal,
+          }).catch(() => null)
+        : null;
+      // The listing is not interruptible either, and a cancel during it must
+      // give the folder back rather than hold it for a launch that never ran.
+      if (controller.signal.aborted) standalone?.release();
       throwIfCancelled(controller.signal);
 
       // The whole of what the emulator was told, so a run that syncs nothing
@@ -955,6 +976,7 @@ export class Launcher {
         // the only place the watcher it started can be stopped. Not awaited:
         // nothing was spawned, so nothing of its is in flight.
         if (watch) void this.forget(watch);
+        standalone?.release();
         this.emit({
           romId: request.romId,
           status: "failed",
@@ -995,6 +1017,7 @@ export class Launcher {
               }
             : {}),
         });
+        if (standalone) void standalone.finish().catch(() => {});
         // A session is the only thing that says a negotiation happened, and a
         // negotiation is what the push is allowed to act on. Without one there
         // is nothing to offer the server and nothing to close.

@@ -312,6 +312,34 @@ test("resolveLaunch runs a mapping named relative to the base path", () => {
   assert.deepEqual(launch.args, ["-batch", "/cache/10-game.chd"]);
 });
 
+test("a row naming a known standalone emulator carries its id to the launch", () => {
+  const { root } = fakeInstall([]);
+  const exe = join(root, "pcsx2-qt.exe");
+  writeFileSync(exe, "");
+  const launchFor = (emulatorId: string | undefined) =>
+    resolveLaunch({
+      config: testConfig({
+        emulators: [
+          {
+            platformSlug: "ps2",
+            command: exe,
+            args: ["{rom}"],
+            ...(emulatorId === undefined ? {} : { emulatorId }),
+          },
+        ],
+      }),
+      platformSlug: "ps2",
+      cores: [],
+      romPath: "/cache/12-game.chd",
+      savePaths: null,
+    }).emulatorId;
+
+  assert.equal(launchFor("pcsx2"), "pcsx2");
+  // A typo or an emulator the shell knows nothing of switches nothing on.
+  assert.equal(launchFor("pcxs2"), null);
+  assert.equal(launchFor(undefined), null);
+});
+
 test("resolveLaunch reports the resolved path when a relative command is missing", () => {
   const { root } = fakeInstall([]);
   assert.throws(

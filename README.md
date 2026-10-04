@@ -143,6 +143,7 @@ launch attempt without a restart.
 | `offerStandaloneInstall`   | `true`             | Offer to fetch those when they are missing                                       |
 | `emulators`                | none               | [Your own platform-to-command rows](#your-own-emulator-rows)                     |
 | `emulatorsBasePath`        | none               | Prefix for relative `command` values                                             |
+| `standaloneDataPaths`      | none               | [A standalone emulator's user folder](#standalone-emulator-saves), by id         |
 | `libraryPath`              | none               | [Library root](#local-library), to launch in place instead of downloading        |
 | `cachePath`                | `rom-cache`        | [ROM cache](#rom-cache) directory                                                |
 | `cacheLimitBytes`          | 20 GB              | Cache size before LRU eviction                                                   |
@@ -315,7 +316,11 @@ containing spaces need no quoting:
 
 A token that cannot be resolved fails the launch with an explanation rather than
 passing an empty argument. An optional `playlist` key says whether the emulator
-boots an `.m3u`, which only affects [multi-disc games](#multi-disc-games).
+boots an `.m3u`, which only affects [multi-disc games](#multi-disc-games). An
+optional `emulatorId` (`pcsx2`, `dolphin`, `rpcs3` or `cemu`) says which
+standalone emulator the row runs, so its
+[saves are looked for](#standalone-emulator-saves) where that emulator keeps
+them; a detected emulator carries one already.
 
 Set `emulatorsBasePath` and a `command` can be relative to it, for a frontend
 like RetroBat that keeps every emulator under one tree; an absolute `command` is
@@ -638,6 +643,43 @@ Anything that might be that same file is archived first regardless, since two
 spellings of one name are one file on Windows and macOS and two on Linux: a
 backup of a file that turns out not to be in the way costs a transfer, and the
 other way round costs a state.
+
+### Standalone emulator saves
+
+PCSX2, Dolphin, RPCS3 and Cemu keep their saves and states in their own user
+folder, beside their settings, under names taken from the game's own id
+(`GALE01`, `BLUS30001`) rather than anything the shell hands them. So they are
+not given a directory per game the way RetroArch is: a launch pointed at a
+folder of its own would also boot an emulator with none of your settings.
+
+Syncing them is in progress. For now a standalone launch only looks, and says
+in the log what it found, so the parts that will move files can be checked
+against real installs first:
+
+```
+[standalone] rom 12: dolphin keeps saves in ~/.local/share/dolphin-emu/Wii/title (default); RomM names 52534245 (folder-exact), which selects 3 of 41 files there
+[standalone] rom 12: the run wrote 2 save files: 00010000/52534245/data/save.bin, ...; RomM's target selects 2 of them
+```
+
+The game's id and the name its saves go under come from RomM, which reads them
+out of the ROM when it scans it, on servers built with that support. A line
+saying RomM's target selects nothing the run wrote is worth reporting.
+
+The user folder is the emulator's default for your platform, the Flatpak's own
+folder for a Flatpak launch, or the install's folder when it is portable
+(Dolphin's `portable.txt`, PCSX2's `portable.ini`, Cemu's `portable` folder,
+and every RPCS3 on Windows). Anywhere else needs `standaloneDataPaths`:
+
+```json
+{
+  "standaloneDataPaths": {
+    "dolphin": "D:/Emulation/Dolphin/User"
+  }
+}
+```
+
+A memory card or MLC folder moved in PCSX2's or Cemu's own settings is not
+followed yet.
 
 ### Play sessions reported to RomM
 

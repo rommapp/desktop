@@ -30,6 +30,7 @@ function emptyConfig(): DesktopConfig {
     preferredCores: {},
     emulatorsBasePath: null,
     emulators: [],
+    standaloneDataPaths: {},
     cachePath: null,
     biosPath: null,
     useRommFirmware: true,

@@ -323,6 +323,7 @@ export function toEmulatorMappings(
       args: emulator.args,
       label: emulator.label,
       playlist: emulator.playlist,
+      emulatorId: emulator.id,
     })),
   );
 }
