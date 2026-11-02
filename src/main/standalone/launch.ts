@@ -42,6 +42,17 @@ export interface StandaloneLaunch {
   release(): void;
 }
 
+/**
+ * How long the launch waits to be told what this game is.
+ *
+ * This answer is worth waiting for, since it decides whether a save set comes
+ * down, but it is not worth waiting indefinitely: a request with no deadline
+ * of its own that a launch now blocks on is a server that hangs holding the
+ * game shut. Past this the launch goes ahead with no identity, which is the
+ * same launch a server without the ROM reader produces.
+ */
+const IDENTITY_TIMEOUT_MS = 10_000;
+
 /** Ask RomM what it read out of this ROM, or nothing when it cannot say. */
 async function fetchIdentity(options: {
   serverUrl: string;
@@ -49,14 +60,26 @@ async function fetchIdentity(options: {
   romId: number;
   signal: AbortSignal;
 }): Promise<RomIdentity | null> {
+  // The launch's own cancel and this deadline both end the request, and only
+  // the first is the launch's to hear about, which is why the caller is still
+  // handed the launch signal to re-throw on.
+  const deadline = AbortSignal.timeout(IDENTITY_TIMEOUT_MS);
   const response = await apiRequest({
     serverUrl: options.serverUrl,
     session: options.session,
     path: `/api/roms/${options.romId}`,
     method: "GET",
-    signal: options.signal,
+    signal: AbortSignal.any([options.signal, deadline]),
   }).catch(() => null);
-  if (!response || response.status >= 300) return null;
+  if (!response) {
+    if (deadline.aborted && !options.signal.aborted) {
+      console.info(
+        `[standalone] rom ${options.romId}: RomM did not answer within ${IDENTITY_TIMEOUT_MS / 1000}s, so this launch syncs no save set`,
+      );
+    }
+    return null;
+  }
+  if (response.status >= 300) return null;
   return parseRomIdentity(response.body);
 }
 

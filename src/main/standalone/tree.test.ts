@@ -37,7 +37,7 @@ test("a listing names every file by its path under the root", async () => {
   });
 });
 
-test("a symlink is not followed or listed", async (context) => {
+test("a symlink is not followed or listed, but is recorded as skipped", async (context) => {
   await withDir(async (dir) => {
     await writeFile(join(dir, "real"), "x");
     try {
@@ -46,7 +46,12 @@ test("a symlink is not followed or listed", async (context) => {
       context.skip("symlinks need privileges here");
       return;
     }
-    assert.deepEqual([...(await listTree(dir)).files.keys()], ["real"]);
+    const tree = await listTree(dir);
+    assert.deepEqual([...tree.files.keys()], ["real"]);
+    // A diff can ignore a link it never followed, so the listing is still
+    // complete; a save set cannot, which is what the name is recorded for.
+    assert.deepEqual(tree.skipped, ["link"]);
+    assert.equal(tree.complete, true);
   });
 });
 

@@ -21,6 +21,7 @@
 
 import { type Session } from "electron";
 import {
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -28,7 +29,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import {
   type DesktopConfig,
   type SaveSyncOutcome,
@@ -269,7 +270,16 @@ async function runPullSet(options: SetSyncOptions): Promise<SetPullResult> {
       replacing: local.paths,
       signal,
     });
-    if (restored) {
+    if (restored === "partial") {
+      // Part this machine's and part the server's, with nothing on disk to
+      // say which is which. The emulator still boots it, because refusing to
+      // launch over a save is worse than launching on a mixed one, but what
+      // it writes from here is not a version to offer anybody else.
+      console.warn(
+        `[standalone] rom ${romId}: the restore stopped part way, so ${saveRoot} is partly this machine's and partly the server's; nothing is sent this run`,
+      );
+      allowance = "unreachable";
+    } else if (restored === "restored") {
       outcome = { action: "downloaded", slot: operation.slot };
       // The push has to compare against the set the emulator will boot. A
       // folder that will not read back leaves it nothing to compare, and
@@ -288,6 +298,44 @@ async function runPullSet(options: SetSyncOptions): Promise<SetPullResult> {
 
   return { allowance, before, deviceId, sessionId, outcome };
 }
+
+/**
+ * Why this destination is not one to write, or null when it is.
+ *
+ * `isWithin` compares the names, which is not the same question: a save root
+ * holding a `BLUS30001` symlink keeps every member of that folder lexically
+ * inside it while every write lands wherever the link points. The listing
+ * skips such a link rather than following it, so nothing above would have
+ * noticed. So each step from the root down is checked for being one, the leaf
+ * included, and a link anywhere on the way refuses the restore outright
+ * rather than being resolved and allowed.
+ */
+async function unsafeDestination(
+  saveRoot: string,
+  destination: string,
+): Promise<string | null> {
+  if (!isWithin(saveRoot, destination)) return `resolves outside ${saveRoot}`;
+  const steps = relative(saveRoot, destination).split(sep).filter(Boolean);
+  let walked = saveRoot;
+  for (const step of steps) {
+    walked = join(walked, step);
+    const info = await lstat(walked).catch(() => null);
+    // Not there yet is the ordinary case: the restore creates it.
+    if (info?.isSymbolicLink()) return `sits under a link at ${walked}`;
+  }
+  return null;
+}
+
+/**
+ * What a restore did to the folder.
+ *
+ * The third case is the one that matters. A restore that failed before it
+ * wrote anything leaves the set the emulator was going to boot anyway; one
+ * that failed after is a set that is partly the server's and partly this
+ * machine's, and nothing on disk says which files are which. That mixture is
+ * not this run's to offer to the slot, so the caller sends nothing.
+ */
+type RestoreOutcome = "restored" | "untouched" | "partial";
 
 /**
  * Write the server's archive over this game's set.
@@ -309,13 +357,16 @@ async function restoreSet(options: {
   /** The set on disk, which is what the archive replaces. */
   replacing: readonly string[];
   signal: AbortSignal;
-}): Promise<boolean> {
+}): Promise<RestoreOutcome> {
   const { romId, saveRoot, target, signal } = options;
   // Somewhere outside the emulator's folder: a half-written archive left in
   // the save tree is a file the next listing would read as part of the set.
   const scratch = await mkdtemp(join(tmpdir(), "romm-save-")).catch(() => null);
-  if (!scratch) return false;
+  if (!scratch) return "untouched";
   const archivePath = join(scratch, "set.zip");
+  // Flipped the moment the folder stops being what the emulator would have
+  // booted without this.
+  let written = false;
 
   try {
     const fetched = await fetchSaveContent({
@@ -326,10 +377,10 @@ async function restoreSet(options: {
       destination: archivePath,
       signal,
     });
-    if (!fetched) return false;
+    if (!fetched) return "untouched";
 
     const archive = await readFile(archivePath).catch(() => null);
-    if (!archive) return false;
+    if (!archive) return "untouched";
 
     let members: SetMember[];
     try {
@@ -347,7 +398,7 @@ async function restoreSet(options: {
           error instanceof ZipError ? error.message : "it is not an archive"
         }`,
       );
-      return false;
+      return "untouched";
     }
 
     if (
@@ -357,7 +408,7 @@ async function restoreSet(options: {
       console.warn(
         `[standalone] rom ${romId}: the save archive that arrived is not the one the server described, so nothing is written`,
       );
-      return false;
+      return "untouched";
     }
 
     const plan = planRestore(members, target);
@@ -370,25 +421,29 @@ async function restoreSet(options: {
       console.warn(
         `[standalone] rom ${romId}: the server's archive named none of this game's save files`,
       );
-      return false;
+      return "untouched";
     }
 
-    // The names were checked as names; this checks the paths they became.
-    // All of them before any is written: half a restored set is worse than
-    // none.
+    // The names were checked as names; this checks the paths they became,
+    // following any link on the way down. All of them before any is written:
+    // half a restored set is worse than none.
     const writing = plan.write.map((member) => ({
       member,
       destination: join(saveRoot, member.name),
     }));
-    const escaping = writing.find(
-      (entry) => !isWithin(saveRoot, entry.destination),
-    );
-    if (escaping) {
-      console.warn(
-        `[standalone] rom ${romId}: ${escaping.member.name} resolves outside ${saveRoot}, so nothing is restored`,
-      );
-      return false;
+    for (const entry of writing) {
+      const refusal = await unsafeDestination(saveRoot, entry.destination);
+      if (refusal) {
+        console.warn(
+          `[standalone] rom ${romId}: ${entry.member.name} ${refusal}, so nothing is restored`,
+        );
+        return "untouched";
+      }
     }
+
+    // From here the folder is being changed, so a failure is a mixture
+    // rather than a no-op and the caller has to be told so.
+    written = true;
     for (const { member, destination } of writing) {
       await mkdir(dirname(destination), { recursive: true });
       await writeFile(destination, member.contents);
@@ -396,10 +451,12 @@ async function restoreSet(options: {
 
     // What the archive did not replace. Left in place it would keep the two
     // sides from ever agreeing again, and the bytes are on the server already.
+    // A removal that fails is not swallowed: the leftover would read as a
+    // local change on the next negotiation and be offered back as progress.
     for (const path of staleAfterRestore(options.replacing, plan.write)) {
       const stale = join(saveRoot, path);
       if (!isWithin(saveRoot, stale)) continue;
-      await rm(stale, { force: true }).catch(() => undefined);
+      await rm(stale, { force: true });
     }
 
     console.info(
@@ -412,11 +469,11 @@ async function restoreSet(options: {
       saveId: options.saveId,
       signal,
     });
-    return true;
+    return "restored";
   } catch (error) {
     if (signal.aborted) throw error;
     console.warn(`[standalone] rom ${romId}: the save restore failed`, error);
-    return false;
+    return written ? "partial" : "untouched";
   } finally {
     await rm(scratch, { recursive: true, force: true }).catch(() => undefined);
   }

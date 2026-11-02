@@ -55,6 +55,21 @@ export function saveTargetOf(identity: RomIdentity | null): SaveTarget | null {
     : null;
 }
 
+/**
+ * Whether this path lies where the target's own files do.
+ *
+ * Asked of a path that was skipped rather than listed, so what it is cannot
+ * be known: it is tested both as a file of its own and as a folder something
+ * would sit under, and either match counts. That covers a link standing in
+ * for a member and one standing in for the game's whole save folder.
+ */
+function withinTarget(path: string, target: SaveTarget): boolean {
+  return (
+    selectSaveFiles([path, `${path}/x`], target.target, target.layout).length >
+    0
+  );
+}
+
 /** The files under the save root this game's target names, in path order. */
 export function selectSet(
   files: readonly string[],
@@ -93,6 +108,12 @@ export async function assembleSet(
 ): Promise<LocalSet | null> {
   if (!tree.complete) return null;
 
+  // A listing skips symlinks without following them, which a diff can live
+  // with and a set cannot: one standing where a member belongs is a file
+  // missing from an archive that claims to be the whole set, and another
+  // device would restore that archive over its complete copy.
+  if (tree.skipped.some((path) => withinTarget(path, target))) return null;
+
   const paths = selectSet([...tree.files.keys()], target);
   if (paths.length > limits.maxFiles) return null;
 
@@ -100,8 +121,14 @@ export async function assembleSet(
   let bytes = 0;
   for (const path of paths) {
     const entry = tree.files.get(path);
+    if (!entry) return null;
+    // Checked against the listed size before the read, so a member measured
+    // in gigabytes is refused rather than allocated: the reader hands back a
+    // whole buffer, and a budget applied to what it returns is applied too
+    // late. Checked again below, since a file can grow after it is listed.
+    if (bytes + entry.size > limits.maxBytes) return null;
     const contents = await read(path);
-    if (!contents || !entry) return null;
+    if (!contents) return null;
     bytes += contents.length;
     if (bytes > limits.maxBytes) return null;
     members.push({ name: path, contents, modifiedAt: entry.modifiedAt });
@@ -207,13 +234,22 @@ export function planRestore(
  * A set is compared whole, so one of these keeps the two sides from ever
  * agreeing again. Bounded by the same target as everything else, and only
  * reached once the displaced bytes are on the server (`archiveFirst`).
+ *
+ * `caseInsensitive` is the filesystem's own idea of one file, and getting it
+ * wrong in that direction deletes a save: where `DATA.DAT` and `data.dat` are
+ * one file, a restore that writes the second spelling has already replaced
+ * the first, and comparing the names exactly would read the file it just
+ * wrote as stale and remove it.
  */
 export function staleAfterRestore(
   localSet: readonly string[],
   written: readonly SetMember[],
+  caseInsensitive = process.platform !== "linux",
 ): string[] {
-  const kept = new Set(written.map((member) => member.name));
-  return localSet.filter((path) => !kept.has(path)).sort();
+  const fold = (path: string) =>
+    caseInsensitive ? path.toLowerCase() : path;
+  const kept = new Set(written.map((member) => fold(member.name)));
+  return localSet.filter((path) => !kept.has(fold(path))).sort();
 }
 
 /** The name a set travels under. `.saves.zip` is what RomM's streaming writes

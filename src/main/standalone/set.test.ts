@@ -167,16 +167,18 @@ test("a set travels under the name RomM's own archives use", () => {
 });
 
 function tree(
-  files: Record<string, { modifiedAt?: number }>,
+  files: Record<string, { modifiedAt?: number; size?: number }>,
   complete = true,
+  skipped: string[] = [],
 ): Tree {
   return {
     complete,
+    skipped,
     files: new Map(
       Object.entries(files).map(([path, entry]) => [
         path,
         {
-          size: 1,
+          size: entry.size ?? 1,
           modifiedAt: entry.modifiedAt ?? 0,
           changedAt: 0,
           inode: 1,
@@ -290,6 +292,90 @@ test("a set survives the trip it actually makes, digest and all", () => {
     assert.deepEqual(entry.contents, members[index]?.contents);
   }
   assert.equal(zipContentHash(plan.write), zipContentHash(members));
+});
+
+test("a symlink where a member belongs is not a set", async () => {
+  // listTree skips it without following it, so the set would otherwise go up
+  // missing a file and another device would restore that over its own copy.
+  assert.equal(
+    await assembleSet(
+      tree({ "BLUS30001/PARAM.SFO": {} }, true, ["BLUS30001/data"]),
+      RPCS3,
+      reads({ "BLUS30001/PARAM.SFO": "sfo" }),
+    ),
+    null,
+  );
+});
+
+test("a symlink standing in for the whole save folder is not a set", async () => {
+  assert.equal(
+    await assembleSet(
+      tree({}, true, ["BLUS30001"]),
+      RPCS3,
+      reads({}),
+    ),
+    null,
+  );
+});
+
+test("a symlink outside the target is somebody else's problem", async () => {
+  const set = await assembleSet(
+    tree({ "BLUS30001/PARAM.SFO": {} }, true, ["BLES00002/data"]),
+    RPCS3,
+    reads({ "BLUS30001/PARAM.SFO": "sfo" }),
+  );
+  assert.ok(set);
+  assert.deepEqual(set.paths, ["BLUS30001/PARAM.SFO"]);
+});
+
+test("a member past the budget is refused before it is read", async () => {
+  // The reader hands back a whole buffer, so a budget applied to what it
+  // returns is applied after the allocation it was meant to prevent.
+  let read = false;
+  const set = await assembleSet(
+    tree({ "BLUS30001/HUGE.DAT": { size: 10_000 } }),
+    RPCS3,
+    async () => {
+      read = true;
+      return Buffer.alloc(10_000);
+    },
+    { maxFiles: 10, maxBytes: 1024 },
+  );
+  assert.equal(set, null);
+  assert.equal(read, false);
+});
+
+test("a file that grew since it was listed is still refused", async () => {
+  assert.equal(
+    await assembleSet(
+      tree({ "BLUS30001/A.DAT": { size: 1 } }),
+      RPCS3,
+      async () => Buffer.alloc(5_000),
+      { maxFiles: 10, maxBytes: 1024 },
+    ),
+    null,
+  );
+});
+
+test("one file under two spellings is not stale where the filesystem agrees", () => {
+  // The restore has already written DATA.DAT by writing data.dat, so calling
+  // the first stale would delete the save that just arrived.
+  assert.deepEqual(
+    staleAfterRestore(
+      ["BLUS30001/DATA.DAT"],
+      [member("BLUS30001/data.dat")],
+      true,
+    ),
+    [],
+  );
+  assert.deepEqual(
+    staleAfterRestore(
+      ["BLUS30001/DATA.DAT"],
+      [member("BLUS30001/data.dat")],
+      false,
+    ),
+    ["BLUS30001/DATA.DAT"],
+  );
 });
 
 test("a folder with none of this game's files is an empty set, not an absent one", async () => {
