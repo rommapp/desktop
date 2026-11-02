@@ -53,6 +53,10 @@ export interface SyncOperation {
   file_name: string;
   slot: string | null;
   server_content_hash: string | null;
+  /** What wrote the save the server is talking about, as it files it. Null for
+   *  one filed under no emulator at all, which is where this shell's own
+   *  RetroArch saves and the browser player's go. */
+  emulator: string | null;
 }
 
 /**
@@ -88,8 +92,19 @@ export interface PullPlan {
  * A null save is not the same as an empty one. It means this launch has nothing
  * on disk for the ROM yet, so the list is empty and the negotiation is only a
  * question about what the server has to offer.
+ *
+ * `emulator` is the exception to the paragraph above, and the standalone save
+ * sets are why it exists. Such a set is a tree of files laid out the way one
+ * emulator reads them, so naming the emulator is what keeps RPCS3's archive
+ * from being offered to Cemu, and `emulators` asks the server to leave every
+ * other emulator's saves out of the pairing entirely. A bare file still carries
+ * neither, which is what keeps it where the browser client looks.
  */
-export function buildNegotiatePayload(romId: number, local: LocalSave | null) {
+export function buildNegotiatePayload(
+  romId: number,
+  local: LocalSave | null,
+  owner?: { emulator?: string | null; emulators?: readonly string[] },
+) {
   return {
     saves: local
       ? [
@@ -100,10 +115,12 @@ export function buildNegotiatePayload(romId: number, local: LocalSave | null) {
             content_hash: local.contentHash,
             updated_at: local.updatedAt.toISOString(),
             file_size_bytes: local.sizeBytes,
+            ...(owner?.emulator ? { emulator: owner.emulator } : {}),
           },
         ]
       : [],
     rom_ids: [romId],
+    ...(owner?.emulators ? { emulators: [...owner.emulators] } : {}),
   };
 }
 
@@ -142,10 +159,18 @@ export function storedSave(body: unknown): number | null {
  * An operation naming no slot is still this launch's. It is the server talking
  * about the ROM rather than about one of its slots, which is the shape a no-op
  * takes, and reading it as someone else's would throw away the answer.
+ *
+ * `accepts` is the third question, and the one a slot cannot answer. Two
+ * emulators can hold the same slot for the same ROM: a GameCube game plays in
+ * RetroArch's Dolphin core and in Dolphin itself, and what each writes is
+ * unreadable to the other. So a launch says whose saves it can read, and an
+ * operation about anybody else's is left alone rather than downloaded over the
+ * file this launch is about to boot.
  */
 export function selectOperation(
   operations: unknown[],
   romId: number,
+  accepts: (emulator: string | null) => boolean = () => true,
 ): SyncOperation | null {
   const ours = operations
     .filter(
@@ -154,7 +179,8 @@ export function selectOperation(
         item !== null &&
         (item as { rom_id?: unknown }).rom_id === romId,
     )
-    .map(toOperation);
+    .map(toOperation)
+    .filter((op) => accepts(op.emulator));
 
   return (
     ours.find((op) => op.slot === AUTOSAVE_SLOT) ??
@@ -184,6 +210,7 @@ function toOperation(raw: unknown): SyncOperation {
       typeof item.server_content_hash === "string"
         ? item.server_content_hash
         : null,
+    emulator: typeof item.emulator === "string" ? item.emulator : null,
   };
 }
 

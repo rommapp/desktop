@@ -61,7 +61,7 @@ import {
   type StateEntry,
 } from "./saves/states.ts";
 import { pullStates, pushStates } from "./saves/state-sync.ts";
-import { startStandaloneProbe } from "./standalone/probe.ts";
+import { startStandaloneSaves } from "./standalone/launch.ts";
 import {
   completeSync,
   pullSave,
@@ -908,18 +908,33 @@ export class Launcher {
       // would still start after the cancel was reported.
       throwIfCancelled(controller.signal);
 
-      // A standalone emulator's own save and state folders, read before it
-      // starts so the exit can say what the run wrote there.
+      // A standalone emulator's own save and state folders. The set RomM's
+      // save target names comes down here, before the emulator can read it,
+      // and both folders are listed so the exit can say what the run wrote.
+      // A game RomM has no id for moves nothing and is only reported.
+      // Not `syncsSaves`, which asks whether the launch names a save file:
+      // a standalone mapping names none, and its saves are the set under the
+      // emulator's own folder rather than a file the shell hands it.
+      if (launch.emulatorId && saveSyncEnabled(config)) {
+        this.emit({
+          romId: request.romId,
+          status: "downloading",
+          stage: "save",
+        });
+      }
       const standalone = launch.emulatorId
-        ? await startStandaloneProbe({
+        ? await startStandaloneSaves({
             config,
             session,
             romId: request.romId,
+            fileName: request.fileName,
             platformSlug: request.platformSlug,
             emulatorId: launch.emulatorId,
             command: launch.command,
             args: launch.args,
             signal: controller.signal,
+            onSync: (sync) =>
+              this.emit({ romId: request.romId, status: "sync", sync }),
           }).catch(() => null)
         : null;
       // The listing is not interruptible either, and a cancel during it must

@@ -37,6 +37,12 @@ export interface Tree {
   /** False when a limit, an unreadable folder or a symlinked root left
    *  something out. A root that does not exist is complete and empty. */
   complete: boolean;
+  /** Paths that were skipped for being neither a file nor a directory, which
+   *  in practice means a symlink. Recorded rather than folded into
+   *  `complete`: a diff can ignore a link it never followed, but a save set
+   *  cannot, since one standing where a member belongs is a member missing
+   *  from an archive that claims to be the whole set. */
+  skipped: string[];
 }
 
 export interface TreeLimits {
@@ -67,6 +73,7 @@ export async function listTree(
   limits: TreeLimits = DEFAULT_TREE_LIMITS,
 ): Promise<Tree> {
   const files = new Map<string, TreeEntry>();
+  const skipped: string[] = [];
   let complete = true;
   let visited = 0;
 
@@ -74,9 +81,9 @@ export async function listTree(
   try {
     rootInfo = await lstat(root);
   } catch (error) {
-    return { files, complete: isMissing(error) };
+    return { files, skipped, complete: isMissing(error) };
   }
-  if (!rootInfo.isDirectory()) return { files, complete: false };
+  if (!rootInfo.isDirectory()) return { files, skipped, complete: false };
 
   const walk = async (directory: string, prefix: string, depth: number) => {
     if (depth > limits.maxDepth) {
@@ -115,11 +122,13 @@ export async function listTree(
           changedAt: info.ctimeMs,
           inode: info.ino,
         });
+      } else {
+        skipped.push(relative);
       }
     }
   };
   await walk(root, "", 0);
-  return { files, complete };
+  return { files, skipped, complete };
 }
 
 /**

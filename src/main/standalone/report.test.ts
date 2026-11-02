@@ -17,6 +17,7 @@ const DATA: StandaloneData = {
 
 function tree(paths: Record<string, number>, complete = true): Tree {
   return {
+    skipped: [],
     files: new Map(
       Object.entries(paths).map(([path, modifiedAt]) => [
         path,

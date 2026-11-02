@@ -326,7 +326,7 @@ passing an empty argument. An optional `playlist` key says whether the emulator
 boots an `.m3u`, which only affects [multi-disc games](#multi-disc-games). An
 optional `emulatorId` (`pcsx2`, `dolphin`, `rpcs3` or `cemu`) says which
 standalone emulator the row runs, so its
-[saves are looked for](#standalone-emulator-saves) where that emulator keeps
+[saves are synced](#standalone-emulator-saves) from where that emulator keeps
 them; a detected emulator carries one already.
 
 Set `emulatorsBasePath` and a `command` can be relative to it, for a frontend
@@ -659,18 +659,45 @@ folder, beside their settings, under names taken from the game's own id
 not given a directory per game the way RetroArch is: a launch pointed at a
 folder of its own would also boot an emulator with none of your settings.
 
-Syncing them is in progress. For now a standalone launch only looks, and says
-in the log what it found, so the parts that will move files can be checked
-against real installs first:
+What a game's save is, in such a folder, is whatever sits under the name its
+own id gives it: a folder for an RPCS3 or Cemu save, a Wii title's storage
+tree, a `.gci` per game in a Dolphin card folder. So the unit that syncs is
+that whole set rather than a file, and it travels as one zip, through the same
+negotiation and the same `autosave` slot a RetroArch save uses. The set comes
+down before the emulator starts and goes back up after it exits. RomM's own
+streaming stores a save archive the same way, so the two file saves alike.
+
+The game's id and the name its saves go under come from RomM, which reads them
+out of the ROM when it scans it, on servers built with that support. **That id
+is what makes the set, so a game RomM has no id for syncs nothing.** Such a
+launch still says in the log what it found and what the run wrote, which is
+what the first version of this did for every launch:
 
 ```
 [standalone] rom 12: dolphin keeps saves in ~/.local/share/dolphin-emu/Wii/title (default); RomM names 52534245 (folder-exact), which selects 3 of 41 files there
 [standalone] rom 12: the run wrote 2 save files: 00010000/52534245/data/save.bin, ...; RomM's target selects 2 of them
 ```
 
-The game's id and the name its saves go under come from RomM, which reads them
-out of the ROM when it scans it, on servers built with that support. A line
-saying RomM's target selects nothing the run wrote is worth reporting.
+A line saying RomM's target selects nothing the run wrote is worth reporting.
+
+The rules the set sync keeps, which are not the ones the RetroArch path keeps:
+
+- **A folder that cannot be listed whole syncs nothing.** Part of a set, sent
+  to the slot, is what another device would restore over its complete copy.
+- **A download replaces the set rather than merging into it**, because a set is
+  compared whole: one file left behind that the server's copy does not hold is
+  a difference every negotiation afterwards reads as a local change. What it
+  displaces goes up as an archival save first, and only files this game's own
+  target names are ever written or removed.
+- **A slot emptied on the server is not acted on.** Deleting one `.srm` is a
+  file; deleting a set is a game's whole save folder, so it is logged and the
+  run sends nothing rather than offering the set back.
+- **Nothing is sent while the game runs.** A tick would mean re-reading and
+  re-hashing the whole set, so the push after the exit is the whole of it.
+- **Two games on one emulator at once**: the second leaves the folder alone, as
+  before, and syncs nothing that run.
+
+Savestates are still only reported. They are the next piece of work.
 
 The user folder is the emulator's default for your platform, the Flatpak's own
 folder for a Flatpak launch, or the install's folder when it is portable

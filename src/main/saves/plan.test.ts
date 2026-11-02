@@ -31,6 +31,7 @@ function op(patch: Partial<SyncOperation> = {}): SyncOperation {
     file_name: "Game.srm",
     slot: null,
     server_content_hash: null,
+    emulator: null,
     ...patch,
   };
 }
@@ -129,6 +130,69 @@ test("the shared slot is preferred over an unattributed operation", () => {
     7,
   );
   assert.equal(chosen?.save_id, 5);
+});
+
+test("an operation about another emulator's save is left alone", () => {
+  // A GameCube game plays in RetroArch's Dolphin core and in Dolphin itself,
+  // and the two hold the same slot for the same ROM. Taking Dolphin's set
+  // would write an archive over the file RetroArch is about to boot.
+  const operations = [
+    op({ rom_id: 7, slot: AUTOSAVE_SLOT, save_id: 8, emulator: "dolphin" }),
+    op({ rom_id: 7, slot: AUTOSAVE_SLOT, save_id: 9, emulator: null }),
+  ];
+  assert.equal(
+    selectOperation(operations, 7, (emulator) => emulator !== "dolphin")
+      ?.save_id,
+    9,
+  );
+  assert.equal(
+    selectOperation(operations, 7, (emulator) => emulator === "dolphin")
+      ?.save_id,
+    8,
+  );
+});
+
+test("a launch that accepts nobody's saves takes no operation", () => {
+  const chosen = selectOperation(
+    [op({ rom_id: 7, slot: AUTOSAVE_SLOT, save_id: 8, emulator: "rpcs3" })],
+    7,
+    (emulator) => emulator === "cemu",
+  );
+  assert.equal(chosen, null);
+});
+
+test("every operation is this launch's when it says nothing about emulators", () => {
+  const chosen = selectOperation(
+    [op({ rom_id: 7, slot: AUTOSAVE_SLOT, save_id: 8, emulator: "rpcs3" })],
+    7,
+  );
+  assert.equal(chosen?.save_id, 8);
+});
+
+test("a save set names its emulator on both halves of the payload", () => {
+  const body = buildNegotiatePayload(
+    7,
+    {
+      fileName: "Game.saves.zip",
+      contentHash: "aaaa",
+      updatedAt: new Date("2026-09-18T12:00:00.000Z"),
+      sizeBytes: 32,
+    },
+    { emulator: "rpcs3", emulators: ["rpcs3"] },
+  );
+  assert.equal(body.saves[0]?.emulator, "rpcs3");
+  assert.deepEqual(body.emulators, ["rpcs3"]);
+});
+
+test("a launch with nothing on disk still says whose saves it reads", () => {
+  // The question is about what the server holds, so the filter matters even
+  // with no local set to compare against.
+  const body = buildNegotiatePayload(7, null, { emulators: ["cemu"] });
+  assert.deepEqual(body, {
+    saves: [],
+    rom_ids: [7],
+    emulators: ["cemu"],
+  });
 });
 
 test("an answer about other ROMs alone yields nothing", () => {
