@@ -295,6 +295,20 @@ export function standaloneData(options: {
   };
 }
 
+/**
+ * Whether a save the server files under this emulator's name is one of these
+ * emulators' own save sets.
+ *
+ * Such a set is a tree laid out the way one emulator reads it, so it is not a
+ * version of the single file a RetroArch launch owns, however recently it
+ * landed in the same slot for the same ROM. A GameCube game plays both ways,
+ * which is how the two meet, and each launch uses this to leave the other's
+ * saves where they are.
+ */
+export function isStandaloneSaveSet(emulator: string | null): boolean {
+  return emulator !== null && emulator.toLowerCase() in DATA;
+}
+
 /** The id of a standalone emulator this shell knows, or null for any other
  *  string, so a typo in a hand-written row switches nothing on. */
 export function knownStandaloneId(id: string | undefined): string | null {
