@@ -57,6 +57,13 @@ as you would in a browser; the shell holds no credentials of its own.
 | `--setup` | Reopen the server-address window to correct a mistyped address      |
 | `--spike` | Inject a test panel, for a server without the RomM-side integration |
 
+Pass these through npm with a `--` separator, or npm takes them as its own
+config and the app never sees them:
+
+```bash
+npm start -- --setup
+```
+
 `--spike` is throwaway scaffolding carrying a hardcoded slice of RomM's
 platform/core map. Delete `src/main/spike.ts`, `src/main/spike.test.ts` and the
 `installSpike` wiring in `src/main/window.ts` once the launch path has been
