@@ -8,6 +8,7 @@ import {
 } from "../../shared/types.ts";
 import { type BiosPaths, resolveBiosPaths } from "../firmware/paths.ts";
 import { type SavePaths } from "../saves/paths.ts";
+import { knownStandaloneId } from "../standalone/data.ts";
 import { detectedMappingFor } from "./standalone.ts";
 
 /** Fallback row applied to any platform without its own mapping. */
@@ -50,6 +51,9 @@ export interface ResolvedLaunch {
   /** The libretro core this launch runs, when it runs one. Null for a
    *  standalone emulator, which has no core to name. */
   core: string | null;
+  /** The standalone emulator this launch runs, when it is one the shell knows
+   *  where to find the saves of. */
+  emulatorId: string | null;
 }
 
 /**
@@ -560,6 +564,7 @@ export function resolveLaunch({
       }),
       label: mapping.label ?? mapping.command,
       core: core?.name ?? null,
+      emulatorId: knownStandaloneId(mapping.emulatorId),
     };
   }
 
@@ -626,5 +631,6 @@ export function resolveLaunch({
     ],
     label: `RetroArch (${core.name})`,
     core: core.name,
+    emulatorId: null,
   };
 }

@@ -235,6 +235,11 @@ export interface EmulatorMapping {
    *  Inferred from the arguments when unset: one naming "{core}" is RetroArch
    *  driving a libretro core, which reads one. */
   playlist?: boolean;
+  /** Which standalone emulator this row runs ("pcsx2", "dolphin", "rpcs3",
+   *  "cemu"), so its saves and states are found where that emulator keeps
+   *  them. Set on a detected row; a hand-written one opts in by naming it, and
+   *  any other value is ignored. */
+  emulatorId?: string;
 }
 
 export interface DesktopConfig {
@@ -277,6 +282,9 @@ export interface DesktopConfig {
   emulatorsBasePath: string | null;
   /** Per-platform overrides, consulted before the RetroArch default. */
   emulators: EmulatorMapping[];
+  /** A standalone emulator's user folder, keyed by emulator id, for an install
+   *  whose folder is neither the emulator's default nor marked portable. */
+  standaloneDataPaths: Record<string, string>;
   /** Where downloaded ROMs are cached. Defaults to userData/rom-cache. */
   cachePath: string | null;
   /** Root for the per-platform directories RomM's firmware is mirrored into,

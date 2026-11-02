@@ -188,6 +188,7 @@ test("the platforms RetroArch cannot play at all have a row each", () => {
       args: ["--no-gui", "{rom}"],
       label: "RPCS3",
       playlist: false,
+      emulatorId: "rpcs3",
     },
     {
       platformSlug: "wiiu",
@@ -195,6 +196,7 @@ test("the platforms RetroArch cannot play at all have a row each", () => {
       args: ["-g", "{rom}"],
       label: "Cemu",
       playlist: false,
+      emulatorId: "cemu",
     },
   ]);
 });
@@ -266,7 +268,8 @@ test("one Dolphin covers both GameCube and Wii", () => {
 
 test("a detected row is shaped exactly like a hand-written one", () => {
   // So a detected emulator and a configured one travel the same launch path,
-  // rather than there being a second mechanism to keep in step.
+  // rather than there being a second mechanism to keep in step. The id is one
+  // a hand-written row can carry too.
   const [mapping] = toEmulatorMappings(
     detect(
       "darwin",
@@ -280,6 +283,7 @@ test("a detected row is shaped exactly like a hand-written one", () => {
     args: ["-batch", "{rom}"],
     label: "PCSX2",
     playlist: false,
+    emulatorId: "pcsx2",
   });
 });
 
