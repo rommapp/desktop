@@ -1,29 +1,20 @@
 // The standalone side of a launch: what moves, and what is only reported.
 //
-// A standalone emulator keeps a game's saves in its own user folder, under
-// names taken from the game's id, so there are two different launches here and
-// the difference is whether RomM could read that id out of the ROM.
+// Two kinds of launch, and the difference is whether RomM could read the
+// game's id out of the ROM. With an id there is a save set (set.ts) and it
+// syncs, down before the emulator starts and up after it exits (saves.ts).
+// Without one nothing moves: the folder is listed either side of the run and
+// the difference is logged, which is how the folder and target logic is
+// checked against a real install. States are the second case either way for
+// now; they are the next piece of work.
 //
-// When it could, the id names a set of files (set.ts) and the set syncs: it
-// comes down before the emulator starts and goes up after it exits, as one zip
-// through the same negotiation a RetroArch save uses (saves.ts). When it could
-// not, nothing moves. The folder is listed before and after the run and the
-// difference is logged, which is what step 1 added and what the folder and
-// target logic is still checked against on a real install.
+// The order is why this sits between the launcher and the two halves. The
+// pull finishes before the emulator starts, the listing is taken after the
+// pull so a file that came down is not read as one the run wrote, and the
+// folder claim outlives both.
 //
-// States are the second case either way, for now: a standalone emulator's
-// savestates are the next piece of work, so a run still only reports what it
-// wrote to the state folder.
-//
-// The order matters and is the reason this sits between the launcher and the
-// two halves. The pull has to finish before the emulator starts, or a restore
-// lands under a running emulator. The listing that says what the run wrote has
-// to be taken after the pull, or a file that came down reads as one the run
-// wrote. And the folder claim has to outlive both, so a second launch of the
-// same emulator leaves the folder alone.
-//
-// Reads, writes and requests, all of it best effort: nothing here can fail a
-// launch, and the only thing that leaves is the launch's own cancel.
+// Best effort throughout: nothing here can fail a launch, and the only thing
+// that leaves is the launch's own cancel.
 
 import { type Session } from "electron";
 import { homedir } from "node:os";
@@ -88,10 +79,10 @@ export interface StandaloneOptions {
  * Settle a standalone launch's saves and take the before-reading of its
  * folders.
  *
- * Awaited before the spawn. The identity request is part of that wait now,
- * unlike in step 1 where it only coloured a log line: what it answers decides
- * whether a set comes down, and a set has to come down before the emulator
- * reads it. A server that does not answer costs the sync and not the launch.
+ * Awaited before the spawn, the identity request included: what it answers
+ * decides whether a set comes down, and a set has to come down before the
+ * emulator reads it. A server that does not answer costs the sync, not the
+ * launch.
  */
 export async function startStandaloneSaves(
   options: StandaloneOptions,
@@ -192,9 +183,8 @@ async function finish(
 ): Promise<void> {
   const { romId, saveRoot, stateRoot, claim } = context;
 
-  // Read and released before anything is sent: an upload has no deadline of
-  // its own, and a server that never answers must not keep the folder claimed
-  // for the launches after this one.
+  // Read and released before anything is sent: an upload has no deadline, and
+  // a server that never answers must not keep the folder claimed.
   let savesAfter, statesAfter, contested;
   try {
     savesAfter = await listTree(saveRoot);
@@ -227,10 +217,9 @@ async function finish(
     );
   }
 
-  // A contested folder does not stop the set from being sent. What makes the
-  // diff above untrustworthy is that it cannot tell two launches' writes
-  // apart; the target can, because it names one game's files and the other
-  // launch is a different game.
+  // A contested folder does not stop the set being sent. The diff above
+  // cannot tell two launches' writes apart; the target can, since it names one
+  // game's files and the other launch is a different game.
   const { target, pulled } = context;
   if (!target || !pulled?.deviceId || pulled.sessionId === null) return;
 
@@ -249,10 +238,8 @@ async function finish(
   });
   if (outcome) context.onSync?.(outcome);
 
-  // The session the negotiation opened, closed with what this launch moved.
-  // Last, and a failure is not worth acting on: the saves have moved or not
-  // already, and a session nobody closes is a stale row rather than a lost
-  // save.
+  // The session the negotiation opened. Last, and a failure is not worth
+  // acting on: an unclosed session is a stale row, not a lost save.
   const moved = [pulled.outcome, outcome].filter(
     (entry): entry is SaveSyncOutcome => entry !== null && entry !== undefined,
   );

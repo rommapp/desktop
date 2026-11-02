@@ -2,19 +2,16 @@
 //
 // Split out of sync.ts because there are two kinds of save now and they share
 // every request but none of the bookkeeping. A RetroArch launch owns one file
-// and compares it by the md5 of its bytes. A standalone emulator's launch owns
-// a set of files under its own save folder, which travels as one zip and is
-// compared by the digest of the entries rather than of the archive, so it
-// cannot reuse a download that verifies the bytes it wrote.
+// and compares it by the md5 of its bytes; a standalone launch owns a set of
+// files that travels as one zip and is compared by the digest of the entries,
+// so it cannot reuse a download that verifies the bytes it wrote.
 //
-// So the transfers live here, each taking everything it needs as an argument
-// and keeping no state, and what to do with them stays with the caller that
-// knows which kind of save it is holding. sync.ts is still the RetroArch file's
-// three stages; standalone/saves.ts is the set's two.
+// So the transfers live here, each taking what it needs and keeping no state,
+// and what to do with them stays with the caller that knows which kind of save
+// it holds.
 //
-// Like everything else on the save path, nothing here throws for a save that
-// did not move. The one exception is the launch's own cancel, which is
-// re-thrown so it reads as a cancel rather than as a server that went quiet.
+// Nothing here throws for a save that did not move. The one exception is the
+// launch's own cancel, re-thrown so it reads as a cancel.
 
 import { type Session } from "electron";
 import { mkdir, rm } from "node:fs/promises";

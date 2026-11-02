@@ -1,31 +1,20 @@
 // Moving a standalone emulator's save set between the server and its own
 // folder.
 //
-// The same two stages as saves/sync.ts, against a different unit. There the
-// shell owns one file, names it to the emulator and reads it back; here it
-// owns a set of files under a folder the emulator owns, decided by RomM's save
-// target (set.ts), carried as one zip and compared by the digest of the
-// entries, which is what RomM hashes a zip save by.
+// The same two stages as saves/sync.ts against a different unit: there the
+// shell owns one file, here a set of files under a folder the emulator owns,
+// decided by RomM's save target (set.ts) and carried as one zip.
 //
-// What that changes, beyond the zipping:
+// Four rules the file path does not have:
 //
-// - An incomplete listing syncs nothing. Half a set offered to the slot is a
-//   set another device would restore over a whole one, which is the only way
-//   this path can lose a save that exists nowhere else.
-// - A restore replaces the set rather than merging into it, because a set is
-//   compared whole: one file left behind that the server's copy does not hold
-//   is a difference every negotiation after it reads as a local change. The
-//   bytes it displaces are already on the server by then, which is what
-//   `planPull`'s `archiveFirst` is for, and only files this game's target
-//   names are ever removed.
-// - A slot the server says was emptied is not acted on. Deleting one `.srm`
-//   is a file; deleting a set is a game's whole folder on the strength of a
-//   row, and the push is held back for that run instead so the deletion is
-//   not immediately undone.
-// - There is no watching while the game runs. A tick would mean re-reading and
-//   re-hashing the whole set, and a memory card folder is not a file to hash
-//   every few seconds. The push after the exit is the whole of what a set run
-//   has to say.
+// - An incomplete listing syncs nothing. Half a set in the slot is one
+//   another device restores over a whole one.
+// - A restore replaces the set rather than merging into it, since a set is
+//   compared whole. What it displaces is on the server first (`archiveFirst`)
+//   and only files the target names are removed.
+// - A slot emptied on the server is not acted on: deleting a set is a game's
+//   whole folder. The push is held back for that run instead.
+// - No watching during the run; a tick would re-hash the whole set.
 //
 // Like everything on the save path, nothing here may fail a launch, and the
 // only thing that leaves is the launch's own cancel.
@@ -185,10 +174,9 @@ async function runPullSet(options: SetSyncOptions): Promise<SetPullResult> {
         : null,
       signal,
       emulator: emulatorId,
-      // Both ends of the same question. The server leaves every other
-      // emulator's saves out of the pairing, and an operation about one that
-      // reaches here anyway is not this launch's to act on: a set is laid out
-      // the way one emulator reads it, and nobody else can.
+      // Both ends of the same question: the server leaves other emulators'
+      // saves out of the pairing, and one that reaches here anyway is still
+      // not this launch's to act on.
       emulators: [emulatorId],
       accepts: (emulator) => emulator?.toLowerCase() === emulatorId,
     });
@@ -218,10 +206,8 @@ async function runPullSet(options: SetSyncOptions): Promise<SetPullResult> {
       `this run may ${plan.allowance}`,
   );
 
-  // A deletion is not acted on here. One `.srm` is a file; this is a game's
-  // whole folder on the strength of a row, and the set sync has not earned
-  // that yet. The push is held back instead, so the run does not simply offer
-  // the set back and undo the deletion.
+  // Not acted on: one `.srm` is a file, this is a game's whole folder. The
+  // push is held back instead, so the run does not undo the deletion.
   if (plan.removeLocal) {
     console.info(
       `[standalone] rom ${romId}: the slot was emptied on the server; the local save set is left alone and nothing is sent this run`,
@@ -285,10 +271,9 @@ async function runPullSet(options: SetSyncOptions): Promise<SetPullResult> {
     });
     if (restored) {
       outcome = { action: "downloaded", slot: operation.slot };
-      // What the push compares against has to be the set the emulator is
-      // about to boot. A folder that cannot be read back is one this run has
-      // no opinion about, and re-sending what just arrived is the one wrong
-      // answer available here.
+      // The push has to compare against the set the emulator will boot. A
+      // folder that will not read back leaves it nothing to compare, and
+      // re-sending what just arrived is the one wrong answer here.
       const settled = await readSet(saveRoot, target);
       if (settled) {
         before = stampOf(settled);
@@ -307,13 +292,10 @@ async function runPullSet(options: SetSyncOptions): Promise<SetPullResult> {
 /**
  * Write the server's archive over this game's set.
  *
- * Verified before anything is written, and by the digest of the entries rather
- * than of the bytes: that is what the server reports for a zip save, and a
- * truncated transfer that happened to unpack would otherwise replace a working
- * save with part of one.
- *
- * Members are written before the displaced files are removed, so a failure
- * part way through leaves too many files rather than too few.
+ * Verified before anything is written, by the digest of the entries rather
+ * than of the bytes: that is what the server reports for a zip save. Members
+ * are written before the displaced files are removed, so a failure part way
+ * leaves too many files rather than too few.
  */
 async function restoreSet(options: {
   serverUrl: string;
@@ -391,10 +373,9 @@ async function restoreSet(options: {
       return false;
     }
 
-    // The names were checked as names; this checks the paths they became,
-    // which is the thing that actually has to stay inside the folder. All of
-    // them before any of them is written: half a restored set on disk is
-    // worse than none, and there is nothing to be gained by finding out late.
+    // The names were checked as names; this checks the paths they became.
+    // All of them before any is written: half a restored set is worse than
+    // none.
     const writing = plan.write.map((member) => ({
       member,
       destination: join(saveRoot, member.name),
@@ -447,12 +428,8 @@ export interface SetPushOptions extends SetSyncOptions {
   allowance: Allowance;
 }
 
-/**
- * Send what the emulator left in its own folder.
- *
- * Detached from the exit, like the file push: the window comes back when the
- * emulator does, and an upload is never what a player waits on.
- */
+/** Send what the emulator left in its own folder. Detached from the exit: an
+ *  upload is never what a player waits on. */
 export function pushSet(
   options: SetPushOptions,
 ): Promise<SaveSyncOutcome | null> {

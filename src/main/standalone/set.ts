@@ -1,27 +1,16 @@
-// A standalone emulator's save set for one game: what it is, and what may be
-// written back into it.
+// A standalone emulator's save set for one game.
 //
-// RetroArch's save is a file, so the shell can name it, hand it to the
-// emulator and read it back. Dolphin, RPCS3 and Cemu keep a folder per game
-// under one tree they own, several files that only mean anything together, and
-// nothing the shell says at launch moves them. So the unit that travels is the
-// set: the files under the emulator's save root that RomM's save target names
-// for this game, carried as one zip and compared by the digest of its entries
-// (`zipContentHash`, which is RomM's `hash_zip_contents`).
+// RetroArch's save is a file the shell names and hands over. Dolphin, RPCS3
+// and Cemu keep a folder per game under a tree they own, so the unit that
+// travels is the set: the files under the save root that RomM's save target
+// names, zipped, compared by the digest of its entries (RomM's
+// `hash_zip_contents`).
 //
-// The target is what bounds both directions, and that is the whole safety
-// argument here. Going up, it decides which of the emulator's files are this
-// game's, so a launch never sends another game's save. Coming down, every
-// member of the archive has to be a path that is safe to join and a file the
-// same target names, so an archive naming `../../config.ini`, or naming
-// another game's folder, writes nothing. A target is the server's string, and
-// the one place it would be dangerous is as a path; it is never used as one.
-//
-// Without a target there is no set. The watch-the-folder fallback in tree.ts
-// says what a run wrote, which is worth logging and is not worth uploading:
-// what it catches is "files that changed", and an emulator writing its own
-// settings, or a second game's save landing in the same tree, is caught by
-// exactly that description.
+// The target bounds both directions, which is the safety argument here. Going
+// up it picks this game's files; coming down every member has to be a safe
+// relative path and a file the same target names, so an archive naming
+// `../../config.ini` or another game's folder writes nothing. The target is
+// the server's string and is never used as a path.
 //
 // No Electron here, so all of it can be tested.
 
@@ -34,21 +23,17 @@ import {
 } from "./identity.ts";
 import { type Tree } from "./tree.ts";
 
-/** One member of the set, named the way a listing of the save root names it:
- *  relative to the root and "/"-separated, which is also how it is spelled in
- *  the archive and how the target is matched against it. */
+/** One member of the set, named relative to the save root and "/"-separated:
+ *  how a listing spells it, how the archive spells it, and what the target is
+ *  matched against. */
 export interface SetMember {
   name: string;
   contents: Buffer;
   modifiedAt: number;
 }
 
-/** What a save set may be, before it is read off disk or out of an archive.
- *
- *  A Wii game's storage is a handful of files and an RPCS3 save folder a few
- *  dozen; a memory card folder can be a few hundred. These are far past any of
- *  them, and only here so a target that matches half an emulator's tree, or an
- *  archive built by something else, stops rather than being read whole into
+/** Far past any real save set (a few hundred files at worst), so a target
+ *  matching half an emulator's tree stops rather than being read into
  *  memory. */
 export const SET_LIMITS = {
   maxFiles: 2_000,
@@ -61,14 +46,9 @@ export interface SaveTarget {
   layout: SaveTargetLayout;
 }
 
-/**
- * The target RomM gave for this game, or null when it gave none that can be
- * applied.
- *
- * Both halves or neither: a target with no layout cannot be told from a file
- * prefix, which identity.ts already drops, and this is the shape the rest of
- * the sync asks for.
- */
+/** The target RomM gave for this game, or null when it gave none that can be
+ *  applied. Both halves or neither: a target with no layout cannot be told
+ *  from a file prefix. */
 export function saveTargetOf(identity: RomIdentity | null): SaveTarget | null {
   return identity?.saveTarget && identity.layout
     ? { target: identity.saveTarget, layout: identity.layout }
@@ -94,21 +74,16 @@ export interface LocalSet {
 }
 
 /**
- * Put a set together from a listing of the save root and a reader for the
- * files in it.
+ * Put a set together from a listing of the save root and a reader for it.
  *
- * Null is the one answer that is not a set, and every way of reaching it is
- * the same thing: this run cannot say what the set is. A listing cut short, a
- * member that would not read, a target matching more files or more bytes than
- * any save could be. Each of them would otherwise produce a set missing
- * something, and a set is compared and restored whole, so a partial one
- * offered to the slot is one another device would restore over a complete
- * one. That is the only way this path can lose a save that exists nowhere
- * else, which is why it is four returns rather than a best effort.
+ * Null means this run cannot say what the set is: a listing cut short, a
+ * member that would not read, a target matching more than any save could be.
+ * Each would produce a set missing something, and a partial set offered to the
+ * slot is one another device restores over a complete one, which is the only
+ * way this path loses a save outright.
  *
- * An empty set is not null. A folder that is not there, and a target that
- * names none of what is, are both this game having no save here: nothing to
- * send, and somewhere for a download to land.
+ * An empty set is not null: it is this game having no save here, which is
+ * still somewhere for a download to land.
  */
 export async function assembleSet(
   tree: Tree,
@@ -147,13 +122,9 @@ export async function assembleSet(
 /**
  * Whether a name out of an archive is one this shell will turn into a path.
  *
- * Everything an archive says about where its members go is the archive's to
- * say, so this is the gate that keeps it inside the save root. Absolute paths,
- * drive letters, UNC prefixes, `..`, backslashes (a separator on Windows and a
- * literal character elsewhere, which is how one name means two things),
- * control characters and Windows' reserved trailing characters are all refused
- * rather than cleaned up: a name that needs fixing is not one worth guessing
- * at.
+ * Absolute paths, drive letters, `..`, backslashes, control characters and
+ * Windows' reserved trailing characters are refused rather than cleaned up: a
+ * name that needs fixing is not one worth guessing at.
  */
 export function safeMemberName(name: string): boolean {
   if (!name || name.length > 512) return false;
@@ -185,13 +156,9 @@ export interface RestorePlan {
 /**
  * What of a downloaded archive may be written under the save root.
  *
- * Two gates, and a member has to pass both. The name has to be safe to join to
- * the root, and the file has to be one this game's target names, which is the
- * same question asked of the files already on disk. Together they mean a
- * restore can only ever write where this game's own saves live: an archive
- * that names another game's folder, or a path out of the tree, is refused
- * member by member rather than refusing the whole transfer, so one odd entry
- * does not cost a player their save.
+ * Two gates: the name has to be safe to join, and the file has to be one this
+ * game's target names. Refused member by member rather than whole, so one odd
+ * entry does not cost a player their save.
  */
 export function planRestore(
   members: readonly SetMember[],
@@ -237,14 +204,9 @@ export function planRestore(
 /**
  * The files a restore leaves behind that the archive did not replace.
  *
- * A set is compared whole, so a file the server's copy does not hold keeps the
- * two from ever agreeing again: every negotiation after it reads as a change
- * this device made. These are the ones to remove, and they are bounded by the
- * same target as everything else, so a restore can only ever delete files this
- * game's save target names.
- *
- * Only reached once the displaced bytes are already on the server, which is
- * what `planPull`'s `archiveFirst` is for.
+ * A set is compared whole, so one of these keeps the two sides from ever
+ * agreeing again. Bounded by the same target as everything else, and only
+ * reached once the displaced bytes are on the server (`archiveFirst`).
  */
 export function staleAfterRestore(
   localSet: readonly string[],
@@ -254,15 +216,9 @@ export function staleAfterRestore(
   return localSet.filter((path) => !kept.has(path)).sort();
 }
 
-/**
- * The name a set travels under.
- *
- * `.saves.zip` is what RomM's own streaming writes a pulled save archive as
- * (`store_save_asset` in `handler/streaming/saves.py`), and the extension is
- * what the server reads a set by: it hashes a zip by its entries, and the
- * streaming side will only restore an archive. The slot tags a version onto
- * the stem, which leaves the extension where it is.
- */
+/** The name a set travels under. `.saves.zip` is what RomM's streaming writes
+ *  its own save archives as, and the extension is what the server reads a set
+ *  by: it hashes a zip by its entries. */
 export function setFileName(base: string): string {
   return `${base}.saves.zip`;
 }
