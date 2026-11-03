@@ -697,7 +697,33 @@ The rules the set sync keeps, which are not the ones the RetroArch path keeps:
 - **Two games on one emulator at once**: the second leaves the folder alone, as
   before, and syncs nothing that run.
 
-Savestates are still only reported. They are the next piece of work.
+### Standalone emulator savestates
+
+PCSX2's and Dolphin's savestates sync too, with `syncStates` on. They sit in
+the same kind of folder as the saves, one the emulator owns, under names built
+from the game's id and a slot: `SERIAL (CRC).03.p2s` and `GAMEID.s03`. The
+slot conventions are RomM's own (`handler/streaming/states.py`), so a state a
+desktop launch mirrors and one pulled off a streamed session are the same kind
+of row, and either can restore the other.
+
+What a run writes goes up after it exits; what RomM holds for this emulator
+comes back before it starts, into the slots it was written from. A PCSX2 state
+carries a picture of the moment of save inside it, which is pulled out and
+filed as the state's thumbnail.
+
+Three rules worth knowing:
+
+- **A slot keeps anything newer than RomM's copy**, and the bytes it does give
+  up go to RomM first, under a name no later restore will pick.
+- **The same id that makes a save set makes a state this game's.** A state
+  folder holds every game the emulator has run, so without that id from RomM
+  nothing is sent and nothing is restored, and the run is only reported.
+- **Every capture is its own row.** There is no stable per-slot name to update
+  here, so a slot accrues history, which is what RomM does for a streamed
+  session too. The push only sends what the run actually wrote.
+
+RPCS3 writes one exit state per game rather than slots, and Cemu writes none,
+so neither syncs states.
 
 The user folder is the emulator's default for your platform, the Flatpak's own
 folder for a Flatpak launch, or the install's folder when it is portable

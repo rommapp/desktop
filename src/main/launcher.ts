@@ -933,6 +933,10 @@ export class Launcher {
             command: launch.command,
             args: launch.args,
             signal: controller.signal,
+            // The shell's own directory for this ROM, which is where the
+            // record of what this machine pushed belongs rather than among
+            // the user's own states.
+            recordDir: savePaths?.stateDir,
             onSync: (sync) =>
               this.emit({ romId: request.romId, status: "sync", sync }),
           }).catch(() => null)
