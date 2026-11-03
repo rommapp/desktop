@@ -16,7 +16,7 @@
 // Nothing here can fail a launch, as everywhere else on this path.
 
 import { type Session } from "electron";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { lstat, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { type DesktopConfig } from "../../shared/types.ts";
 import { apiRequest } from "../saves/http.ts";
@@ -40,7 +40,6 @@ import {
   stateScreenshotName,
   statesEmbedScreenshots,
   type StateFile,
-  type StateTarget,
 } from "./states.ts";
 
 export interface StandaloneStateOptions {
@@ -50,8 +49,6 @@ export interface StandaloneStateOptions {
   emulatorId: string;
   /** The emulator's own state folder for this platform, already joined. */
   stateRoot: string;
-  /** What RomM says this game is, or null when it could not say. */
-  target: StateTarget | null;
   /** A directory of the shell's own, for the record of what this machine
    *  pushed. Not the emulator's folder: the record is the shell's bookkeeping
    *  and has no business sitting among the user's states. */
@@ -59,20 +56,50 @@ export interface StandaloneStateOptions {
   signal: AbortSignal;
 }
 
-/** The files directly in a state folder. Flat on purpose: both emulators put
- *  their states there and nowhere below it, so a walk would only find other
- *  things to mistake for one. */
+/**
+ * The files directly in a state folder, or nothing when it is not one to read.
+ *
+ * Flat on purpose: both emulators put their states there and nowhere below
+ * it, so a walk would only find other things to mistake for one.
+ *
+ * `lstat` rather than `stat`, and a linked root refused outright, the way
+ * tree.ts does it. Following a link here would have the push read and upload
+ * whatever it points at, and the restore write through it: a link named
+ * `GALE01.s03` is not a state this game wrote, whatever it resolves to.
+ */
 export async function readStateFolder(root: string): Promise<StateFile[]> {
+  const rootInfo = await lstat(root).catch(() => null);
+  if (!rootInfo?.isDirectory()) return [];
   const names = await readdir(root).catch(() => [] as string[]);
   const files = await Promise.all(
     names.map(async (name) => {
-      const info = await stat(join(root, name)).catch(() => null);
+      const info = await lstat(join(root, name)).catch(() => null);
       return info?.isFile()
         ? { name, size: info.size, modifiedAt: info.mtimeMs }
         : null;
     }),
   );
   return files.filter((file): file is StateFile => file !== null);
+}
+
+/**
+ * The bytes of a state, or null when what is at that name is not one any more.
+ *
+ * Checked with `lstat` immediately before the read, and against what the
+ * caller saw when it decided to send: a link put there since, or a file that
+ * changed, is not the thing that was planned for. The size and time are what
+ * the plan was made from, so a mismatch means another launch has been in this
+ * folder and these are not this run's bytes to offer.
+ */
+async function readStateBytes(
+  root: string,
+  file: StateFile,
+): Promise<Buffer | null> {
+  const info = await lstat(join(root, file.name)).catch(() => null);
+  if (!info?.isFile()) return null;
+  if (info.size !== file.size || info.mtimeMs !== file.modifiedAt) return null;
+  const bytes = await readFile(join(root, file.name)).catch(() => null);
+  return bytes && bytes.length === file.size ? bytes : null;
 }
 
 /** The picture PCSX2 keeps inside a state, or nothing when there is none to
@@ -100,13 +127,25 @@ function embeddedScreenshot(
  * changed: a folder of ten slots that nobody touched sends nothing.
  */
 export function pushStandaloneStates(
-  options: StandaloneStateOptions & { before: readonly StateFile[] },
+  options: StatePushOptions,
 ): Promise<{ uploaded: number; failed: number }> {
   return inTurn(options.stateRoot, () => runPushStates(options));
 }
 
+export interface StatePushOptions extends StandaloneStateOptions {
+  /** The folder as it stood before the emulator started. */
+  before: readonly StateFile[];
+  /** And as it stood when it exited, read while the folder claim was still
+   *  held. Not re-read here: the claim is given up before the save requests
+   *  this runs behind, so by now another launch may have restored into the
+   *  folder and a fresh reading would offer its states as this run's. */
+  after: readonly StateFile[];
+  /** Another launch wrote the folder during this run. */
+  contested: boolean;
+}
+
 async function runPushStates(
-  options: StandaloneStateOptions & { before: readonly StateFile[] },
+  options: StatePushOptions,
 ): Promise<{ uploaded: number; failed: number }> {
   const { config, session, romId, emulatorId, stateRoot, signal } = options;
   const serverUrl = config.serverUrl;
@@ -116,8 +155,8 @@ async function runPushStates(
   const plan = planStandaloneStates({
     emulatorId,
     before: options.before,
-    after: await readStateFolder(stateRoot),
-    target: options.target,
+    after: options.after,
+    contested: options.contested,
     maxBytes: MAX_STATE_BYTES,
   });
   for (const over of plan.tooLarge) {
@@ -125,11 +164,9 @@ async function runPushStates(
       `[standalone] rom ${romId}: ${over.name} is ${over.size} bytes, past the ${MAX_STATE_BYTES} ceiling, so it is not sent`,
     );
   }
-  if (plan.foreign > 0) {
-    // Worth saying out loud: the folder is shared, and a run that wrote
-    // another game's state means the target does not name what it should.
-    console.warn(
-      `[standalone] rom ${romId}: the run wrote ${plan.foreign} state files RomM's target does not name, which are left alone`,
+  if (options.contested && plan.send.length === 0) {
+    console.info(
+      `[standalone] rom ${romId}: another launch used the state folder during this run, so which states are this run's is not known and none are sent`,
     );
   }
   if (plan.send.length === 0) return result;
@@ -137,8 +174,13 @@ async function runPushStates(
   const landed: Record<string, PushedRow> = {};
   for (const { file, slot } of plan.send) {
     if (signal.aborted) break;
-    const bytes = await readFile(join(stateRoot, file.name)).catch(() => null);
+    // Against the reading the plan was made from, so a file another launch
+    // has touched since the claim was given up is not sent as this run's.
+    const bytes = await readStateBytes(stateRoot, file);
     if (!bytes) {
+      console.info(
+        `[standalone] rom ${romId}: ${file.name} is not what it was when the run ended, so it is not sent`,
+      );
       result.failed += 1;
       continue;
     }
@@ -199,30 +241,49 @@ async function runRestoreStates(
 ): Promise<number> {
   const { config, session, romId, emulatorId, stateRoot, signal } = options;
   const serverUrl = config.serverUrl;
-  if (!serverUrl || !options.target) return 0;
+  if (!serverUrl) return 0;
+  // The queue wait ahead of this is deliberately not abortable (see lock.ts),
+  // so the cancel is honoured here instead: a launch the user stopped while
+  // this was queued must not then write into the folder behind them.
+  if (signal.aborted) return 0;
 
+  // Bounded, like the identity request: this is awaited before the spawn, and
+  // a request with no deadline of its own holds the game shut. Past it the
+  // launch goes ahead with whatever is already in the folder.
+  const deadline = AbortSignal.timeout(RESTORE_TIMEOUT_MS);
+  const bounded = AbortSignal.any([signal, deadline]);
   const response = await apiRequest({
     serverUrl,
     session,
     path: `/api/states?rom_id=${romId}`,
     method: "GET",
-    signal,
+    signal: bounded,
   }).catch(() => null);
-  if (!response || response.status >= 300) return 0;
+  if (!response || response.status >= 300) {
+    if (deadline.aborted && !signal.aborted) {
+      console.info(
+        `[standalone] rom ${romId}: RomM did not answer about savestates within ${RESTORE_TIMEOUT_MS / 1000}s, so none are restored`,
+      );
+    }
+    return 0;
+  }
 
   const onDisk = await readStateFolder(stateRoot);
   const plan = planStandaloneRestore({
     emulatorId,
     rows: readStateList(response.body),
     onDisk,
-    target: options.target,
     pushed: await readPushedFile(options.recordDir),
+    // Checked before anything is planned, so a row declaring gigabytes never
+    // reaches the download: the fetch below is bounded by the row's own size,
+    // which is the server's word rather than this shell's limit.
+    maxBytes: MAX_STATE_BYTES,
   });
   if (plan.length === 0) return 0;
 
   let restored = 0;
   for (const entry of plan) {
-    if (signal.aborted) break;
+    if (bounded.aborted) break;
 
     // The slot keeps what it has unless its own bytes are safely in RomM
     // first, the same rule the RetroArch restore follows.
@@ -234,7 +295,7 @@ async function runRestoreStates(
         emulatorId,
         stateRoot,
         file: entry.displacing,
-        signal,
+        signal: bounded,
       });
       if (!kept) {
         console.warn(
@@ -244,6 +305,15 @@ async function runRestoreStates(
       }
     }
 
+    // The temporary name the fetch writes through is predictable, so a link
+    // left at it would be followed and its target truncated. Cleared first
+    // when it is anything but a regular file of ours.
+    if (!(await temporaryIsSafe(stateRoot, entry.fileName))) {
+      console.warn(
+        `[standalone] rom ${romId}: something is in the way of restoring slot ${entry.slot}, so it is left alone`,
+      );
+      continue;
+    }
     const landed = await fetchStateAsset({
       serverUrl,
       session,
@@ -252,7 +322,7 @@ async function runRestoreStates(
       fileName: entry.fileName,
       size: entry.row.size,
       maxBytes: MAX_STATE_BYTES,
-      signal,
+      signal: bounded,
     });
     if (!landed) {
       console.warn(
@@ -267,6 +337,34 @@ async function runRestoreStates(
   }
   return restored;
 }
+
+/**
+ * Clear the path the fetch writes through, unless what is there is something
+ * not to touch.
+ *
+ * `fetchStateAsset` writes `.<name>.part` and renames, and a write to a path
+ * someone has made a link to follows it and truncates whatever it points at.
+ * A leftover regular file is an earlier transfer that died and is removed; a
+ * link, or anything else, is left alone and the restore of that slot is
+ * skipped rather than guessed at.
+ */
+async function temporaryIsSafe(
+  root: string,
+  fileName: string,
+): Promise<boolean> {
+  const temp = join(root, `.${fileName}.part`);
+  const info = await lstat(temp).catch(() => null);
+  if (!info) return true;
+  if (!info.isFile()) return false;
+  return rm(temp, { force: true })
+    .then(() => true)
+    .catch(() => false);
+}
+
+/** How long a launch waits for RomM to say what states it holds. The same
+ *  reasoning as the identity request's deadline: worth waiting for, not worth
+ *  waiting indefinitely. */
+const RESTORE_TIMEOUT_MS = 10_000;
 
 /**
  * Put the bytes a restore is about to replace somewhere they survive.
@@ -286,7 +384,7 @@ async function archiveDisplaced(options: {
 }): Promise<boolean> {
   const { serverUrl, session, romId, emulatorId, stateRoot, file } = options;
   if (file.size > MAX_STATE_BYTES) return false;
-  const bytes = await readFile(join(stateRoot, file.name)).catch(() => null);
+  const bytes = await readStateBytes(stateRoot, file);
   if (!bytes) return false;
 
   const sent = await uploadState({

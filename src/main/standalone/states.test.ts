@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   displacedStandaloneName,
-  isGameState,
   knowsStates,
   planStandaloneRestore,
   planStandaloneStates,
@@ -15,11 +14,7 @@ import {
   unstampStateName,
   type RemoteStateRow,
   type StateFile,
-  type StateTarget,
 } from "./states.ts";
-
-const PS2: StateTarget = { target: "SLUS-20946", layout: "file-prefix" };
-const GC: StateTarget = { target: "GALE01", layout: "file-prefix" };
 
 function file(name: string, patch: Partial<StateFile> = {}): StateFile {
   return { name, size: 100, modifiedAt: 1000, ...patch };
@@ -105,13 +100,6 @@ test("only one stamp comes off, so a game named like one survives", () => {
   );
 });
 
-test("a state is this game's when the target names it", () => {
-  assert.equal(isGameState("SLUS-20946 (0F2EF3B2).03.p2s", PS2), true);
-  assert.equal(isGameState("SLUS-21354 (AABBCCDD).03.p2s", PS2), false);
-  assert.equal(isGameState("GALE01.s03", GC), true);
-  assert.equal(isGameState("GAFE01.s03", GC), false);
-});
-
 test("the run's own new and rewritten states are what goes up", () => {
   const plan = planStandaloneStates({
     emulatorId: "pcsx2",
@@ -127,7 +115,6 @@ test("the run's own new and rewritten states are what goes up", () => {
       // New.
       file("SLUS-20946 (0F2EF3B2).03.p2s", { modifiedAt: 40 }),
     ],
-    target: PS2,
     maxBytes: 1024,
   });
   // Newest first, so a run cut short has sent the slot last written.
@@ -139,28 +126,30 @@ test("the run's own new and rewritten states are what goes up", () => {
     ],
   );
   assert.deepEqual(plan.tooLarge, []);
-  assert.equal(plan.foreign, 0);
 });
 
-test("another game's state in the same folder is counted, not sent", () => {
+test("a Dolphin Wii state is this game's, which a save target could not say", () => {
+  // RomM's Wii save target is a folder name (folder-exact) and a state is a
+  // flat file, so matching one against the other rejected every Wii state
+  // silently. What makes a state this game's is that this run wrote it.
   const plan = planStandaloneStates({
-    emulatorId: "pcsx2",
+    emulatorId: "dolphin",
     before: [],
-    after: [file("SLUS-21354 (AABBCCDD).01.p2s")],
-    target: PS2,
+    after: [file("RSBE01.s03")],
     maxBytes: 1024,
   });
-  assert.deepEqual(plan.send, []);
-  assert.equal(plan.foreign, 1);
+  assert.deepEqual(
+    plan.send.map((entry) => entry.slot),
+    [3],
+  );
 });
 
-test("without a target nothing is sent at all", () => {
-  // A state filed against the wrong game cannot be undone from here.
+test("a contested folder sends nothing, since whose states these are is unknown", () => {
   const plan = planStandaloneStates({
     emulatorId: "pcsx2",
     before: [],
     after: [file("SLUS-20946 (0F2EF3B2).01.p2s")],
-    target: null,
+    contested: true,
     maxBytes: 1024,
   });
   assert.deepEqual(plan.send, []);
@@ -171,7 +160,6 @@ test("a state past the ceiling is named rather than sent", () => {
     emulatorId: "pcsx2",
     before: [],
     after: [file("SLUS-20946 (0F2EF3B2).01.p2s", { size: 5000 })],
-    target: PS2,
     maxBytes: 1024,
   });
   assert.deepEqual(plan.send, []);
@@ -190,7 +178,7 @@ test("a restore takes the newest row per slot, unstamped", () => {
       row({ id: 3, fileName: "SLUS-20946 (0F2EF3B2).20261101-000000000000.01.p2s", updatedAt: 150 }),
     ],
     onDisk: [],
-    target: PS2,
+    maxBytes: 1024,
   });
   assert.deepEqual(
     plan.map((entry) => [entry.slot, entry.row.id, entry.fileName]),
@@ -208,26 +196,102 @@ test("a row another emulator wrote is never loaded here", () => {
       emulatorId: "pcsx2",
       rows: [row({ emulator: "dolphin" }), row({ emulator: null })],
       onDisk: [],
-      target: PS2,
+      maxBytes: 1024,
     }),
     [],
   );
 });
 
-test("a row naming another game, or no slot, is left where it is", () => {
+test("a row carrying no slot this emulator addresses is left where it is", () => {
   assert.deepEqual(
     planStandaloneRestore({
       emulatorId: "pcsx2",
       rows: [
-        row({ fileName: "SLUS-21354 (AABBCCDD).03.p2s" }),
         row({ fileName: "SLUS-20946 (0F2EF3B2).p2s" }),
         row({ fileName: "SLUS-20946 (0F2EF3B2).00.p2s" }),
       ],
       onDisk: [],
-      target: PS2,
+      maxBytes: 1024,
     }),
     [],
   );
+});
+
+test("a row whose name differs is still this ROM's, since the server scoped it", () => {
+  // The rows came from /api/states?rom_id=, so they are this game's by
+  // construction. A filename check on top only rejected what it misread.
+  assert.equal(
+    planStandaloneRestore({
+      emulatorId: "pcsx2",
+      rows: [row({ fileName: "Something Else.03.p2s" })],
+      onDisk: [],
+      maxBytes: 1024,
+    }).length,
+    1,
+  );
+});
+
+test("a row past the ceiling never reaches the download", () => {
+  // The fetch is bounded by the row's own declared size, which is the
+  // server's word, so a row claiming gigabytes has to be dropped before it.
+  assert.deepEqual(
+    planStandaloneRestore({
+      emulatorId: "pcsx2",
+      rows: [row({ size: 5000 })],
+      onDisk: [],
+      maxBytes: 1024,
+    }),
+    [],
+  );
+});
+
+test("the newest row wins before the pushed record is consulted", () => {
+  // Skipping this machine's row first let the slot fall back to older
+  // history, which would overwrite the state that push had just made.
+  const plan = planStandaloneRestore({
+    emulatorId: "pcsx2",
+    rows: [row({ id: 1, updatedAt: 5000 }), row({ id: 2, updatedAt: 9000 })],
+    onDisk: [file("SLUS-20946 (0F2EF3B2).03.p2s", { modifiedAt: 1000 })],
+    pushed: { [pushedSlotKey(3)]: { id: 2, updatedAt: 9000, mtimeMs: 1000 } },
+    maxBytes: 1024,
+  });
+  assert.deepEqual(plan, []);
+});
+
+test("rows tie on the second are broken by the later id", () => {
+  const plan = planStandaloneRestore({
+    emulatorId: "pcsx2",
+    rows: [row({ id: 7, updatedAt: 5000 }), row({ id: 9, updatedAt: 5000 })],
+    onDisk: [],
+    maxBytes: 1024,
+  });
+  assert.equal(plan[0]?.row.id, 9);
+});
+
+test("a slot spelled differently is still the file a restore overwrites", () => {
+  // On Windows and macOS these are one file, so reading the slot as empty
+  // would replace it without checking freshness or archiving its bytes.
+  const local = file("GALE01.s03", { modifiedAt: 100 });
+  const plan = planStandaloneRestore({
+    emulatorId: "dolphin",
+    rows: [row({ fileName: "gale01.s03", emulator: "dolphin", updatedAt: 5000 })],
+    onDisk: [local],
+    maxBytes: 1024,
+  });
+  assert.equal(plan.length, 1);
+  assert.deepEqual(plan[0]?.displacing, local);
+});
+
+test("two spellings at once put neither at risk", () => {
+  // Only a filesystem that keeps them apart can hold both, and there a write
+  // to a name neither carries creates a new file with nothing in its way.
+  const plan = planStandaloneRestore({
+    emulatorId: "dolphin",
+    rows: [row({ fileName: "GaLe01.s03", emulator: "dolphin", updatedAt: 5000 })],
+    onDisk: [file("GALE01.s03"), file("gale01.s03")],
+    maxBytes: 1024,
+  });
+  assert.equal(plan[0]?.displacing, null);
 });
 
 test("a slot holding something newer than RomM's copy keeps it", () => {
@@ -237,7 +301,7 @@ test("a slot holding something newer than RomM's copy keeps it", () => {
       emulatorId: "pcsx2",
       rows: [row({ updatedAt: 5000 })],
       onDisk: [taken],
-      target: PS2,
+      maxBytes: 1024,
     }),
     [],
   );
@@ -249,7 +313,7 @@ test("a slot holding something older is displaced, and says what it displaces", 
     emulatorId: "pcsx2",
     rows: [row({ updatedAt: 5000 })],
     onDisk: [stale],
-    target: PS2,
+    maxBytes: 1024,
   });
   assert.equal(plan.length, 1);
   assert.deepEqual(plan[0]?.displacing, stale);
@@ -261,7 +325,7 @@ test("a row whose name would not be safe to write is dropped", () => {
       emulatorId: "pcsx2",
       rows: [row({ fileName: "../../SLUS-20946 (0F2EF3B2).03.p2s" })],
       onDisk: [],
-      target: PS2,
+      maxBytes: 1024,
     }),
     [],
   );
@@ -293,8 +357,8 @@ test("the row this machine's own push left does not come back down", () => {
       emulatorId: "pcsx2",
       rows: [mine],
       onDisk,
-      target: PS2,
       pushed,
+      maxBytes: 1024,
     }),
     [],
   );
@@ -307,8 +371,8 @@ test("the row this machine's own push left does not come back down", () => {
       emulatorId: "pcsx2",
       rows: [row({ id: 43, updatedAt: 9500 })],
       onDisk,
-      target: PS2,
       pushed,
+      maxBytes: 1024,
     }).length,
     1,
   );
@@ -317,8 +381,8 @@ test("the row this machine's own push left does not come back down", () => {
       emulatorId: "pcsx2",
       rows: [mine],
       onDisk: [file("SLUS-20946 (0F2EF3B2).03.p2s", { modifiedAt: 2000 })],
-      target: PS2,
       pushed,
+      maxBytes: 1024,
     }).length,
     1,
   );
@@ -342,7 +406,7 @@ test("an archived state is unreachable from every later restore", () => {
       emulatorId: "pcsx2",
       rows: [row({ fileName: archived, updatedAt: 9_000_000 })],
       onDisk: [],
-      target: PS2,
+      maxBytes: 1024,
     }),
     [],
   );

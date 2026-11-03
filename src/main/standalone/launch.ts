@@ -164,24 +164,25 @@ export async function startStandaloneSaves(
     // a shared folder is the same answer. Gated on this shell knowing the
     // emulator's naming at all, which is PCSX2 and Dolphin.
     const recordDir = options.recordDir;
-    const states =
+    // Not gated on RomM's save target. That target says where a save lives,
+    // and for Dolphin's Wii titles it is a folder name that can never match a
+    // flat `GAMEID.s03`; what makes a state this game's is that this run
+    // wrote it, and the rows that come back are already scoped to this ROM.
+    const stateSync =
       config.syncStates &&
       stateRoot &&
       recordDir &&
-      knowsStates(options.emulatorId) &&
-      saveTargetOf(identity);
-    const stateSync = states
-      ? {
-          config,
-          session: options.session,
-          romId,
-          emulatorId: options.emulatorId,
-          stateRoot,
-          target: states,
-          recordDir,
-          signal: options.signal,
-        }
-      : null;
+      knowsStates(options.emulatorId)
+        ? {
+            config,
+            session: options.session,
+            romId,
+            emulatorId: options.emulatorId,
+            stateRoot,
+            recordDir,
+            signal: options.signal,
+          }
+        : null;
     if (stateSync) {
       const restored = await restoreStandaloneStates(stateSync).catch(() => 0);
       if (restored > 0) {
@@ -211,8 +212,8 @@ export async function startStandaloneSaves(
     const statesBefore = stateRoot ? await listTree(stateRoot) : null;
     // Taken after the restore above, so a slot that came down reads as one
     // that was already there rather than as one the run wrote.
-    const stateSyncWithBefore = stateSync
-      ? { ...stateSync, before: await readStateFolder(stateSync.stateRoot) }
+    const statesOnDisk = stateSync
+      ? await readStateFolder(stateSync.stateRoot)
       : null;
     console.info(describeBefore(romId, data, savesBefore, identity));
 
@@ -228,7 +229,8 @@ export async function startStandaloneSaves(
           identity,
           savesBefore,
           statesBefore,
-          stateSync: stateSyncWithBefore,
+          stateSync,
+          statesOnDisk,
           claim,
         }),
       release: () => claim.release(),
@@ -252,8 +254,10 @@ async function finish(
     savesBefore: Tree;
     statesBefore: Tree | null;
     /** Set when this launch's states are the shell's to move, not just to
-     *  report. Carries the before-reading of the folder it will compare. */
-    stateSync: (StandaloneStateOptions & { before: StateFile[] }) | null;
+     *  report. */
+    stateSync: StandaloneStateOptions | null;
+    /** The state folder as it stood before the emulator started. */
+    statesOnDisk: StateFile[] | null;
     claim: { readonly contested: boolean; release(): void };
   },
 ): Promise<void> {
@@ -261,10 +265,17 @@ async function finish(
 
   // Read and released before anything is sent: an upload has no deadline, and
   // a server that never answers must not keep the folder claimed.
-  let savesAfter, statesAfter, contested;
+  let savesAfter, statesAfter, statesNow, contested;
   try {
     savesAfter = await listTree(saveRoot);
     statesAfter = stateRoot ? await listTree(stateRoot) : null;
+    // Read here rather than at the push, which runs behind the save requests
+    // below and so after the claim is given up: by then another launch may
+    // have restored into this folder, and a fresh reading would offer its
+    // states as this run's.
+    statesNow = context.stateSync
+      ? await readStateFolder(context.stateSync.stateRoot)
+      : null;
     contested = claim.contested;
   } finally {
     claim.release();
@@ -333,8 +344,13 @@ async function finish(
   // After the saves, and reached whether or not there were any: a state is a
   // convenience and a save is the game, so a pile of states does not sit in
   // front of one, but a launch that syncs no saves still mirrors its states.
-  if (context.stateSync) {
-    const sent = await pushStandaloneStates(context.stateSync).catch(() => null);
+  if (context.stateSync && context.statesOnDisk && statesNow) {
+    const sent = await pushStandaloneStates({
+      ...context.stateSync,
+      before: context.statesOnDisk,
+      after: statesNow,
+      contested,
+    }).catch(() => null);
     if (sent && sent.uploaded + sent.failed > 0) {
       console.info(
         `[standalone] rom ${romId}: sent ${sent.uploaded} savestates, ${sent.failed} failed`,

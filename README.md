@@ -715,9 +715,10 @@ Three rules worth knowing:
 
 - **A slot keeps anything newer than RomM's copy**, and the bytes it does give
   up go to RomM first, under a name no later restore will pick.
-- **The same id that makes a save set makes a state this game's.** A state
-  folder holds every game the emulator has run, so without that id from RomM
-  nothing is sent and nothing is restored, and the run is only reported.
+- **What makes a state this game's is that this run wrote it**, the same way
+  the RetroArch mirror decides. A launch plays one game. Where two launches
+  shared the emulator's folder, neither can say which states are whose, so the
+  run sends none.
 - **Every capture is its own row.** There is no stable per-slot name to update
   here, so a slot accrues history, which is what RomM does for a streamed
   session too. The push only sends what the run actually wrote.

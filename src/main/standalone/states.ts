@@ -25,7 +25,6 @@
 // No Electron here, so all of it can be tested.
 
 import { type PushedRow } from "../saves/states.ts";
-import { selectSaveFiles, type SaveTargetLayout } from "./identity.ts";
 
 /**
  * The slot each emulator writes into its state filename.
@@ -109,25 +108,6 @@ export function unstampStateName(fileName: string): string {
   return fileName.replace(STAMP, "");
 }
 
-export interface StateTarget {
-  target: string;
-  layout: SaveTargetLayout;
-}
-
-/**
- * Whether this state file is this game's.
- *
- * Both emulators build the name from the game's own id, which is what RomM's
- * save target carries, so the same matcher the save set uses answers this too.
- * A state folder holds every game the emulator has ever run, so without this a
- * push would offer somebody else's.
- */
-export function isGameState(fileName: string, target: StateTarget): boolean {
-  return (
-    selectSaveFiles([fileName], target.target, target.layout).length > 0
-  );
-}
-
 export interface StateFile {
   name: string;
   size: number;
@@ -136,41 +116,48 @@ export interface StateFile {
 }
 
 export interface StandaloneStatePlan {
-  /** What to send, newest slot first so a truncated run still sends the slot
-   *  most recently written. */
+  /** What to send, newest first so a run cut short has sent the slot most
+   *  recently written. */
   send: { file: StateFile; slot: number }[];
   /** Over the ceiling, named in the log rather than sent and refused. */
   tooLarge: StateFile[];
-  /** Files the run wrote that are not this game's, for the log: a count that
-   *  is not zero means the target is wrong, which is worth knowing. */
-  foreign: number;
 }
 
 /**
  * The states this run wrote.
  *
+ * What makes a state this game's is that this run wrote it, which is the same
+ * answer the RetroArch plan beside this one gives: a launch plays one game,
+ * and a file that changed between the two readings changed because of it.
+ *
+ * Not RomM's save target, which was the first attempt and is wrong. That
+ * target describes where a *save* lives, and for Dolphin's Wii titles it is a
+ * folder name, which can never match a flat `GAMEID.s03`; the id Dolphin puts
+ * in a state filename is not the one RomM carries for the save either. A
+ * target that cannot match is a target that rejects every state, silently.
+ *
+ * What the target was guarding against is a second game writing the same
+ * folder while this run played. The folder claim already answers that: a
+ * contested folder means two launches wrote here, and then this run cannot
+ * say which files are its own, so it sends none.
+ *
  * Changed means a different size or modification time, never a digest, for the
  * same reason the RetroArch plan gives: hashing ten slots of a console whose
  * states run to tens of megabytes costs more at every launch than the
  * occasional redundant upload it saves.
- *
- * `target` is checked even though the run only played one game. The folder is
- * shared, and an emulator that rewrites another game's state on exit, or a
- * second launch that slipped in, would otherwise have its file filed under
- * this ROM. Without a target nothing is sent: a state filed against the wrong
- * game is worse than one not filed at all, and there is no undoing it from
- * here.
  */
 export function planStandaloneStates(options: {
   emulatorId: string;
   before: readonly StateFile[];
   after: readonly StateFile[];
-  target: StateTarget | null;
+  /** Another launch wrote this emulator's folder during the run, so what is
+   *  in it is not all this one's. */
+  contested?: boolean;
   maxBytes: number;
 }): StandaloneStatePlan {
-  const { emulatorId, before, after, target, maxBytes } = options;
-  const plan: StandaloneStatePlan = { send: [], tooLarge: [], foreign: 0 };
-  if (!target) return plan;
+  const { emulatorId, before, after, maxBytes } = options;
+  const plan: StandaloneStatePlan = { send: [], tooLarge: [] };
+  if (options.contested) return plan;
 
   const previous = new Map(before.map((file) => [file.name, file]));
   for (const file of after) {
@@ -182,10 +169,6 @@ export function planStandaloneStates(options: {
       !was || was.size !== file.size || was.modifiedAt !== file.modifiedAt;
     if (!changed) continue;
 
-    if (!isGameState(file.name, target)) {
-      plan.foreign += 1;
-      continue;
-    }
     if (file.size > maxBytes) {
       plan.tooLarge.push(file);
       continue;
@@ -233,47 +216,60 @@ export interface StandaloneRestore {
 /**
  * Which of RomM's rows to bring back, newest per slot.
  *
- * The tests are the same ones the RetroArch restore applies, for the same
- * reason: a state belongs to the emulator and build that wrote it, and one
- * loaded into the wrong one crashes rather than merely disagreeing. So the row
- * has to name this emulator, its name has to carry a slot this emulator
- * addresses, and the name has to be this game's and safe to write.
+ * The rows are already this ROM's: `/api/states?rom_id=` is what asked for
+ * them. So what is left to check is whether this launch could load one, and
+ * the tests are the RetroArch restore's, for its reason: a state belongs to
+ * the emulator and build that wrote it, and one loaded into the wrong one
+ * crashes rather than merely disagreeing. The row has to name this emulator,
+ * its name has to carry a slot this emulator addresses and be safe to write,
+ * and it has to be a size worth fetching.
  *
- * A slot already holding something newer than RomM's row keeps it. The local
- * file is this machine's own work, and a restore that walked over it would
- * replace a state the player made minutes ago with one from last week.
+ * The newest valid row per slot is chosen *first*, and only then asked whether
+ * it should displace what is on disk. Asking in the other order lets a slot
+ * fall back to older history: skip the newest because it is this machine's own
+ * push, and the row behind it wins and overwrites the state just written.
  *
- * And never the row this machine's own push left. The push runs after the exit
- * that wrote the state, so RomM's stamp on it is always later than the file's,
- * and freshness alone would archive the slot and fetch its own bytes back at
- * every launch from here on. `pushed` is what the push wrote down to stop
- * that, read here by the same rule the RetroArch restore uses: the row is the
- * one recorded, and the file in the slot is the one it was pushed from.
+ * A slot already holding something newer than RomM's row keeps it, and so does
+ * one holding the file this machine's own push was made from. The push runs
+ * after the exit that wrote the state, so RomM's stamp is always later than
+ * the file's, and freshness alone would archive the slot and fetch its own
+ * bytes back at every launch from then on.
  */
 export function planStandaloneRestore(options: {
   emulatorId: string;
   rows: readonly RemoteStateRow[];
   onDisk: readonly StateFile[];
-  target: StateTarget | null;
   /** By slot, as `slot 3`, which is the shape the shared record keeps. */
   pushed?: Readonly<Record<string, PushedRow>>;
+  maxBytes: number;
 }): StandaloneRestore[] {
-  const { emulatorId, rows, onDisk, target } = options;
-  if (!target) return [];
-  const local = new Map(onDisk.map((file) => [file.name, file]));
+  const { emulatorId, rows, onDisk, maxBytes } = options;
   const pushed = options.pushed ?? {};
 
-  const best = new Map<number, StandaloneRestore>();
+  // The newest row per slot, before anything about the disk is considered.
+  const newest = new Map<number, { row: RemoteStateRow; fileName: string }>();
   for (const row of rows) {
     if ((row.emulator ?? "").trim().toLowerCase() !== emulatorId) continue;
+    if (row.size > maxBytes) continue;
     const fileName = unstampStateName(row.fileName);
     if (!safeStateName(fileName)) continue;
     const slot = stateSlotOf(emulatorId, fileName);
     if (slot === null) continue;
-    if (!isGameState(fileName, target)) continue;
 
-    const displacing = local.get(fileName) ?? null;
-    // Already newer here than anything RomM holds for it.
+    const standing = newest.get(slot);
+    // Ties on id, as the RetroArch planner does: `updated_at` has second
+    // resolution, so two rows written in the same second would otherwise
+    // order arbitrarily.
+    const later =
+      !standing ||
+      row.updatedAt > standing.row.updatedAt ||
+      (row.updatedAt === standing.row.updatedAt && row.id > standing.row.id);
+    if (later) newest.set(slot, { row, fileName });
+  }
+
+  const restore: StandaloneRestore[] = [];
+  for (const [slot, { row, fileName }] of newest) {
+    const displacing = occupant(onDisk, fileName);
     if (displacing && displacing.modifiedAt >= row.updatedAt) continue;
 
     const record = pushed[pushedSlotKey(slot)];
@@ -285,12 +281,32 @@ export function planStandaloneRestore(options: {
       record.mtimeMs === displacing.modifiedAt;
     if (ours) continue;
 
-    const standing = best.get(slot);
-    if (!standing || row.updatedAt > standing.row.updatedAt) {
-      best.set(slot, { row, fileName, slot, displacing });
-    }
+    restore.push({ row, fileName, slot, displacing });
   }
-  return [...best.values()].sort((a, b) => a.slot - b.slot);
+  return restore.sort((a, b) => a.slot - b.slot);
+}
+
+/**
+ * The file a restore of this name would write over, or null for a slot with
+ * nothing in its way.
+ *
+ * The exact name first, since that is the name the write uses. Failing that a
+ * lone spelling differing only in case, because on Windows and macOS it *is*
+ * that file: an exact test alone would read the slot as empty and overwrite it
+ * without archiving its bytes first. Several spellings at once can only happen
+ * where the filesystem keeps them apart, and there a write to a name none of
+ * them carries puts none of them at risk. The same rule `planStateRestore`
+ * applies, for the same reason.
+ */
+function occupant(
+  onDisk: readonly StateFile[],
+  fileName: string,
+): StateFile | null {
+  const exact = onDisk.find((file) => file.name === fileName);
+  if (exact) return exact;
+  const folded = fileName.toLowerCase();
+  const alike = onDisk.filter((file) => file.name.toLowerCase() === folded);
+  return alike.length === 1 ? (alike[0] ?? null) : null;
 }
 
 /** How a slot is keyed in the pushed-rows record, which is shared with the
