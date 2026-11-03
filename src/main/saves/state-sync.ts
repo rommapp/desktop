@@ -48,7 +48,9 @@ import {
  *  recognise this machine's own copy; null when the server answered with a body
  *  this does not read as one.
  */
-async function upload(options: {
+/** Shared with the standalone state mirror, which sends the same rows from a
+ *  folder the emulator owns rather than from one the launch pinned. */
+export async function uploadState(options: {
   serverUrl: string;
   session: Session;
   romId: number;
@@ -185,7 +187,7 @@ async function runPush(
         ? await readFile(join(stateDir, thumbnail)).catch(() => null)
         : null;
 
-      const result = await upload({
+      const result = await uploadState({
         serverUrl,
         session,
         romId,
@@ -251,7 +253,9 @@ function tempNameFor(fileName: string): string {
  * a wrong one. Null is for an asset RomM does not report a length for, where
  * `maxBytes` is all there is to hold the transfer to.
  */
-async function fetchAsset(options: {
+/** Shared with the standalone state mirror, for the same reason as the
+ *  upload beside it. */
+export async function fetchStateAsset(options: {
   serverUrl: string;
   session: Session;
   directory: string;
@@ -322,7 +326,7 @@ async function restoreThumbnail(options: {
   const screenshotId = restore.state.screenshotId;
 
   if (screenshotId !== null) {
-    const fetched = await fetchAsset({
+    const fetched = await fetchStateAsset({
       serverUrl,
       session,
       directory,
@@ -421,7 +425,7 @@ async function runPull(
       continue;
     }
 
-    const landed = await fetchAsset({
+    const landed = await fetchStateAsset({
       serverUrl,
       session,
       directory: stateDir,
@@ -514,7 +518,7 @@ async function archive(
   const picture = await readFile(
     join(stateDir, `${displaced.name}${THUMBNAIL_SUFFIX}`),
   ).catch(() => null);
-  const result = await upload({
+  const result = await uploadState({
     serverUrl,
     session,
     romId,

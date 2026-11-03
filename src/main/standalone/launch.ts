@@ -31,6 +31,13 @@ import { standaloneData } from "./data.ts";
 import { parseRomIdentity, type RomIdentity } from "./identity.ts";
 import { describeAfter, describeBefore } from "./report.ts";
 import { pullSet, pushSet, type SetPullResult } from "./saves.ts";
+import {
+  pushStandaloneStates,
+  readStateFolder,
+  restoreStandaloneStates,
+  type StandaloneStateOptions,
+} from "./state-sync.ts";
+import { knowsStates, type StateFile } from "./states.ts";
 import { saveTargetOf, type SaveTarget } from "./set.ts";
 import { listTree, type Tree } from "./tree.ts";
 
@@ -94,6 +101,11 @@ export interface StandaloneOptions {
   command: string;
   args: readonly string[];
   signal: AbortSignal;
+  /** The shell's own state directory for this ROM, where the record of what
+   *  this machine pushed is kept. Without one the states are only reported:
+   *  a restore with nowhere to write that record down would archive the slot
+   *  and fetch its own bytes back at every launch after it. */
+  recordDir?: string;
   /** Told what moved, so the renderer can say so rather than only the log. */
   onSync?: (outcome: SaveSyncOutcome) => void;
 }
@@ -147,6 +159,39 @@ export async function startStandaloneSaves(
     const target = config.syncSaves ? saveTargetOf(identity) : null;
     const base = saveBaseName(options.fileName);
 
+    // The same target the save set uses: these emulators name a state after
+    // the game's own id too, so what tells one game's states from another's in
+    // a shared folder is the same answer. Gated on this shell knowing the
+    // emulator's naming at all, which is PCSX2 and Dolphin.
+    const recordDir = options.recordDir;
+    // Not gated on RomM's save target. That target says where a save lives,
+    // and for Dolphin's Wii titles it is a folder name that can never match a
+    // flat `GAMEID.s03`; what makes a state this game's is that this run
+    // wrote it, and the rows that come back are already scoped to this ROM.
+    const stateSync =
+      config.syncStates &&
+      stateRoot &&
+      recordDir &&
+      knowsStates(options.emulatorId)
+        ? {
+            config,
+            session: options.session,
+            romId,
+            emulatorId: options.emulatorId,
+            stateRoot,
+            recordDir,
+            signal: options.signal,
+          }
+        : null;
+    if (stateSync) {
+      const restored = await restoreStandaloneStates(stateSync).catch(() => 0);
+      if (restored > 0) {
+        console.info(
+          `[standalone] rom ${romId}: restored ${restored} savestates into ${stateRoot}`,
+        );
+      }
+    }
+
     // Before the listing below, so a file that came down reads as one that was
     // already there rather than as one the run wrote.
     const pulled = target
@@ -165,6 +210,11 @@ export async function startStandaloneSaves(
 
     const savesBefore = await listTree(saveRoot);
     const statesBefore = stateRoot ? await listTree(stateRoot) : null;
+    // Taken after the restore above, so a slot that came down reads as one
+    // that was already there rather than as one the run wrote.
+    const statesOnDisk = stateSync
+      ? await readStateFolder(stateSync.stateRoot)
+      : null;
     console.info(describeBefore(romId, data, savesBefore, identity));
 
     return {
@@ -179,6 +229,8 @@ export async function startStandaloneSaves(
           identity,
           savesBefore,
           statesBefore,
+          stateSync,
+          statesOnDisk,
           claim,
         }),
       release: () => claim.release(),
@@ -201,6 +253,11 @@ async function finish(
     identity: RomIdentity | null;
     savesBefore: Tree;
     statesBefore: Tree | null;
+    /** Set when this launch's states are the shell's to move, not just to
+     *  report. */
+    stateSync: StandaloneStateOptions | null;
+    /** The state folder as it stood before the emulator started. */
+    statesOnDisk: StateFile[] | null;
     claim: { readonly contested: boolean; release(): void };
   },
 ): Promise<void> {
@@ -208,10 +265,17 @@ async function finish(
 
   // Read and released before anything is sent: an upload has no deadline, and
   // a server that never answers must not keep the folder claimed.
-  let savesAfter, statesAfter, contested;
+  let savesAfter, statesAfter, statesNow, contested;
   try {
     savesAfter = await listTree(saveRoot);
     statesAfter = stateRoot ? await listTree(stateRoot) : null;
+    // Read here rather than at the push, which runs behind the save requests
+    // below and so after the claim is given up: by then another launch may
+    // have restored into this folder, and a fresh reading would offer its
+    // states as this run's.
+    statesNow = context.stateSync
+      ? await readStateFolder(context.stateSync.stateRoot)
+      : null;
     contested = claim.contested;
   } finally {
     claim.release();
@@ -244,36 +308,53 @@ async function finish(
   // cannot tell two launches' writes apart; the target can, since it names one
   // game's files and the other launch is a different game.
   const { target, pulled } = context;
-  if (!target || !pulled?.deviceId || pulled.sessionId === null) return;
-
-  const outcome = await pushSet({
-    config: context.config,
-    session: context.session,
-    romId,
-    emulatorId: context.emulatorId,
-    saveRoot,
-    target,
-    base: context.base,
-    deviceId: pulled.deviceId,
-    before: pulled.before,
-    allowance: pulled.allowance,
-    signal: context.signal,
-  });
-  if (outcome) context.onSync?.(outcome);
-
-  // The session the negotiation opened. Last, and a failure is not worth
-  // acting on: an unclosed session is a stale row, not a lost save.
-  const moved = [pulled.outcome, outcome].filter(
-    (entry): entry is SaveSyncOutcome => entry !== null && entry !== undefined,
-  );
-  if (context.config.serverUrl) {
-    await completeSync({
-      serverUrl: context.config.serverUrl,
+  if (target && pulled?.deviceId && pulled.sessionId !== null) {
+    const outcome = await pushSet({
+      config: context.config,
       session: context.session,
-      sessionId: pulled.sessionId,
-      completed: moved.filter((entry) => entry.action !== "failed").length,
-      failed: moved.filter((entry) => entry.action === "failed").length,
+      romId,
+      emulatorId: context.emulatorId,
+      saveRoot,
+      target,
+      base: context.base,
+      deviceId: pulled.deviceId,
+      before: pulled.before,
+      allowance: pulled.allowance,
       signal: context.signal,
     });
+    if (outcome) context.onSync?.(outcome);
+
+    // The session the negotiation opened. A failure is not worth acting on:
+    // an unclosed session is a stale row, not a lost save.
+    const moved = [pulled.outcome, outcome].filter(
+      (entry): entry is SaveSyncOutcome => entry !== null && entry !== undefined,
+    );
+    if (context.config.serverUrl) {
+      await completeSync({
+        serverUrl: context.config.serverUrl,
+        session: context.session,
+        sessionId: pulled.sessionId,
+        completed: moved.filter((entry) => entry.action !== "failed").length,
+        failed: moved.filter((entry) => entry.action === "failed").length,
+        signal: context.signal,
+      });
+    }
+  }
+
+  // After the saves, and reached whether or not there were any: a state is a
+  // convenience and a save is the game, so a pile of states does not sit in
+  // front of one, but a launch that syncs no saves still mirrors its states.
+  if (context.stateSync && context.statesOnDisk && statesNow) {
+    const sent = await pushStandaloneStates({
+      ...context.stateSync,
+      before: context.statesOnDisk,
+      after: statesNow,
+      contested,
+    }).catch(() => null);
+    if (sent && sent.uploaded + sent.failed > 0) {
+      console.info(
+        `[standalone] rom ${romId}: sent ${sent.uploaded} savestates, ${sent.failed} failed`,
+      );
+    }
   }
 }
