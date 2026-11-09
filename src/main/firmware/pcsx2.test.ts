@@ -17,7 +17,7 @@ function fixture() {
   const config = {
     useRommFirmware: true,
     standaloneDataPaths: { pcsx2: profile },
-  } as DesktopConfig;
+  } as unknown as DesktopConfig;
   const mirror = { directory: mirrorDir, count: 1 } as FirmwareMirror;
   return { root, profile, mirrorDir, config, mirror };
 }
