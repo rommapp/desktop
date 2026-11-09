@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { type DesktopConfig } from "../../shared/types.ts";
-import { supplyPcsx2Firmware } from "./pcsx2.ts";
+import { configuredBiosDirectory, supplyPcsx2Firmware } from "./pcsx2.ts";
 import { type FirmwareMirror } from "./sync.ts";
 
 function fixture() {
@@ -49,4 +49,31 @@ test("does not provision when firmware mirroring is disabled", async () => {
   f.config.useRommFirmware = false;
   assert.equal(await supplyPcsx2Firmware({ config: f.config, mirror: f.mirror, command: "/usr/bin/pcsx2-qt", args: [] }), 0);
   assert.equal(existsSync(join(f.profile, "bios")), false);
+});
+
+test("reads a custom BIOS directory from PCSX2.ini", async () => {
+  const f = fixture();
+  const custom = join(f.root, "my-bios");
+  mkdirSync(join(f.profile, "inis"));
+  writeFileSync(join(f.profile, "inis", "PCSX2.ini"), `[UI]
+Theme = dark
+[Folders]
+Bios = ${custom}
+`);
+  assert.equal(await supplyPcsx2Firmware({ config: f.config, mirror: f.mirror, command: "/usr/bin/pcsx2-qt", args: [] }), 1);
+  assert.equal(readFileSync(join(custom, "SCPH.bin"), "utf8"), "romm");
+  assert.equal(existsSync(join(f.profile, "bios")), false);
+});
+
+test("resolves relative BIOS overrides against PCSX2 profile", async () => {
+  const f = fixture();
+  mkdirSync(join(f.profile, "inis"));
+  writeFileSync(join(f.profile, "inis", "PCSX2.ini"), "[Folders]\\nBios = custom/bios\\n");
+  assert.equal(await supplyPcsx2Firmware({ config: f.config, mirror: f.mirror, command: "/usr/bin/pcsx2-qt", args: [] }), 1);
+  assert.equal(readFileSync(join(f.profile, "custom", "bios", "SCPH.bin"), "utf8"), "romm");
+});
+
+test("INI parser ignores other sections and comments", () => {
+  assert.equal(configuredBiosDirectory("[Other]\\nBios = ignored\\n[Folders]\\n; Bios = nope\\nBios = \\"D:/My BIOS\\""), "D:/My BIOS");
+  assert.equal(configuredBiosDirectory("[Other]\\nBios = ignored"), null);
 });
