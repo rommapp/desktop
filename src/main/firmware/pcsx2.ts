@@ -2,7 +2,7 @@
 // Never replace a file the user already has, or touch PCSX2's settings.
 import { constants } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, stat } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve, win32 } from "node:path";
 import { homedir } from "node:os";
 import { type DesktopConfig } from "../../shared/types.ts";
 import { standaloneData } from "../standalone/data.ts";
@@ -35,7 +35,9 @@ async function biosDestination(profile: string): Promise<string> {
   );
   const override = ini ? configuredBiosDirectory(ini) : null;
   if (!override) return join(profile, "bios");
-  return isAbsolute(override) ? override : resolve(profile, override);
+  return isAbsolute(override) || win32.isAbsolute(override)
+    ? override
+    : resolve(profile, override);
 }
 
 export async function supplyPcsx2Firmware(options: {
