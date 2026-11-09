@@ -22,6 +22,7 @@ import { installCore } from "./emulator/install.ts";
 import { createLineBudget, createLineSink } from "./emulator/output.ts";
 import { offerStandaloneInstall } from "./emulator/standalone-install.ts";
 import { syncPlatformFirmware } from "./firmware/sync.ts";
+import { supplyPcsx2Firmware } from "./firmware/pcsx2.ts";
 import { RELEASE_SOURCES } from "./emulator/standalone-release.ts";
 import {
   emulatorForPlatform,
@@ -779,9 +780,10 @@ export class Launcher {
       // Nothing here can fail a launch -- a platform with no firmware and a
       // server that will not answer are the same outcome, which is the launch
       // the shell would have performed anyway.
+      let firmwareMirror = null;
       try {
         const shouldReport = createProgressGate();
-        await syncPlatformFirmware({
+        firmwareMirror = await syncPlatformFirmware({
           config,
           session,
           platformSlug: request.platformSlug,
@@ -854,6 +856,22 @@ export class Launcher {
         launchConfig,
         fullscreen: request.fullscreen,
       });
+
+      // PCSX2 reads BIOS images from its own data directory, not RetroArch's
+      // system_directory. Populate only missing files; existing BIOS and
+      // emulator settings always win. Failure is nonfatal, like the mirror.
+      if (launch.emulatorId === "pcsx2") {
+        try {
+          await supplyPcsx2Firmware({
+            config,
+            mirror: firmwareMirror,
+            command: launch.command,
+            args: launch.args,
+          });
+        } catch (error) {
+          console.warn("[firmware] PCSX2 BIOS provisioning skipped:", error);
+        }
+      }
 
       // What this launch runs. The push records its states against it and the
       // restore below loads only states written by it, so the two agree by
