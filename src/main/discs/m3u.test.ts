@@ -435,3 +435,19 @@ test("readRomFiles refuses a name that would not stay put", () => {
     );
   }
 });
+
+test("single cue/bin game has one boot disc and stages its tracks", () => {
+  const files = [file("game.cue", 1), file("track01.bin", 2), file("track02.bin", 3)];
+  assert.deepEqual(selectDiscs(files).map((f) => f.fileName), ["game.cue"]);
+  assert.deepEqual(selectStagedFiles(files).map((f) => f.fileName), [
+    "game.cue", "track01.bin", "track02.bin",
+  ]);
+});
+
+test("single GDI game stages all referenced track formats", () => {
+  const files = [file("game.gdi", 1), file("track01.bin", 2), file("track02.raw", 3)];
+  assert.deepEqual(selectDiscs(files).map((f) => f.fileName), ["game.gdi"]);
+  assert.deepEqual(selectStagedFiles(files).map((f) => f.fileName), [
+    "game.gdi", "track01.bin", "track02.raw",
+  ]);
+});

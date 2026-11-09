@@ -105,9 +105,22 @@ export async function syncDiscSet({
 
   const files = readRomFiles(body);
   const discs = selectDiscs(files);
-  // One disc is an ordinary launch, and the caller's own download handles it
-  // without a playlist in the way.
-  if (discs.length < 2) return null;
+  // A single-disc folder (cue/bin, gdi/tracks, or disc plus playlist)
+  // is multi-file content too. The ordinary endpoint returns a ZIP.
+  if (discs.length === 0) return null;
+  if (discs.length === 1) {
+    const discFile = discs[0]!;
+    const staged = selectStagedFiles(files);
+    if (staged.length < 2) return null;
+    const paths =
+      libraryPaths(staged, config.libraryPath) ??
+      (await cachePaths({
+        staged, serverUrl, session, romId, cachePath,
+        cacheLimitBytes: config.cacheLimitBytes, signal, onProgress,
+      }));
+    if (!paths) return null;
+    return paths.get(discFile.id) ?? null;
+  }
 
   // One disc of the set, where the page's disc selector picked one. Booted on
   // its own with no playlist in front of it, which is what that choice means:
