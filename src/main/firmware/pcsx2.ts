@@ -16,11 +16,11 @@ export function configuredBiosDirectory(ini: string): string | null {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith(";") || trimmed.startsWith("#")) continue;
     const header = /^\[([^\]]+)\]$/.exec(trimmed);
-    if (header) { section = header[1].trim().toLowerCase(); continue; }
+    if (header) { section = (header[1] ?? "").trim().toLowerCase(); continue; }
     if (section !== "folders") continue;
     const setting = /^([^=]+)=(.*)$/.exec(trimmed);
-    if (setting?.[1].trim().toLowerCase() !== "bios") continue;
-    const value = setting[2].trim().replace(/^"(.+)"$/, "$1");
+    if (!setting || (setting[1] ?? "").trim().toLowerCase() !== "bios") continue;
+    const value = (setting[2] ?? "").trim().replace(/^"(.+)"$/, "$1");
     return value || null;
   }
   return null;
