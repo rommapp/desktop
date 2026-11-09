@@ -14,7 +14,7 @@
 // the user's own.
 
 import { type Session } from "electron";
-import { mkdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { folderGame } from "./folder.ts";
 import { ALL_DISCS, type DesktopConfig } from "../../shared/types.ts";
@@ -106,8 +106,12 @@ export async function syncDiscSet({
   const body = await getJson(serverUrl, session, `/api/roms/${romId}`, signal);
   if (body === undefined) return null;
 
-  const files = readRomFiles(body);
-  const folder = folderGame(files, platformSlug);
+  const folderPlatform = ["ps3", "ps3-games", "wiiu", "wii-u"].includes(platformSlug.toLowerCase());
+  const folderFiles = folderPlatform ? readRomFiles(body, true) : [];
+  const folder = folderGame(folderFiles, platformSlug);
+  // Invalid folder trees must not fall back to a flattened, incomplete ZIP.
+  if (folderPlatform && folderFiles.length > 1 && !folder) return null;
+  const files = folderPlatform ? folderFiles : readRomFiles(body);
   if (folder) {
     const staged = folder.files.map(({ file }) => file);
     const paths = folderLibraryPaths(staged, config.libraryPath) ??
@@ -319,7 +323,6 @@ async function stageFile({
   onProgress: (received: number, total: number | null) => void;
 }): Promise<string | null> {
   const target = join(romDir, relativePath ?? file.fileName);
-  if (relativePath) await mkdir(dirname(target), { recursive: true });
   const existing = await stat(target).catch(() => null);
   if (existing?.isFile() && existing.size === file.sizeBytes) {
     // Touched so eviction ranks a replayed set by when it was last played
@@ -340,8 +343,12 @@ async function stageFile({
     return null;
   }
 
-  const temp = `${target}.part`;
+  // A sibling .part file can be a legitimate game asset. Keep temporary
+  // downloads outside the ROM tree, using a unique directory per transfer.
+  const tempDir = await mkdtemp(join(dirname(romDir), ".romm-stage-"));
+  const temp = join(tempDir, "download");
   try {
+    if (relativePath) await mkdir(dirname(target), { recursive: true });
     await downloadFromServer({
       url,
       session,
@@ -355,17 +362,17 @@ async function stageFile({
     // treated as complete by every later launch.
     const written = await stat(temp).catch(() => null);
     if (!written || written.size !== file.sizeBytes) {
-      await rm(temp, { force: true });
       return null;
     }
     await rename(temp, target);
     return target;
   } catch (error) {
-    await rm(temp, { force: true });
     // A cancellation is the user's and stays fatal. A refused or interrupted
     // transfer is not: it falls back to the ordinary download, which is also
     // what a server too old to serve one file by id ends up doing.
     if (signal.aborted) throw error;
     return null;
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
   }
 }
