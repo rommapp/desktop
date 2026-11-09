@@ -642,6 +642,7 @@ export class Launcher {
         session,
         romId: request.romId,
         signal: controller.signal,
+        platformSlug: request.platformSlug,
         playlist: emulatorReadsPlaylist(config, request.platformSlug),
         // The play page's own disc selector, which asks the same question of
         // both routes: a shell that ignored it would fetch the set whole for a

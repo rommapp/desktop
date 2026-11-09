@@ -15,6 +15,26 @@ interface CacheEntry {
   atime: number;
 }
 
+/** Count nested game assets without following symlinks outside the cache. */
+async function measureTree(dir: string): Promise<{ size: number; atime: number }> {
+  let size = 0;
+  let atime = 0;
+  for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const nested = await measureTree(path);
+      size += nested.size;
+      atime = Math.max(atime, nested.atime);
+    } else if (entry.isFile()) {
+      const info = await stat(path).catch(() => null);
+      if (!info) continue;
+      size += info.size;
+      atime = Math.max(atime, info.atimeMs);
+    }
+  }
+  return { size, atime };
+}
+
 /** Measure the cache a ROM directory at a time. A directory usually holds one
  *  file, but keeps whatever a rename on the server left behind. */
 async function readCache(dir: string): Promise<{
@@ -38,15 +58,7 @@ async function readCache(dir: string): Promise<{
     // Only a ROM id names a cache entry, so nothing else living under the
     // cache directory is ever a candidate for removal.
     if (!romDir.isDirectory() || !ROM_ID.test(romDir.name)) continue;
-    const names = await readdir(path).catch(() => [] as string[]);
-    let size = 0;
-    let atime = 0;
-    for (const name of names) {
-      const info = await stat(join(path, name)).catch(() => null);
-      if (!info?.isFile()) continue;
-      size += info.size;
-      atime = Math.max(atime, info.atimeMs);
-    }
+    const { size, atime } = await measureTree(path);
     if (size === 0) continue;
     total += size;
     entries.push({ path, size, atime });

@@ -17,6 +17,7 @@ async function fakeCache(
     const when = new Date(Date.now() - rom.agedDays * 86_400_000);
     for (const [name, size] of Object.entries(rom.files)) {
       const path = join(dir, name);
+      mkdirSync(join(path, ".."), { recursive: true });
       writeFileSync(path, "x".repeat(size));
       await utimes(path, when, when);
     }
@@ -87,4 +88,16 @@ test("evictToLimit leaves directories that are not ROM ids alone", async () => {
   await evictToLimit(root, 100, join(root, "1"));
 
   assert.ok(existsSync(join(stray, "game.srm")), "nothing else is a candidate");
+});
+
+test("evictToLimit counts nested PS3 and Wii U assets", async () => {
+  const root = await fakeCache([
+    { id: 1, files: {
+      "code/game.rpx": 50, "content/level/asset.dat": 150,
+    }, agedDays: 10 },
+    { id: 2, files: { "game.iso": 100 }, agedDays: 0 },
+  ]);
+  await evictToLimit(root, 150, join(root, "2"));
+  assert.equal(existsSync(join(root, "1")), false);
+  assert.equal(existsSync(join(root, "2")), true);
 });
