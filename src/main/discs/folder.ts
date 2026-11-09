@@ -26,6 +26,8 @@ export function folderGame(files: DiscFile[], platformSlug: string): FolderGame 
   const root = entryParts.slice(0, anchor);
   const staged: FolderGame["files"] = [];
   const seen = new Set<string>();
+  const directories = new Set<string>();
+  const ids = new Set<number>();
   for (let index = 0; index < files.length; index++) {
     const parts = paths[index]!;
     if (parts.length <= root.length ||
@@ -35,9 +37,14 @@ export function folderGame(files: DiscFile[], platformSlug: string): FolderGame 
       safeFileName(part) !== part)) return null;
     const relativePath = posix.join(...relative);
     const key = relativePath.toLowerCase();
-    if (seen.has(key)) return null;
+    if (seen.has(key) || ids.has(files[index]!.id)) return null;
     seen.add(key);
+    ids.add(files[index]!.id);
+    for (let depth = 1; depth < relative.length; depth++) {
+      directories.add(relative.slice(0, depth).join("/").toLowerCase());
+    }
     staged.push({ file: files[index]!, relativePath });
   }
+  if ([...seen].some((path) => directories.has(path))) return null;
   return { files: staged, bootFileId: files[entry]!.id };
 }
