@@ -74,6 +74,6 @@ test("resolves relative BIOS overrides against PCSX2 profile", async () => {
 });
 
 test("INI parser ignores other sections and comments", () => {
-  assert.equal(configuredBiosDirectory("[Other]\\nBios = ignored\\n[Folders]\\n; Bios = nope\\nBios = \\"D:/My BIOS\\""), "D:/My BIOS");
+  assert.equal(configuredBiosDirectory(`[Other]\nBios = ignored\n[Folders]\n; Bios = nope\nBios = "D:/My BIOS"`), "D:/My BIOS");
   assert.equal(configuredBiosDirectory("[Other]\\nBios = ignored"), null);
 });
