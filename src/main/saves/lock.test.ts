@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { inTurn } from "./lock.ts";
+import { inTurn, PendingRomWork, saveSyncKey } from "./lock.ts";
 
 /** A promise with its settle functions, for holding a turn open. */
 function deferred<T>() {
@@ -77,4 +77,42 @@ test("different saves do not wait for each other", async () => {
 
   held.resolve();
   await slow;
+});
+
+test("a selected disc pull waits for the playlist upload to update the server", async () => {
+  const upload = deferred<void>();
+  let server = "old";
+  const key = saveSyncKey("https://romm.example", 42);
+  const push = inTurn(key, async () => {
+    await upload.promise;
+    server = "playlist progress";
+  });
+  let pulled: string | null = null;
+  const pull = inTurn(saveSyncKey("https://romm.example", 42), async () => {
+    pulled = server;
+  });
+  await Promise.resolve();
+  assert.equal(pulled, null);
+  assert.notEqual(key, saveSyncKey("https://romm.example", 43));
+  assert.notEqual(key, saveSyncKey("https://other.example", 42));
+  upload.resolve();
+  await Promise.all([push, pull]);
+  assert.equal(pulled, "playlist progress");
+});
+
+test("relaunch waits even before exit work has queued its upload", async () => {
+  const pending = new PendingRomWork();
+  const watcher = deferred<void>();
+  const order: string[] = [];
+  const exit = (async () => {
+    await watcher.promise;
+    order.push("uploaded");
+  })();
+  pending.track(42, exit);
+  const launch = pending.wait(42).then(() => order.push("pull"));
+  await pending.wait(43);
+  assert.deepEqual(order, []);
+  watcher.resolve();
+  await launch;
+  assert.deepEqual(order, ["uploaded", "pull"]);
 });
