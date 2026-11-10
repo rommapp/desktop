@@ -114,3 +114,20 @@ test("RetroArch paths support Windows separators and preserve dotted basenames",
   const paths = retroarchSavePaths(ROOT, 8, "C:\\\\cache\\\\8\\\\Game.v1.chd");
   assert.equal(paths?.saveFile, join(ROOT, "8", "saves", "Game.v1.srm"));
 });
+
+test("RetroArch preserves safe content punctuation in saves and states", () => {
+  for (const stem of ['Game: Subtitle', 'Game? "Special" <Edition>|*', 'Game.v1', 'CON']) {
+    const paths = retroarchSavePaths(ROOT, 42, `/library/${stem}.chd`);
+    assert.equal(paths?.saveFile, join(ROOT, "42", "saves", `${stem}.srm`));
+    assert.equal(paths?.statePrefix, join(ROOT, "42", "states", `${stem}.state`));
+  }
+});
+
+test("RetroArch rejects invalid components and confines traversing content paths", () => {
+  for (const path of ["", ".", "..", "/library/..", "bad\0.chd"]) {
+    assert.equal(retroarchSavePaths(ROOT, 42, path), null);
+  }
+  const paths = retroarchSavePaths(ROOT, 42, "/library/../../outside.chd");
+  assert.equal(paths?.saveFile, join(ROOT, "42", "saves", "outside.srm"));
+  assert.equal(retroarchSavePaths(null, 42, "/library/Game.chd"), null);
+});

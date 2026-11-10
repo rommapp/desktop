@@ -53,6 +53,7 @@ import {
 } from "./play/session.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
+import { PendingRomWork } from "./saves/lock.ts";
 import { resolveSavePaths, retroarchSavePaths, saveBaseName } from "./saves/paths.ts";
 import { hostFacts } from "./saves/device.ts";
 import {
@@ -201,6 +202,7 @@ function describeInstallableEmulator(
 }
 
 export class Launcher {
+  private readonly pendingRomExits = new PendingRomWork();
   private readonly active = new Map<number, ActiveLaunch>();
   private readonly emit: (state: LaunchState) => void;
   /** Work still on its way to the server after an exit -- a save upload, a play
@@ -764,6 +766,7 @@ export class Launcher {
           status: "downloading",
           stage: "save",
         });
+        await this.pendingRomExits.wait(request.romId);
         saveSync = await pullSave({
           config,
           session,
@@ -1251,6 +1254,7 @@ export class Launcher {
       await reportPlaySessions({ config, session, signal });
     })().catch(() => undefined);
 
+    this.pendingRomExits.track(romId, run);
     this.track(run);
   }
 

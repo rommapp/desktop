@@ -1,5 +1,5 @@
-import { join } from "node:path";
-import { safeFileName } from "../safety.ts";
+import { basename, join } from "node:path";
+import { isWithin, safeFileName } from "../safety.ts";
 
 /** Where a game's save data lives while the shell owns it. */
 export interface SavePaths {
@@ -88,9 +88,23 @@ export function retroarchSavePaths(
   romId: number,
   romPath: string,
 ): SavePaths | null {
-  return resolveSavePaths(
-    saveDataPath,
-    romId,
-    romPath.split(/[\\\\/]/).at(-1) ?? "",
+  if (!saveDataPath) return null;
+
+  // Use the host's path rules: backslashes and colons are valid Linux filename
+  // characters. Windows paths on a Unix host are accepted for imported paths.
+  const name = basename(
+    process.platform !== "win32" && /^[A-Za-z]:\\/.test(romPath)
+      ? romPath.replaceAll("\\", "/")
+      : romPath,
   );
+  if (!name || name === "." || name === ".." || name.includes("\0")) return null;
+  const dot = name.lastIndexOf(".");
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const root = join(saveDataPath, String(romId));
+  const saveDir = join(root, "saves");
+  const stateDir = join(root, "states");
+  const saveFile = join(saveDir, `${base}.srm`);
+  const statePrefix = join(stateDir, `${base}.state`);
+  if (!isWithin(saveDir, saveFile) || !isWithin(stateDir, statePrefix)) return null;
+  return { saveDir, stateDir, saveFile, statePrefix };
 }
