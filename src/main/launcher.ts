@@ -53,7 +53,7 @@ import {
 } from "./play/session.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
-import { resolveSavePaths, saveBaseName } from "./saves/paths.ts";
+import { resolveSavePaths, retroarchSavePaths, saveBaseName } from "./saves/paths.ts";
 import { hostFacts } from "./saves/device.ts";
 import {
   contentStateBase,
@@ -730,11 +730,7 @@ export class Launcher {
       // Keep the directory keyed by ROM id so cached and library launches
       // continue sharing the same server-side save slot.
       if (savePaths && usesBuiltInRetroArch(config, request.platformSlug)) {
-        savePaths = resolveSavePaths(
-          config.saveDataPath,
-          request.romId,
-          romPath.split(/[\\/]/).at(-1) ?? request.fileName,
-        );
+        savePaths = retroarchSavePaths(config.saveDataPath, request.romId, romPath);
       }
 
       if (savePaths) {
