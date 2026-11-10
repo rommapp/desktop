@@ -123,11 +123,26 @@ export interface PermissionDetails {
   mediaTypes?: readonly string[];
 }
 
+/** Whether the server's own top-level frame is the one asking. */
+function isTopLevelServerRequest(
+  details: PermissionDetails,
+  serverUrl: string,
+): boolean {
+  return (
+    details.isMainFrame &&
+    isServerOrigin(details.securityOrigin ?? details.requestingUrl, serverUrl)
+  );
+}
+
 /**
  * Whether to grant a permission the page has asked for.
  *
  * Fullscreen and pointer lock are what a player needs and carry nothing with
- * them. The camera is different: RomM scans a physical game's barcode with
+ * them. A sanitized clipboard write is what `navigator.clipboard.writeText`
+ * asks for (Electron routes it through this handler, and refusing it makes
+ * every copy button reject), so the server's top-level frame gets it, for the
+ * same two reasons as the camera below. Reading the clipboard is a different
+ * question and stays refused. The camera is different: RomM scans a physical game's barcode with
  * `getUserMedia`, so the feature cannot work without it, but the same window
  * renders artwork and descriptions from third-party metadata providers. So it
  * is granted on three conditions, all of which the scanner meets and none of
@@ -151,13 +166,12 @@ export function shouldGrantPermission(
   serverUrl: string,
 ): boolean {
   if (permission === "fullscreen" || permission === "pointerLock") return true;
+  if (permission === "clipboard-sanitized-write") {
+    return isTopLevelServerRequest(details, serverUrl);
+  }
   if (permission !== "media") return false;
 
-  if (!details.isMainFrame) return false;
-  if (
-    !isServerOrigin(details.securityOrigin ?? details.requestingUrl, serverUrl)
-  )
-    return false;
+  if (!isTopLevelServerRequest(details, serverUrl)) return false;
 
   const devices = details.mediaTypes;
   return devices !== undefined && devices.length === 1 && devices[0] === "video";

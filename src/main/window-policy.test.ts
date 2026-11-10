@@ -221,6 +221,52 @@ test("shouldGrantPermission refuses a media request it cannot inspect", () => {
   );
 });
 
+test("shouldGrantPermission lets the server copy to the clipboard", () => {
+  assert.equal(
+    shouldGrantPermission("clipboard-sanitized-write", cameraRequest(), SERVER),
+    true,
+  );
+  // Without a securityOrigin the requesting URL stands in.
+  assert.equal(
+    shouldGrantPermission(
+      "clipboard-sanitized-write",
+      cameraRequest({ securityOrigin: undefined }),
+      SERVER,
+    ),
+    true,
+  );
+});
+
+test("shouldGrantPermission refuses a clipboard write from anywhere else", () => {
+  assert.equal(
+    shouldGrantPermission(
+      "clipboard-sanitized-write",
+      cameraRequest({
+        securityOrigin: "https://images.igdb.com",
+        requestingUrl: "https://images.igdb.com/frame",
+      }),
+      SERVER,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldGrantPermission(
+      "clipboard-sanitized-write",
+      cameraRequest({ securityOrigin: undefined, requestingUrl: "https://evil.example/" }),
+      SERVER,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldGrantPermission(
+      "clipboard-sanitized-write",
+      cameraRequest({ isMainFrame: false }),
+      SERVER,
+    ),
+    false,
+  );
+});
+
 test("shouldGrantPermission denies everything else, server origin included", () => {
   for (const permission of [
     "geolocation",
