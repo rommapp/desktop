@@ -53,7 +53,8 @@ import {
 } from "./play/session.ts";
 import { createProgressGate, createRateMeter } from "./progress.ts";
 import { ensureRom } from "./rom-cache.ts";
-import { resolveSavePaths, saveBaseName } from "./saves/paths.ts";
+import { PendingRomWork } from "./saves/lock.ts";
+import { resolveSavePaths, retroarchSavePaths, saveBaseName } from "./saves/paths.ts";
 import { hostFacts } from "./saves/device.ts";
 import {
   contentStateBase,
@@ -201,6 +202,7 @@ function describeInstallableEmulator(
 }
 
 export class Launcher {
+  private readonly pendingRomExits = new PendingRomWork();
   private readonly active = new Map<number, ActiveLaunch>();
   private readonly emit: (state: LaunchState) => void;
   /** Work still on its way to the server after an exit -- a save upload, a play
@@ -565,7 +567,7 @@ export class Launcher {
     try {
       const config = await loadConfig();
       assertSeparateRoots(config);
-      const savePaths = resolveSavePaths(
+      let savePaths = resolveSavePaths(
         config.saveDataPath,
         request.romId,
         request.fileName,
@@ -724,6 +726,15 @@ export class Launcher {
         romPath = rom.path;
       }
 
+      // RetroArch redirects -s to <content basename>.srm when a save
+      // directory is configured. The staged file (not RomM's folder name)
+      // therefore determines the filename that both the pull and push use.
+      // Keep the directory keyed by ROM id so cached and library launches
+      // continue sharing the same server-side save slot.
+      if (savePaths && usesBuiltInRetroArch(config, request.platformSlug)) {
+        savePaths = retroarchSavePaths(config.saveDataPath, request.romId, romPath);
+      }
+
       if (savePaths) {
         await mkdir(savePaths.saveDir, { recursive: true });
         await mkdir(savePaths.stateDir, { recursive: true });
@@ -755,6 +766,7 @@ export class Launcher {
           status: "downloading",
           stage: "save",
         });
+        await this.pendingRomExits.wait(request.romId);
         saveSync = await pullSave({
           config,
           session,
@@ -901,9 +913,11 @@ export class Launcher {
           romId: request.romId,
           stateDir: savePaths.stateDir,
           base: pinned,
-          localBases: emulatorPinsStateFile(config, request.platformSlug)
-            ? [pinned, derived]
-            : [derived, pinned],
+          localBases: usesBuiltInRetroArch(config, request.platformSlug)
+            ? [derived, pinned]
+            : emulatorPinsStateFile(config, request.platformSlug)
+              ? [pinned, derived]
+              : [derived, pinned],
           host: hostFacts().hostname,
           emulator: playedBy,
           signal: controller.signal,
@@ -1240,6 +1254,7 @@ export class Launcher {
       await reportPlaySessions({ config, session, signal });
     })().catch(() => undefined);
 
+    this.pendingRomExits.track(romId, run);
     this.track(run);
   }
 

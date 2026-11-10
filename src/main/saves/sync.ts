@@ -29,7 +29,7 @@ import { onBeat } from "./beat.ts";
 import { ensureDeviceId, forgetDeviceId } from "./device.ts";
 import { hashFile, md5Hex } from "./hash.ts";
 import { apiRequest } from "./http.ts";
-import { inTurn } from "./lock.ts";
+import { inTurn, saveSyncKey } from "./lock.ts";
 import { newerSibling, type SaveEntry } from "./paths.ts";
 import {
   archiveName,
@@ -156,11 +156,10 @@ export interface PullResult {
  * reads as a cancel rather than as a save that failed to sync.
  */
 export function pullSave(options: PullOptions): Promise<PullResult> {
-  // The game's save file is the resource, not the game. The launch this one is
-  // most likely to be queued behind is the previous launch of the same game,
-  // still uploading what the player just did: renaming the server's copy over
-  // the file underneath that upload is how the wrong bytes end up on both ends.
-  return inTurn(options.saveFile, () => runPull(options));
+  // Different content filenames still negotiate the same server-side ROM slot.
+  return inTurn(saveSyncKey(options.config.serverUrl, options.romId), () =>
+    runPull(options),
+  );
 }
 
 async function runPull({
@@ -351,9 +350,9 @@ export function pushSave(
   // launch: this reads the file to decide whether to send it and then sends
   // what it read, and a relaunch pulling in between would make those two
   // different files.
-  return inTurn(options.saveFile, () => runPush(options)).then(
-    (result) => result.outcome,
-  );
+  return inTurn(saveSyncKey(options.config.serverUrl, options.romId), () =>
+    runPush(options),
+  ).then((result) => result.outcome);
 }
 
 interface PushResult {
@@ -649,7 +648,7 @@ export function watchSave(options: WatchOptions): SaveWatch {
       outcome,
       sent: stored,
       version: held,
-    } = await inTurn(saveFile, () =>
+    } = await inTurn(saveSyncKey(options.config.serverUrl, options.romId), () =>
       runPush({ ...options, before: baseline, expect: reading.hash, version }),
     );
     version = held;
