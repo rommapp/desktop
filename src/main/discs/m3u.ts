@@ -197,7 +197,7 @@ export function renderM3u(discPaths: string[]): string {
 }
 
 /** Read the files array of a /api/roms/{id} body, ignoring anything malformed. */
-export function readRomFiles(body: unknown): DiscFile[] {
+export function readRomFiles(body: unknown, preserveFolderPaths = false): DiscFile[] {
   if (typeof body !== "object" || body === null) return [];
   const files = (body as { files?: unknown }).files;
   if (!Array.isArray(files)) return [];
@@ -228,8 +228,8 @@ export function readRomFiles(body: unknown): DiscFile[] {
     if (safeFileName(fileName) !== fileName) continue;
     // Two rows naming one file would fight over the same path on disk, and the
     // playlist would name it twice. First wins, as the firmware mirror does.
-    const key = fileName.toLowerCase();
-    if (seen.has(key)) continue;
+    const key = preserveFolderPaths ? fullPath.toLowerCase() : fileName.toLowerCase();
+    if (!preserveFolderPaths && seen.has(key)) continue;
     seen.add(key);
     out.push({ id, fileName, fullPath, sizeBytes });
   }
