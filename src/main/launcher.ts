@@ -733,7 +733,7 @@ export class Launcher {
         savePaths = resolveSavePaths(
           config.saveDataPath,
           request.romId,
-          contentStateBase(romPath),
+          romPath.split(/[\\/]/).at(-1) ?? request.fileName,
         );
       }
 
