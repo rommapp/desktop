@@ -79,3 +79,18 @@ export function resolveSavePaths(
     statePrefix: join(stateDir, `${base}.state`),
   };
 }
+
+/** RetroArch redirects its SRAM filename to the basename of loaded content
+ * whenever savefile_directory is configured. A folder's .m3u name is not
+ * necessarily the .chd, .cue or generated playlist the emulator actually loads. */
+export function retroarchSavePaths(
+  saveDataPath: string | null,
+  romId: number,
+  romPath: string,
+): SavePaths | null {
+  return resolveSavePaths(
+    saveDataPath,
+    romId,
+    romPath.split(/[\\\\/]/).at(-1) ?? "",
+  );
+}
