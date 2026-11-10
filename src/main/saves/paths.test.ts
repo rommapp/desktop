@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { basename, join, sep } from "node:path";
 import { test } from "node:test";
-import { newerSibling, resolveSavePaths, saveBaseName } from "./paths.ts";
+import { newerSibling, resolveSavePaths, retroarchSavePaths, saveBaseName } from "./paths.ts";
 
 const ROOT = join("/var", "save-data");
 
@@ -98,4 +98,19 @@ test("only saves count, not the state and temp files beside them", () => {
   ];
 
   assert.equal(newerSibling(ours, beside), null);
+});
+
+test("RetroArch uses the loaded CHD rather than a folder playlist name", () => {
+  const paths = retroarchSavePaths(ROOT, 2392, "/library/Crash Bandicoot (USA).m3u/Crash Bandicoot (USA).chd");
+  assert.equal(paths?.saveFile, join(ROOT, "2392", "saves", "Crash Bandicoot (USA).srm"));
+});
+
+test("RetroArch generated multi-disc playlists save under discs.srm", () => {
+  const paths = retroarchSavePaths(ROOT, 2392, "/cache/2392/discs.m3u");
+  assert.equal(paths?.saveFile, join(ROOT, "2392", "saves", "discs.srm"));
+});
+
+test("RetroArch paths support Windows separators and preserve dotted basenames", () => {
+  const paths = retroarchSavePaths(ROOT, 8, "C:\\\\cache\\\\8\\\\Game.v1.chd");
+  assert.equal(paths?.saveFile, join(ROOT, "8", "saves", "Game.v1.srm"));
 });
