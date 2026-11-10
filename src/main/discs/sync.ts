@@ -14,8 +14,9 @@
 // the user's own.
 
 import { type Session } from "electron";
-import { mkdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { folderGame } from "./folder.ts";
 import { ALL_DISCS, type DesktopConfig } from "../../shared/types.ts";
 import { noteSignedOut } from "../auth/recover.ts";
 import { evictToLimit } from "../cache/evict.ts";
@@ -44,6 +45,7 @@ interface SyncOptions {
    *  disc is what starts the game and the rest of the set is a disc change away
    *  in the emulator's own menu, so no playlist is written. */
   playlist: boolean;
+  platformSlug: string;
   /** The disc the play page picked, `"all"` for the whole set, or undefined
    *  from a caller that was never asked. */
   disc?: number | typeof ALL_DISCS;
@@ -94,6 +96,7 @@ export async function syncDiscSet({
   romId,
   signal,
   playlist,
+  platformSlug,
   disc,
   onProgress,
 }: SyncOptions): Promise<string | null> {
@@ -103,7 +106,22 @@ export async function syncDiscSet({
   const body = await getJson(serverUrl, session, `/api/roms/${romId}`, signal);
   if (body === undefined) return null;
 
-  const files = readRomFiles(body);
+  const folderPlatform = ["ps3", "ps3-games", "wiiu", "wii-u"].includes(platformSlug.toLowerCase());
+  const folderFiles = folderPlatform ? readRomFiles(body, true) : [];
+  const folder = folderGame(folderFiles, platformSlug);
+  // Invalid folder trees must not fall back to a flattened, incomplete ZIP.
+  if (folderPlatform && folderFiles.length > 1 && !folder) return null;
+  const files = folderPlatform ? folderFiles : readRomFiles(body);
+  if (folder) {
+    const staged = folder.files.map(({ file }) => file);
+    const paths = folderLibraryPaths(staged, config.libraryPath) ??
+      (await cachePaths({
+        staged, serverUrl, session, romId, cachePath,
+        cacheLimitBytes: config.cacheLimitBytes, signal, onProgress,
+        relativePaths: new Map(folder.files.map(({ file, relativePath }) => [file.id, relativePath])),
+      }));
+    return paths?.get(folder.bootFileId) ?? null;
+  }
   const discs = selectDiscs(files);
   // A single-disc folder (cue/bin, gdi/tracks, or disc plus playlist)
   // is multi-file content too. The ordinary endpoint returns a ZIP.
@@ -212,6 +230,17 @@ function libraryPaths(
   return directories.size === 1 ? found : null;
 }
 
+/** Folder games may legitimately span multiple subdirectories. */
+function folderLibraryPaths(staged: DiscFile[], libraryPath: string | null): Map<number, string> | null {
+  const paths = new Map<number, string>();
+  for (const file of staged) {
+    const path = resolveLibraryRom(libraryPath, file.fullPath, file.sizeBytes);
+    if (!path) return null;
+    paths.set(file.id, path);
+  }
+  return paths;
+}
+
 /** Fetch the whole set into this rom's cache directory, or null when any of it
  *  could not be fetched. */
 async function cachePaths({
@@ -223,6 +252,7 @@ async function cachePaths({
   cacheLimitBytes,
   signal,
   onProgress,
+  relativePaths,
 }: {
   staged: DiscFile[];
   serverUrl: string;
@@ -232,6 +262,7 @@ async function cachePaths({
   cacheLimitBytes: number;
   signal: AbortSignal;
   onProgress: SyncOptions["onProgress"];
+  relativePaths?: Map<number, string>;
 }): Promise<Map<number, string> | null> {
   const romDir = join(cachePath, String(romId));
   await mkdir(romDir, { recursive: true });
@@ -244,6 +275,7 @@ async function cachePaths({
       romId,
       romDir,
       file,
+      relativePath: relativePaths?.get(file.id),
       signal,
       onProgress: (received, total) =>
         onProgress?.(
@@ -277,6 +309,7 @@ async function stageFile({
   romId,
   romDir,
   file,
+  relativePath,
   signal,
   onProgress,
 }: {
@@ -285,10 +318,11 @@ async function stageFile({
   romId: number;
   romDir: string;
   file: DiscFile;
+  relativePath?: string;
   signal: AbortSignal;
   onProgress: (received: number, total: number | null) => void;
 }): Promise<string | null> {
-  const target = join(romDir, file.fileName);
+  const target = join(romDir, relativePath ?? file.fileName);
   const existing = await stat(target).catch(() => null);
   if (existing?.isFile() && existing.size === file.sizeBytes) {
     // Touched so eviction ranks a replayed set by when it was last played
@@ -309,8 +343,12 @@ async function stageFile({
     return null;
   }
 
-  const temp = `${target}.part`;
+  // A sibling .part file can be a legitimate game asset. Keep temporary
+  // downloads outside the ROM tree, using a unique directory per transfer.
+  const tempDir = await mkdtemp(join(dirname(romDir), ".romm-stage-"));
+  const temp = join(tempDir, "download");
   try {
+    if (relativePath) await mkdir(dirname(target), { recursive: true });
     await downloadFromServer({
       url,
       session,
@@ -324,17 +362,17 @@ async function stageFile({
     // treated as complete by every later launch.
     const written = await stat(temp).catch(() => null);
     if (!written || written.size !== file.sizeBytes) {
-      await rm(temp, { force: true });
       return null;
     }
     await rename(temp, target);
     return target;
   } catch (error) {
-    await rm(temp, { force: true });
     // A cancellation is the user's and stays fatal. A refused or interrupted
     // transfer is not: it falls back to the ordinary download, which is also
     // what a server too old to serve one file by id ends up doing.
     if (signal.aborted) throw error;
     return null;
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
   }
 }
