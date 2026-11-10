@@ -1,5 +1,5 @@
-import { basename, join } from "node:path";
-import { isWithin, safeFileName } from "../safety.ts";
+import { basename, dirname, join } from "node:path";
+import { safeFileName } from "../safety.ts";
 
 /** Where a game's save data lives while the shell owns it. */
 export interface SavePaths {
@@ -105,6 +105,6 @@ export function retroarchSavePaths(
   const stateDir = join(root, "states");
   const saveFile = join(saveDir, `${base}.srm`);
   const statePrefix = join(stateDir, `${base}.state`);
-  if (!isWithin(saveDir, saveFile) || !isWithin(stateDir, statePrefix)) return null;
+  if (dirname(saveFile) !== saveDir || dirname(statePrefix) !== stateDir) return null;
   return { saveDir, stateDir, saveFile, statePrefix };
 }

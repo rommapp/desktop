@@ -116,7 +116,7 @@ test("RetroArch paths support Windows separators and preserve dotted basenames",
 });
 
 test("RetroArch preserves safe content punctuation in saves and states", () => {
-  for (const stem of ['Game: Subtitle', 'Game? "Special" <Edition>|*', 'Game.v1', 'CON']) {
+  for (const stem of ['Game: Subtitle', 'Game? "Special" <Edition>|*', 'Game.v1', '..Game', 'CON']) {
     const paths = retroarchSavePaths(ROOT, 42, `/library/${stem}.chd`);
     assert.equal(paths?.saveFile, join(ROOT, "42", "saves", `${stem}.srm`));
     assert.equal(paths?.statePrefix, join(ROOT, "42", "states", `${stem}.state`));
