@@ -565,7 +565,7 @@ export class Launcher {
     try {
       const config = await loadConfig();
       assertSeparateRoots(config);
-      const savePaths = resolveSavePaths(
+      let savePaths = resolveSavePaths(
         config.saveDataPath,
         request.romId,
         request.fileName,
@@ -722,6 +722,19 @@ export class Launcher {
           },
         });
         romPath = rom.path;
+      }
+
+      // RetroArch redirects -s to <content basename>.srm when a save
+      // directory is configured. The staged file (not RomM's folder name)
+      // therefore determines the filename that both the pull and push use.
+      // Keep the directory keyed by ROM id so cached and library launches
+      // continue sharing the same server-side save slot.
+      if (savePaths && usesBuiltInRetroArch(config, request.platformSlug)) {
+        savePaths = resolveSavePaths(
+          config.saveDataPath,
+          request.romId,
+          contentStateBase(romPath),
+        );
       }
 
       if (savePaths) {
@@ -901,9 +914,11 @@ export class Launcher {
           romId: request.romId,
           stateDir: savePaths.stateDir,
           base: pinned,
-          localBases: emulatorPinsStateFile(config, request.platformSlug)
-            ? [pinned, derived]
-            : [derived, pinned],
+          localBases: usesBuiltInRetroArch(config, request.platformSlug)
+            ? [derived, pinned]
+            : emulatorPinsStateFile(config, request.platformSlug)
+              ? [pinned, derived]
+              : [derived, pinned],
           host: hostFacts().hostname,
           emulator: playedBy,
           signal: controller.signal,
