@@ -48,3 +48,24 @@ export function inTurn<T>(key: string, work: () => Promise<T>): Promise<T> {
 
   return mine;
 }
+
+/** Server save slots belong to a ROM, even when each disc has a different local name. */
+export function saveSyncKey(serverUrl: string | null, romId: number): string {
+  return JSON.stringify(["sram", serverUrl, romId]);
+}
+
+/** Exit work must be registered before its first await, including watcher shutdown. */
+export class PendingRomWork {
+  private readonly pending = new Map<number, Promise<void>>();
+
+  track(romId: number, work: Promise<void>): void {
+    this.pending.set(romId, work);
+    void work.finally(() => {
+      if (this.pending.get(romId) === work) this.pending.delete(romId);
+    });
+  }
+
+  async wait(romId: number): Promise<void> {
+    await this.pending.get(romId);
+  }
+}

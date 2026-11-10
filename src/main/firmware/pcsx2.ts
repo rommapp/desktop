@@ -6,7 +6,11 @@ import { isAbsolute, join, resolve, win32 } from "node:path";
 import { homedir } from "node:os";
 import { type DesktopConfig } from "../../shared/types.ts";
 import { standaloneData } from "../standalone/data.ts";
-import { type FirmwareMirror } from "./sync.ts";
+/** Only the mirror fields PCSX2 needs; avoids importing the Electron-backed sync module. */
+export interface Pcsx2FirmwareMirror {
+  directory: string;
+  count: number;
+}
 
 
 /** Read PCSX2's configured BIOS search directory without modifying its INI. */
@@ -42,7 +46,7 @@ async function biosDestination(profile: string): Promise<string> {
 
 export async function supplyPcsx2Firmware(options: {
   config: DesktopConfig;
-  mirror: FirmwareMirror | null;
+  mirror: Pcsx2FirmwareMirror | null;
   command: string;
   args: readonly string[];
   home?: string;

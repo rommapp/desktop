@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { safeFileName } from "../safety.ts";
 
 /** Where a game's save data lives while the shell owns it. */
@@ -78,4 +78,33 @@ export function resolveSavePaths(
     saveFile: join(saveDir, `${base}.srm`),
     statePrefix: join(stateDir, `${base}.state`),
   };
+}
+
+/** RetroArch redirects its SRAM filename to the basename of loaded content
+ * whenever savefile_directory is configured. A folder's .m3u name is not
+ * necessarily the .chd, .cue or generated playlist the emulator actually loads. */
+export function retroarchSavePaths(
+  saveDataPath: string | null,
+  romId: number,
+  romPath: string,
+): SavePaths | null {
+  if (!saveDataPath) return null;
+
+  // Use the host's path rules: backslashes and colons are valid Linux filename
+  // characters. Windows paths on a Unix host are accepted for imported paths.
+  const name = basename(
+    process.platform !== "win32" && /^[A-Za-z]:\\/.test(romPath)
+      ? romPath.replaceAll("\\", "/")
+      : romPath,
+  );
+  if (!name || name === "." || name === ".." || name.includes("\0")) return null;
+  const dot = name.lastIndexOf(".");
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const root = join(saveDataPath, String(romId));
+  const saveDir = join(root, "saves");
+  const stateDir = join(root, "states");
+  const saveFile = join(saveDir, `${base}.srm`);
+  const statePrefix = join(stateDir, `${base}.state`);
+  if (dirname(saveFile) !== saveDir || dirname(statePrefix) !== stateDir) return null;
+  return { saveDir, stateDir, saveFile, statePrefix };
 }
