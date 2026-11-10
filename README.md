@@ -115,8 +115,8 @@ fails silently. Quitting the emulator brings the window back to the front.
 
 ## Untested
 
-The in-browser emulators (EmulatorJS, Ruffle, js-dos, PICO-8), file downloads
-and clipboard actions are untested in this shell and worth exercising.
+The in-browser emulators (EmulatorJS, Ruffle, js-dos, PICO-8) and file
+downloads are untested in this shell and worth exercising.
 
 [Multi-disc games](#multi-disc-games) have unit tests over disc selection, the
 playlist, which emulators are handed one, and booting a single picked disc, but
