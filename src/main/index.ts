@@ -1,6 +1,8 @@
 import { BrowserWindow, app } from "electron";
 import { type DesktopConfig } from "../shared/types.ts";
-import { isSetupMode } from "./argv.ts";
+import { nativeSession } from "./auth/paired-session.ts";
+import { pairDesktop } from "./auth/pair-window.ts";
+import { pairingAction, isSetupMode } from "./argv.ts";
 import { loadConfig } from "./config.ts";
 import { offerRetroArchInstall } from "./emulator/bootstrap.ts";
 import { broadcastLaunchState, registerIpc } from "./ipc.ts";
@@ -31,6 +33,15 @@ function focusMainWindow(): void {
 // Consumed the first time a window opens, so re-activating later returns to
 // the server rather than reopening setup.
 let forceSetup = isSetupMode();
+let pendingPairing = pairingAction();
+let pairingInProgress = false;
+function offerPairing(window: BrowserWindow, server: string): void {
+  const action = pendingPairing;
+  if (!action || pairingInProgress) return;
+  pendingPairing = null;
+  pairingInProgress = true;
+  void pairDesktop(window, server, action === "unpair").finally(() => { pairingInProgress = false; });
+}
 
 // openInitialWindow also runs on macOS "activate", so without this a user who
 // answered "Not now" without ticking the box would be asked again every time
@@ -59,7 +70,15 @@ function offerEmulatorOnce(
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on("second-instance", focusMainWindow);
+  app.on("second-instance", (_event, argv) => {
+    focusMainWindow();
+    const action = pairingAction(argv);
+    if (!action) return;
+    void loadConfig().then((config) => {
+      const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.getParentWindow());
+      if (window && config.serverUrl) { pendingPairing = action; offerPairing(window, config.serverUrl); }
+    });
+  });
 
   void start();
 }
@@ -87,11 +106,10 @@ const NEVER_CANCELLED = new AbortController().signal;
  */
 function reportBacklog(config: DesktopConfig, window: BrowserWindow): void {
   window.webContents.on("did-finish-load", () => {
-    void reportPlaySessions({
-      config,
-      session: window.webContents.session,
-      signal: NEVER_CANCELLED,
-    });
+    if (!config.serverUrl) return;
+    void nativeSession(config.serverUrl, window.webContents.session).then((session) =>
+      reportPlaySessions({ config, session, signal: NEVER_CANCELLED }),
+    ).catch(() => {});
   });
 }
 
@@ -102,6 +120,7 @@ async function openInitialWindow(): Promise<void> {
     // After the page, not beside it: see offerEmulatorOnce.
     offerEmulatorOnce(config, window);
     reportBacklog(config, window);
+    window.webContents.once("did-finish-load", () => offerPairing(window, config.serverUrl!));
     return;
   }
   forceSetup = false;
@@ -124,6 +143,7 @@ async function openInitialWindow(): Promise<void> {
       // same one: a session is only ever offered to the server it was played
       // against.
       reportBacklog(saved, window);
+      window.webContents.once("did-finish-load", () => offerPairing(window, serverUrl));
     })();
   });
 }

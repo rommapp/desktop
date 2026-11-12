@@ -18,7 +18,7 @@ export function registerIpc(launcher: Launcher): void {
     replyWith(() => {
       const request = validateLaunchRequest(raw);
       // The session comes from the calling window, never from the request, so a
-      // launch always downloads with that window's own credentials. The window
+      // launcher can select its pairing against that window's account. The window
       // comes along too, so an emulator offer is a sheet on the page that asked
       // rather than a dialog from nowhere.
       return launcher.launch(

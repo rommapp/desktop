@@ -1,6 +1,6 @@
 // What a refusal from the server means for the session the shell is borrowing.
 //
-// The shell holds no credentials of its own. Every request it makes to RomM --
+// Unpaired requests borrow the window's credentials. Their requests to RomM --
 // the ROM download, the disc list, the firmware list, the save negotiation --
 // rides on the `romm_session` cookie the window already has. So the one
 // distinction it has to be able to draw is between a request refused

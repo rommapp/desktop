@@ -3,6 +3,7 @@ import { createWriteStream } from "node:fs";
 import { mkdir, rename, rm, stat, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { type DesktopConfig, LaunchError } from "../shared/types.ts";
+import { pairedIdentity } from "./auth/paired-session.ts";
 import { noteSignedOut } from "./auth/recover.ts";
 import { isSignedOut, SIGNED_OUT_MESSAGE } from "./auth/status.ts";
 import { evictToLimit } from "./cache/evict.ts";
@@ -63,8 +64,8 @@ export function downloadFromServer({
   maxBytes?: number;
 }): Promise<void> {
   return new Promise((resolve, reject) => {
-    // useSessionCookies attaches the romm_session cookie the window already
-    // holds, so the shell never handles credentials itself.
+    // Cookie sessions reuse the window's sign-in. Paired sessions strip those
+    // cookies and attach their bearer in a server-scoped webRequest handler.
     const request = net.request({
       url: url.toString(),
       session,
@@ -117,10 +118,13 @@ export function downloadFromServer({
       if (response.statusCode < 200 || response.statusCode >= 300) {
         // The URL was built against the server origin by resolveDownloadUrl, so
         // this is that origin.
-        noteSignedOut(url.origin, response.statusCode);
+        const paired = pairedIdentity(session);
+        if (!paired) noteSignedOut(url.origin, response.statusCode);
         fail(
           isSignedOut(response.statusCode)
-            ? new LaunchError("session-expired", SIGNED_OUT_MESSAGE)
+            ? new LaunchError("session-expired", paired
+                ? "Device pairing expired or revoked. Restart with --pair to reconnect."
+                : SIGNED_OUT_MESSAGE)
             : new LaunchError(
                 "download-failed",
                 `Server returned ${response.statusCode} for ${url.pathname}`,

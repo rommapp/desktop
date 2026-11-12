@@ -9,3 +9,9 @@
 export function isSetupMode(argv: string[] = process.argv): boolean {
   return argv.includes("--setup");
 }
+
+/** Pairing is deliberately explicit and never prompted merely by browsing. */
+export function pairingAction(argv: string[] = process.argv): "pair" | "unpair" | null {
+  if (argv.includes("--unpair")) return "unpair";
+  return argv.includes("--pair") ? "pair" : null;
+}

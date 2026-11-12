@@ -12,6 +12,7 @@ import {
   type PlatformSupportQuery,
   type SaveSyncOutcome,
 } from "../shared/types.ts";
+import { nativeSession } from "./auth/paired-session.ts";
 import { loadConfig, playQueuePath } from "./config.ts";
 import {
   canInstallCore,
@@ -628,6 +629,12 @@ export class Launcher {
       }
       // Extracting and writing a core is not itself interruptible, so a cancel
       // landing during it is only observed here.
+      throwIfCancelled(controller.signal);
+
+      // Account selection belongs to the registered launch so Cancel can abort
+      // its identity request. Keep this session through exit, even if the page
+      // signs out or changes accounts while the emulator runs.
+      if (config.serverUrl) session = await nativeSession(config.serverUrl, session, controller.signal);
       throwIfCancelled(controller.signal);
 
       // A disc set is fetched as the individual discs the server holds,

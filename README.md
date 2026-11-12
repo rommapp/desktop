@@ -50,10 +50,13 @@ npm run dev
 ```
 
 On first launch it asks for your server address, then loads it. Log in exactly
-as you would in a browser; the shell holds no credentials of its own.
+as you would in a browser. Optional device pairing lets native requests use a
+client token independently of that browsing session.
 
 | Flag      | Effect                                                              |
 | --------- | ------------------------------------------------------------------- |
+| `--pair` | Pair this desktop with the configured server using a client token |
+| `--unpair` | Remove the local pairing for the configured server |
 | `--setup` | Reopen the server-address window to correct a mistyped address      |
 | `--spike` | Inject a test panel, for a server without the RomM-side integration |
 
@@ -81,9 +84,49 @@ returning your provider's end-session URL, so you are signed out of RomM either
 way; whether your provider's session ends depends on the browser that URL opens
 in.
 
+### Pairing this desktop
+
+Pairing is optional. Start with `npm start -- --pair` (or pass `--pair` to the
+packaged app), open the link in the local pairing window, and approve its code
+in RomM. The native window closes after approval. Closing it earlier cancels
+polling; codes expire after at most ten minutes. A server without
+`/api/auth/device/init` continues to work through cookie sign-in.
+
+The requested scopes cover profile identity, ROM and firmware reads, asset
+reads/writes, device reads/writes and play-session writes. Review them in RomM
+before approval. Keep `me.read` so the shell can bind the token to its owner.
+Approval creates a device-bound client token; re-pairing uses the same install
+identifier. It can be revoked or regenerated in RomM's client-token settings.
+
+Credentials are encrypted with Electron's OS-backed `safeStorage`, stored under
+`pairings/` beside the config, one ciphertext file per server origin. They are
+never put in `desktop-config.json`, the preload bridge or the browsing page.
+On Linux an available system keyring is required; the insecure `basic_text`
+backend is refused. If secure storage is unavailable, cookie sign-in still
+works. Protect your user-data directory and OS account as you would other
+stored credentials. HTTP server addresses carry credentials without transport
+encryption; use HTTPS for remote servers.
+
+A native launch checks the browsing session's account before selecting its
+credential. The token is used for its own account or an explicitly signed-out
+window. A different signed-in account uses its own cookies, and an unknown
+identity does not authorize token use. Each launch keeps its selected session
+through save, state, screenshot and playtime delivery, even if the window signs
+out while the emulator runs. Native requests from paired sessions carry only
+the bearer, with cookies stripped, and can reach only that server's `/api/`
+routes, including on redirects. The browsing UI still requires its own login.
+
+A revoked or expired token is not silently retried with cookies. Native
+requests fail until you re-pair or remove the pairing. Run with `--unpair` to
+remove the local credential for the current server; revoke the token in RomM
+too to remove server-side access. Unpairing affects subsequent launches and
+backlog attempts; existing runs keep their original session until exit.
+Pairing does not keep the application running after you quit it, and does not
+add an offline browsing UI or a background service.
+
 ### When the session runs out
 
-RomM's session lasts fourteen days by default and is renewed by use, so a shell
+For unpaired requests, RomM's session lasts fourteen days by default and is renewed by use, so a shell
 opened regularly stays signed in. One left alone for longer, or signed out from
 elsewhere, comes back to a server that no longer recognises it.
 
@@ -140,6 +183,24 @@ These downloads are ordinary files in the location you choose. They do not
 populate the launch cache or start an emulator. Live-server downloads still
 need exercising in this shell.
 
+
+### Checking pairing locally
+
+The normal typecheck, unit tests, lint and build cover the protocol, storage and
+account-selection policy. An additional Electron check uses local HTTP fixtures
+and synthetic credentials:
+
+```bash
+npm run build
+npx electron scripts/check-pairing.cjs
+```
+
+For a headless Linux runner, add `--ozone-platform=headless --disable-gpu` before
+the script path. The check exercises both native transports, redirect blocking,
+cookie isolation, the local pairing window's public-code-only DOM, token
+exchange and persistence. It substitutes an authenticated-encryption fixture
+for the OS keyring. Real-server approval and OS-keychain behavior still need
+verification on supported desktop platforms.
 
 ## Configuration
 
@@ -835,8 +896,8 @@ only ever offered to that one, since a rom id belongs to the server that issued
 it: point the shell elsewhere and the old backlog waits rather than being
 misfiled.
 
-A session is filed against whoever is signed in when it arrives, not whoever
-played it, so the queue is bound to an account as well. Sign a different account
+A session is filed against the request's account (the paired owner or cookie
+user), so the queue is bound to an account as well. Sign a different account
 into the same server while a backlog is waiting and the backlog is discarded
 rather than landing on them. Losing a play record is the lesser of the two, and
 the only one that is not also someone else's business.
