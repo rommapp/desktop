@@ -2,6 +2,7 @@ import { BrowserWindow, app, dialog, shell } from "electron";
 import { join } from "node:path";
 import { type DesktopConfig } from "../shared/types.ts";
 import { loadConfig, updateConfig } from "./config.ts";
+import { observePageDownloads } from "./page-downloads.ts";
 import { isSpikeMode, spikeScript } from "./spike.ts";
 import {
   classifyNavigation,
@@ -284,6 +285,55 @@ export function createMainWindow(
     fullscreen,
   );
   confineToServer(window, serverUrl);
+  let downloadTitle: string | null = null;
+  const setDownloadTitle = (): void => {
+    if (!window.isDestroyed() && downloadTitle !== null) window.setTitle(downloadTitle);
+  };
+  window.on("page-title-updated", (event) => {
+    if (downloadTitle !== null) {
+      event.preventDefault();
+      setDownloadTitle();
+    }
+  });
+  const stopDownloads = observePageDownloads(
+    window.webContents.session,
+    window.webContents,
+    serverUrl,
+    {
+      progress(value) {
+        if (window.isDestroyed()) return;
+        window.setProgressBar(value === null ? -1 : value < 0 ? 2 : value);
+        downloadTitle = value === null ? null : value < 0
+          ? "Downloading… | RomM"
+          : `Downloading ${Math.floor(value * 100)}% | RomM`;
+        if (downloadTitle === null) window.setTitle(window.webContents.getTitle() || "RomM");
+        else setDownloadTitle();
+      },
+      finished(path) {
+        if (window.isDestroyed()) return;
+        void dialog.showMessageBox(window, {
+          type: "info",
+          title: "Download complete",
+          message: "Your download is saved.",
+          detail: path,
+          buttons: ["Close", "Show in folder"],
+          defaultId: 0,
+          cancelId: 0,
+        }).then(({ response }) => {
+          if (response === 1) shell.showItemInFolder(path);
+        });
+      },
+      failed(message) {
+        if (window.isDestroyed()) return;
+        void dialog.showMessageBox(window, {
+          type: "error",
+          title: "Download failed",
+          message,
+        });
+      },
+    },
+  );
+  window.once("closed", stopDownloads);
   if (isSpikeMode()) installSpike(window);
   void window.loadURL(serverUrl);
   return window;
