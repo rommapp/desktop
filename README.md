@@ -115,8 +115,9 @@ fails silently. Quitting the emulator brings the window back to the front.
 
 ## Untested
 
-The in-browser emulators (EmulatorJS, Ruffle, js-dos, PICO-8) and file
-downloads are untested in this shell and worth exercising.
+The in-browser emulators (EmulatorJS, Ruffle, js-dos, PICO-8) are untested
+in this shell and worth exercising.
+
 
 [Multi-disc games](#multi-disc-games) have unit tests over disc selection, the
 playlist, which emulators are handed one, and booting a single picked disc, but
@@ -125,6 +126,20 @@ no real disc set has been launched through an emulator yet.
 The [savestate](#savestates-synced-with-romm) restore has unit tests over what
 it decides, but no state has come back down from a live server into a real
 emulator's slot menu yet.
+
+### File downloads
+
+Downloads started from RomM’s page use Electron’s save dialog. While a
+transfer runs, the window title and taskbar show progress (indeterminate when
+the server supplies no length). On completion, a dialog shows the saved path
+and offers to reveal it in the file manager. Interrupted transfers report a
+failure; cancelling the save dialog or transfer is silent. API downloads that
+return HTML instead of an asset are refused with a prompt to sign in again.
+
+These downloads are ordinary files in the location you choose. They do not
+populate the launch cache or start an emulator. Live-server downloads still
+need exercising in this shell.
+
 
 ## Configuration
 
