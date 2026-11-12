@@ -767,8 +767,9 @@ redirects in the generated config, leaving your own `retroarch.cfg` untouched.
 Take screenshots with RetroArch's normal screenshot command.
 
 After exit, PNG and BMP captures are uploaded to RomM's screenshot gallery.
-Each upload carries the run id in its name, so another run or machine using
-the same capture filename does not replace it. Savestate thumbnails continue
+Each upload carries the run id and a hash of the complete capture filename,
+with its image extension preserved. Long names stay distinct, and another run
+or machine using the same capture filename does not replace it. Savestate thumbnails continue
 through the separate state mirror.
 
 Uploads run in the background, with a 30-second timeout per request, and never

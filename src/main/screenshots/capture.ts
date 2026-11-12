@@ -4,12 +4,11 @@
 // when delivery fails; only the bounded reads and upload decisions live here,
 // so they can be exercised without importing Electron.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, opendir } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, extname, join } from "node:path";
 import type { DesktopConfig } from "../../shared/types.ts";
-import { safeFileName } from "../safety.ts";
 
 export const MAX_SCREENSHOT_BYTES = 20 * 1024 * 1024;
 export const MAX_SCREENSHOTS = 256;
@@ -87,7 +86,11 @@ export async function pushScreenshots(options: {
       if (signal.aborted) break;
       // A run id keeps identical emulator filenames from replacing another
       // machine's captures in RomM, whose upload endpoint updates by filename.
-      const fileName = `${basename(directory)}-${safeFileName(entry.name)}`;
+      // Hash the complete name instead of truncating it: timestamps near the
+      // end distinguish captures, and the image extension must survive intact.
+      const nameHash = createHash("sha256").update(entry.name).digest("hex");
+      const extension = extname(entry.name).toLowerCase();
+      const fileName = `${basename(directory)}-${nameHash}${extension}`;
       if (await upload({ fileName, bytes })) uploaded++;
       else failed++;
     } catch (error) {

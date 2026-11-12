@@ -120,3 +120,30 @@ test("an unavailable capture root is nonfatal during preparation", async (t) => 
   await writeFile(file, "not a directory");
   assert.equal(await prepareScreenshots({ ...config, saveDataPath: file }, 7, true), null);
 });
+
+test("long capture names retain extensions and distinct names across repeated delivery", async (t) => {
+  const { directory } = await fixture(t);
+  const stem = "Long game title ".repeat(12);
+  const names = [`${stem}20261112-150001.PNG`, `${stem}20261112-150002.PNG`, `${stem}20261112-150003.BMP`];
+  for (const name of names) await writeFile(join(directory, name), name);
+  const attempts: Map<string, string>[] = [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const sent = new Map<string, string>();
+    const result = await pushScreenshots({
+      directory,
+      signal: new AbortController().signal,
+      upload: async ({ fileName, bytes }) => {
+        const original = Buffer.from(bytes).toString();
+        assert.ok(fileName.length <= 120);
+        assert.match(fileName, /^[a-f0-9-]+\.(png|bmp)$/);
+        assert.ok(fileName.endsWith(original.endsWith(".BMP") ? ".bmp" : ".png"));
+        sent.set(original, fileName);
+        return true;
+      },
+    });
+    assert.deepEqual(result, { uploaded: 3, failed: 0 });
+    assert.equal(new Set(sent.values()).size, 3);
+    attempts.push(sent);
+  }
+  assert.deepEqual(attempts[0], attempts[1]);
+});
