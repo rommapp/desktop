@@ -172,6 +172,7 @@ launch attempt without a restart.
 | `saveDataPath`             | `save-data`        | [Save and state](#save-data) directories                                         |
 | `syncSaves`                | `true`             | [Move saves to and from RomM](#saves-synced-with-romm) around a launch           |
 | `syncStates`               | `true`             | [Move savestates to and from RomM](#savestates-synced-with-romm) around a launch |
+| `syncScreenshots`          | `true`             | [Upload RetroArch captures](#screenshots-sent-to-romm) after exit                  |
 | `retroarchAutosaveSeconds` | `10`               | How often RetroArch is asked to write the save, at least 6s; `0` leaves it alone |
 | `logEmulatorOutput`        | `false`            | [Repeat the emulator's own log](#when-a-save-does-not-sync) in the shell's       |
 | `trackPlaySessions`        | `true`             | [Report how long you played](#play-sessions-reported-to-romm) to RomM            |
@@ -756,6 +757,30 @@ and every RPCS3 on Windows). Anywhere else needs `standaloneDataPaths`:
 
 A memory card or MLC folder moved in PCSX2's or Cemu's own settings is not
 followed yet.
+
+### Screenshots sent to RomM
+
+With `syncScreenshots` on, the built-in RetroArch launch puts captures into a
+fresh directory under `<saveDataPath>/<romId>/screenshots/<runId>`. It pins
+`screenshot_directory` and disables content-directory and content-sorting
+redirects in the generated config, leaving your own `retroarch.cfg` untouched.
+Take screenshots with RetroArch's normal screenshot command.
+
+After exit, PNG and BMP captures are uploaded to RomM's screenshot gallery.
+Each upload carries the run id in its name, so another run or machine using
+the same capture filename does not replace it. Savestate thumbnails continue
+through the separate state mirror.
+
+Uploads run in the background, with a 30-second timeout per request, and never
+hold the next launch. Local captures are kept whether delivery succeeds or
+fails. Failed uploads are logged and are not retried automatically. The scan
+visits at most 256 directory entries per run and sends only nonempty regular
+images up to 20 MiB each; symlinks and subdirectories are ignored.
+
+Set `syncScreenshots` to `false` to leave screenshot settings alone. Configured
+emulator mappings and detected standalone emulators keep their own capture
+locations and do not upload screenshots through this feature. Live RetroArch
+capture and gallery display still need testing against a real server.
 
 ### Play sessions reported to RomM
 

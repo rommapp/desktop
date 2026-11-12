@@ -73,6 +73,8 @@ import {
   type PullResult,
   type SaveWatch,
 } from "./saves/sync.ts";
+import { prepareScreenshots } from "./screenshots/capture.ts";
+import { uploadScreenshots } from "./screenshots/sync.ts";
 import { autosaveSeconds, writeLaunchConfig } from "./saves/retroarch.ts";
 import {
   AUTOSAVE_SLOT,
@@ -832,12 +834,18 @@ export class Launcher {
       // interval is asked for only where the shell is syncing this launch's
       // saves; the display mode is the page's answer either way.
       const askedAutosave = savePaths && syncsSaves ? autosave : 0;
+      const screenshotDir = await prepareScreenshots(
+        config,
+        request.romId,
+        usesBuiltInRetroArch(config, request.platformSlug),
+      );
       const launchConfig =
         config.saveDataPath &&
         usesBuiltInRetroArch(config, request.platformSlug)
           ? await writeLaunchConfig(config.saveDataPath, request.romId, {
               autosaveSeconds: askedAutosave,
               fullscreen: request.fullscreen,
+              screenshotDir: screenshotDir ?? undefined,
               // The flags name the files and the settings pin the directory:
               // a redirect in the user's own config beats the flags, and this
               // config beats the redirect.
@@ -1070,6 +1078,17 @@ export class Launcher {
             : {}),
         });
         if (standalone) void standalone.finish().catch(() => {});
+        // Captures belong to a unique run directory, so their detached upload
+        // never holds the next launch behind a gallery request.
+        if (screenshotDir && launchConfig && config.serverUrl) {
+          this.track(uploadScreenshots({
+            serverUrl: config.serverUrl,
+            session,
+            romId: request.romId,
+            directory: screenshotDir,
+            signal: controller.signal,
+          }));
+        }
         // A session is the only thing that says a negotiation happened, and a
         // negotiation is what the push is allowed to act on. Without one there
         // is nothing to offer the server and nothing to close.
