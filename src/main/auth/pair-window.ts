@@ -24,12 +24,12 @@ export async function pairDesktop(parent: BrowserWindow, server: string, forget 
       await rm(pairingFile(pairingRoot(), server), { force: true });
       await dialog.showMessageBox(parent, {
         message: "Local pairing removed.",
-        detail: "Future launches use the window's sign-in. Revoke the client token in RomM's settings to remove its server-side access too. Existing runs keep their original credentials until they finish.",
+        detail: "Native play is disabled until this desktop is paired again. Revoke the client token in RomM's settings to remove its server-side access too. Existing runs keep their original credentials until they finish.",
       });
       return;
     }
     const codec = secretCodec();
-    if (!codec) throw new Error("Secure credential storage is unavailable. Enable your OS keychain and try pairing again. Cookie sign-in still works.");
+    if (!codec) throw new Error("Secure credential storage is unavailable. Enable your OS keychain and try pairing again. Browsing still works, but native play requires pairing.");
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(600_000)]);
     const request = async (path: string, body: unknown) => {
       const response = await parent.webContents.session.fetch(new URL(path, server).toString(), {
@@ -84,7 +84,7 @@ export async function pairDesktop(parent: BrowserWindow, server: string, forget 
     }).catch(() => undefined);
     if (window && !(window as BrowserWindow).isDestroyed()) (window as BrowserWindow).close();
     if (!parent.isDestroyed()) await dialog.showMessageBox(parent, {
-      message: "Desktop paired.", detail: "Native requests can now use this device's client token. The browsing window keeps its own sign-in.",
+      message: "Desktop paired.", detail: "Native requests now use this device's client token. The browsing window keeps its own sign-in.",
     });
   } catch (error) {
     if (!controller.signal.aborted && !parent.isDestroyed()) await dialog.showMessageBox(parent, {

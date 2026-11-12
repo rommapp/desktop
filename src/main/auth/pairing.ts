@@ -3,6 +3,8 @@
 // lifetime. Only the public approval code is shown; the polling secret stays in
 // this process until it is exchanged once for an account-bound client token.
 
+import { LaunchError } from "../../shared/types.ts";
+
 export const DEVICE_SCOPES = [
   "me.read", "roms.read", "platforms.read", "assets.read", "assets.write",
   "devices.read", "devices.write", "firmware.read", "roms.user.write",
@@ -114,4 +116,14 @@ export async function pairDevice(options: {
     throw new Error(`Pairing failed (HTTP ${reply.status}).`);
   }
   throw new Error("Pairing code expired. Start pairing again.");
+}
+
+/** Native work never falls back to a browser account when pairing is absent. */
+export function requirePairing(record: PairingRecord | null, secureStorage: boolean, now = Date.now()): PairingRecord {
+  if (!secureStorage) throw new LaunchError("launch-failed", "Native play requires secure credential storage. Enable your OS keychain, then restart with --pair.");
+  if (!record) throw new LaunchError("launch-failed", "Pair this desktop before native play. Restart with --pair to connect it to RomM.");
+  if (record.expiresAt !== null && Date.parse(record.expiresAt) <= now) {
+    throw new LaunchError("launch-failed", "Device pairing has expired. Restart with --pair to reconnect.");
+  }
+  return record;
 }

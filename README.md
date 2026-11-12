@@ -50,8 +50,8 @@ npm run dev
 ```
 
 On first launch it asks for your server address, then loads it. Log in exactly
-as you would in a browser. Optional device pairing lets native requests use a
-client token independently of that browsing session.
+as you would in a browser. Device pairing is required for native play;
+browsing keeps its own session.
 
 | Flag      | Effect                                                              |
 | --------- | ------------------------------------------------------------------- |
@@ -86,68 +86,45 @@ in.
 
 ### Pairing this desktop
 
-Pairing is optional. Start with `npm start -- --pair` (or pass `--pair` to the
-packaged app), open the link in the local pairing window, and approve its code
-in RomM. The native window closes after approval. Closing it earlier cancels
-polling; codes expire after at most ten minutes. A server without
-`/api/auth/device/init` continues to work through cookie sign-in.
+Native play and background transfers require a paired client token. After you
+configure a server, the shell opens the local pairing window if no usable
+credential is stored. Open its link and approve the code in RomM. Closing the
+window cancels polling; you can restart with `npm start -- --pair` (or pass
+`--pair` to the packaged app) to try again. Codes expire after ten minutes.
 
-The requested scopes cover profile identity, ROM/platform/firmware reads, asset
-reads/writes, device reads/writes and play-session writes. Review them in RomM
-before approval. Keep `me.read` so the shell can bind the token to its owner.
-Approval creates a device-bound client token; re-pairing uses the same install
-identifier. It can be revoked or regenerated in RomM's client-token settings.
+The requested scopes cover profile identity, ROM/platform/firmware reads,
+asset reads/writes, device reads/writes and play-session writes. Review them
+in RomM before approval and keep `me.read` so the token's account can be
+verified. Approval creates a device-bound client token, using the same install
+identifier when you re-pair. RomM's client-token settings can revoke it.
 
 Credentials are encrypted with Electron's OS-backed `safeStorage`, stored under
 `pairings/` beside the config, one ciphertext file per server origin. They are
 never put in `desktop-config.json`, the preload bridge or the browsing page.
-On Linux an available system keyring is required; the insecure `basic_text`
-backend is refused. If secure storage is unavailable, cookie sign-in still
-works. Protect your user-data directory and OS account as you would other
-stored credentials. HTTP server addresses carry credentials without transport
-encryption; use HTTPS for remote servers.
+Native play requires a working OS keychain. Linux's insecure `basic_text`
+backend is refused. Missing, unreadable or expired credentials produce a setup
+error instead of falling back to browser cookies. Use HTTPS for remote servers.
 
-A native launch checks the browsing session's account before selecting its
-credential. The token is used for its own account or an explicitly signed-out
-window. A different signed-in account uses its own cookies, and an unknown
-identity does not authorize token use. Each launch keeps its selected session
-through save, state, screenshot and playtime delivery, even if the window signs
-out while the emulator runs. Native requests from paired sessions carry only
-the bearer, with cookies stripped, and can reach only that server's `/api/`
-routes, including on redirects. The browsing UI still requires its own login.
+Before native work starts, the shell verifies the browser's account and the
+paired token. A different signed-in account blocks native play until you sign
+in as the paired owner or re-pair. An explicitly signed-out window can use the
+paired account; an unknown identity or unreachable server blocks native work.
+Each launch keeps its selected session through exit work, even if the browsing
+window later signs out or changes accounts. Native requests strip cookies and
+send their bearer only to that server's `/api/` routes, including on redirects.
+The browsing UI still requires its own login.
 
-A revoked or expired token is not silently retried with cookies. Native
-requests fail until you re-pair or remove the pairing. Run with `--unpair` to
-remove the local credential for the current server; revoke the token in RomM
-too to remove server-side access. Unpairing is local and does not wait for the remote page to load. If pairing
-is already in progress, the removal runs after it finishes or is cancelled.
-Unpairing affects subsequent launches and
-backlog attempts; existing runs keep their original session until exit.
-Pairing does not keep the application running after you quit it, and does not
-add an offline browsing UI or a background service.
+Run with `--unpair` to remove the local credential. Removal does not wait for
+the remote page to load; if pairing is already running, removal follows it
+when it completes or is cancelled. Native play is then disabled until pairing
+is completed again. Existing runs retain their original session until exit.
+Revoke the token in RomM too to remove server-side access. On the next startup,
+the shell offers pairing again if the credential is missing.
 
-### When the session runs out
-
-For unpaired requests, RomM's session lasts fourteen days by default and is renewed by use, so a shell
-opened regularly stays signed in. One left alone for longer, or signed out from
-elsewhere, comes back to a server that no longer recognises it.
-
-The shell notices, because it makes requests the page never sees: the ROM
-download, the disc list, the firmware list, the save negotiation, the play
-session report. RomM answers those with a 401 -- its signal to go and sign in,
-distinct from the 403 it gives an account that simply lacks a scope. On a 401
-the shell reloads the window and lets RomM's own frontend take it from there, so
-you get the login your server ships, and an OIDC server still goes to its
-provider.
-
-A launch that stops for this says so rather than reporting a failed download,
-and nothing is lost: a save the shell could not send stays on disk for the next
-launch of that game, and a play session it could not report stays queued. Sign
-in and press Play again.
-
-One reload per sign-out, not one per request. A login page already on screen is
-left alone, and so is a window opened for an identity provider, which is a
-sign-in already under way.
+Browser-session expiry affects the browsing UI, while revoked or expired
+client tokens require `--pair` to reconnect native requests. Native failures
+do not reload a valid browsing session or retry with its cookies. Pairing does
+not add an offline UI or keep the app running after quit.
 
 ## Using a controller
 

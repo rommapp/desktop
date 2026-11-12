@@ -1,6 +1,6 @@
 import { BrowserWindow, app } from "electron";
 import { type DesktopConfig } from "../shared/types.ts";
-import { nativeSession } from "./auth/paired-session.ts";
+import { storedPairing, nativeSession } from "./auth/paired-session.ts";
 import { PairingActions } from "./auth/actions.ts";
 import { pairDesktop } from "./auth/pair-window.ts";
 import { pairingAction, isSetupMode } from "./argv.ts";
@@ -36,14 +36,26 @@ function focusMainWindow(): void {
 let forceSetup = isSetupMode();
 let initialPairing = pairingAction();
 const pairingCommands = new PairingActions<{
-  window: BrowserWindow; server: string; action: "pair" | "unpair";
-}>(async ({ window, server, action }) => {
+  window: BrowserWindow; server: string; action: "pair" | "unpair"; onlyIfNeeded?: boolean;
+}>(async ({ window, server, action, onlyIfNeeded }) => {
+  if (onlyIfNeeded) {
+    const record = await storedPairing(server).catch(() => null);
+    if (record && (record.expiresAt === null || Date.parse(record.expiresAt) > Date.now())) return;
+  }
   if (!window.isDestroyed() || action === "unpair") await pairDesktop(window, server, action === "unpair");
 });
+const pairingOffered = new Set<string>();
 function offerPairing(window: BrowserWindow, server: string): void {
   const action = initialPairing;
   initialPairing = null;
-  if (action) void pairingCommands.submit({ window, server, action }).catch(console.error);
+  if (action) {
+    pairingOffered.add(server);
+    void pairingCommands.submit({ window, server, action }).catch(console.error);
+    return;
+  }
+  if (pairingOffered.has(server)) return;
+  pairingOffered.add(server);
+  void pairingCommands.submit({ window, server, action: "pair", onlyIfNeeded: true }).catch(console.error);
 }
 
 // openInitialWindow also runs on macOS "activate", so without this a user who

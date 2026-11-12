@@ -1,6 +1,6 @@
 // Run after build with Electron, optionally --ozone-platform=headless.
 // Local HTTP fixtures verify both native transports with synthetic credentials.
-const { app, session, net, BrowserWindow, dialog } = require('electron');
+const { app, session, net, BrowserWindow, dialog, safeStorage } = require('electron');
 const { mkdtemp, readFile, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -107,6 +107,13 @@ const { createPairedSession } = require('../dist/main/auth/paired-session.js');
     },
   };
   paired.secretCodec = () => codec;
+  // Native session selection uses the same fixture at the OS storage boundary.
+  let storageAvailable = true;
+  safeStorage.isEncryptionAvailable = () => storageAvailable;
+  safeStorage.getSelectedStorageBackend = () => 'gnome_libsecret';
+  safeStorage.encryptString = value => codec.encrypt(value);
+  safeStorage.decryptString = value => codec.decrypt(value);
+  await assert.rejects(paired.nativeSession(origin, session.defaultSession), /Pair this desktop/);
   const messages = [];
   dialog.showMessageBox = async (_parent, options) => { messages.push(options.message); return { response: 0 }; };
   app.on('web-contents-created', (_event, contents) => {
@@ -170,12 +177,24 @@ const { createPairedSession } = require('../dist/main/auth/paired-session.js');
   assert.equal(saved.userId, 7);
   assert.equal(saved.deviceId, 'device');
   assert.equal((await readFile(store.pairingFile(paired.pairingRoot(), origin))).includes('rmm_smoke_fixture'), false);
+  assert.equal(await paired.nativeSession(origin, session.defaultSession), target);
+  browserAccount = 8;
+  await assert.rejects(paired.nativeSession(origin, session.defaultSession), /different account/);
+  browserAccount = 7;
+  tokenRevoked = true;
+  await assert.rejects(paired.nativeSession(origin, session.defaultSession), /revoked/);
+  tokenRevoked = false;
+  storageAvailable = false;
+  await assert.rejects(paired.nativeSession(origin, session.defaultSession), /secure credential storage/);
+  storageAvailable = true;
   // Local removal must complete while the remote navigation is still stalled.
   void parent.loadURL(origin + '/stall').catch(() => {});
   await stallArrived;
   await pairDesktop(parent, origin, true);
   assert.equal(await store.readPairing(paired.pairingRoot(), origin, codec), null);
   assert.ok(messages.includes('Local pairing removed.'));
+  await assert.rejects(paired.nativeSession(origin, session.defaultSession), /Pair this desktop/);
+  console.log('PASS: mandatory pairing rejects missing credentials, wrong accounts, revoked tokens and unavailable secure storage');
   console.log('PASS: local unpairing completes independently of a stalled remote page');
   parent.destroy();
   await rm(root, { recursive: true, force: true });

@@ -6,8 +6,9 @@
 import { app, safeStorage, session as electronSession, type Session } from "electron";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { LaunchError } from "../../shared/types.ts";
 import { loadConfig } from "../config.ts";
-import { mayUsePairing, pairedHeaders, type PairingRecord } from "./pairing.ts";
+import { requirePairing, mayUsePairing, pairedHeaders, type PairingRecord } from "./pairing.ts";
 import { readPairing, type SecretCodec } from "./pairing-store.ts";
 
 const credentials = new WeakMap<Session, PairingRecord>();
@@ -21,25 +22,46 @@ export function secretCodec(): SecretCodec | null {
   return { encrypt: (value) => safeStorage.encryptString(value), decrypt: (value) => safeStorage.decryptString(value) };
 }
 
+export async function storedPairing(server: string): Promise<PairingRecord | null> {
+  const codec = secretCodec();
+  return codec ? readPairing(pairingRoot(), server, codec) : null;
+}
+
 export async function nativeSession(server: string, browser: Session, signal?: AbortSignal): Promise<Session> {
-  let record: PairingRecord | null;
-  try {
-    const codec = secretCodec();
-    if (!codec) return browser;
-    record = await readPairing(pairingRoot(), server, codec);
-  } catch { return browser; }
-  if (!record) return browser;
-  // Bind a launch to its initiating account. A different signed-in account
-  // continues using its own cookie session; a signed-out window can use the
-  // paired account. Unknown identity is never taken as proof of sign-out.
+  const codec = secretCodec();
+  const record = requirePairing(codec ? await readPairing(pairingRoot(), server, codec) : null, Boolean(codec));
+  // The browser identifies what account is asking to play. A different or
+  // unknown account blocks native work instead of changing credentials.
+  let status: number;
+  let user: unknown;
   try {
     const response = await browser.fetch(new URL("/api/users/me", server).toString(), {
       credentials: "include", redirect: "error", signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(10_000)]),
     });
-    const user: unknown = response.status === 200 ? await response.json() : null;
-    if (!mayUsePairing(response.status, user, record.userId)) return browser;
-  } catch (error) { if (signal?.aborted) throw error; return browser; }
-  return createPairedSession(record);
+    status = response.status;
+    user = status === 200 ? await response.json() : null;
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new LaunchError("launch-failed", "Could not verify the browsing account. Check your connection and try again.");
+  }
+  if (!mayUsePairing(status, user, record.userId)) {
+    throw new LaunchError("launch-failed", status === 200
+      ? "This desktop is paired with a different account. Sign in as the paired account or restart with --pair."
+      : "Could not verify the browsing account. Check your connection and try again.");
+  }
+  const target = createPairedSession(record);
+  try {
+    const response = await target.fetch(new URL("/api/users/me", server).toString(), {
+      credentials: "omit", redirect: "error", signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(10_000)]),
+    });
+    if (response.status === 401) throw new LaunchError("launch-failed", "Device pairing expired or was revoked. Restart with --pair to reconnect.");
+    const owner = response.ok ? await response.json() as { id?: unknown } : null;
+    if (owner?.id !== record.userId) throw new LaunchError("launch-failed", "The paired account could not be verified. Restart with --pair to reconnect.");
+  } catch (error) {
+    if (signal?.aborted || error instanceof LaunchError) throw error;
+    throw new LaunchError("launch-failed", "Could not verify device pairing. Check your connection and try again.");
+  }
+  return target;
 }
 
 /** Shared by launches and the runtime transport check; never used by a renderer. */

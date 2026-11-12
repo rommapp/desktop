@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEVICE_SCOPES, mayUsePairing, pairedHeaders, pairDevice, readPairingRecord } from "./pairing.ts";
+import { DEVICE_SCOPES, requirePairing, mayUsePairing, pairedHeaders, pairDevice, readPairingRecord } from "./pairing.ts";
 
 const server = "https://romm.test";
 const challenge = { device_code: "a".repeat(64), user_code: "ABCDEFGH", expires_in: 600, interval: 5 };
@@ -97,4 +97,12 @@ test("stored credentials reject foreign servers, malformed tokens and invalid ow
 test("pairing requests both scopes required by firmware platform resolution", () => {
   assert.ok(DEVICE_SCOPES.includes("platforms.read"));
   assert.ok(DEVICE_SCOPES.includes("firmware.read"));
+});
+
+test("native work requires secure storage and a current pairing, with no cookie fallback", () => {
+  const record = { server, userId: 7, deviceId: "device", tokenId: 2, token: "rmm_secret", expiresAt: null };
+  assert.equal(requirePairing(record, true), record);
+  assert.throws(() => requirePairing(record, false), /secure credential storage/);
+  assert.throws(() => requirePairing(null, true), /Pair this desktop/);
+  assert.throws(() => requirePairing({ ...record, expiresAt: "2026-01-01T00:00:00Z" }, true, Date.UTC(2026, 0, 2)), /expired/);
 });
