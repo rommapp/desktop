@@ -12,6 +12,7 @@ import {
   type PlatformSupportQuery,
   type SaveSyncOutcome,
 } from "../shared/types.ts";
+import { pairedIdentity, nativeSession } from "./auth/paired-session.ts";
 import { loadConfig, playQueuePath } from "./config.ts";
 import {
   canInstallCore,
@@ -42,7 +43,7 @@ import {
   usesBuiltInRetroArch,
 } from "./emulator/resolve.ts";
 import { syncDiscSet } from "./discs/sync.ts";
-import { reportPlaySessions } from "./play/report.ts";
+import { currentUserId, reportPlaySessions } from "./play/report.ts";
 import { enqueue } from "./play/queue.ts";
 import {
   closePlaySession,
@@ -569,6 +570,13 @@ export class Launcher {
     try {
       const config = await loadConfig();
       assertSeparateRoots(config);
+      // Account selection belongs to the registered launch so Cancel can abort
+      // its identity request. Keep this session through exit, even if the page
+      // signs out or changes accounts while the emulator runs.
+      if (!config.serverUrl) throw new LaunchError("launch-failed", "Configure a RomM server and pair this desktop before native play.");
+      session = await nativeSession(config.serverUrl, session, controller.signal);
+      throwIfCancelled(controller.signal);
+
       let savePaths = resolveSavePaths(
         config.saveDataPath,
         request.romId,
@@ -984,6 +992,14 @@ export class Launcher {
           stage: "save",
         });
       }
+      const playOwner = playTrackingEnabled(config)
+        ? pairedIdentity(session)?.userId ?? await currentUserId({
+            config, session,
+            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+          }).catch(() => null)
+        : null;
+      throwIfCancelled(controller.signal);
+
       const standalone = launch.emulatorId
         ? await startStandaloneSaves({
             config,
@@ -1070,6 +1086,7 @@ export class Launcher {
       const play =
         playTrackingEnabled(config) && config.serverUrl
           ? openPlaySession({
+              userId: playOwner,
               romId: request.romId,
               // The slot this launch plays through, which is what pairs the
               // session with the save it wrote. Taken from whether the launch

@@ -13,7 +13,7 @@ import { type Session } from "electron";
 import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { type DesktopConfig } from "../../shared/types.ts";
-import { noteSignedOut } from "../auth/recover.ts";
+import { apiRequest } from "../saves/http.ts";
 import { downloadFromServer } from "../rom-cache.ts";
 import { resolveDownloadUrl } from "../safety.ts";
 import {
@@ -55,27 +55,11 @@ async function getJson(
   path: string,
   signal: AbortSignal,
 ): Promise<unknown | undefined> {
-  let url: URL;
   try {
-    // The same guard the ROM download uses: on-origin, under /api/, or refused.
-    url = resolveDownloadUrl(serverUrl, path);
-  } catch {
-    return undefined;
-  }
-  try {
-    // The session's own fetch, so the romm_session cookie the window already
-    // holds is what authenticates this. The shell never handles credentials
-    // itself, exactly as the ROM download does not.
-    const response = await session.fetch(url.toString(), {
-      credentials: "include",
-      signal,
-    });
-    noteSignedOut(serverUrl, response.status);
-    if (!response.ok) return undefined;
-    return await response.json();
-  } catch {
-    return undefined;
-  }
+    const response = await apiRequest({ serverUrl, session, path, signal, method: "GET" });
+    if (!response || response.status < 200 || response.status >= 300) return undefined;
+    return response.body ?? undefined;
+  } catch { return undefined; }
 }
 
 /**

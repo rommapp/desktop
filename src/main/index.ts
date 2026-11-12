@@ -1,6 +1,9 @@
 import { BrowserWindow, app } from "electron";
 import { type DesktopConfig } from "../shared/types.ts";
-import { isSetupMode } from "./argv.ts";
+import { storedPairing, nativeSession } from "./auth/paired-session.ts";
+import { PairingActions } from "./auth/actions.ts";
+import { pairDesktop } from "./auth/pair-window.ts";
+import { pairingAction, isSetupMode } from "./argv.ts";
 import { loadConfig } from "./config.ts";
 import { offerRetroArchInstall } from "./emulator/bootstrap.ts";
 import { broadcastLaunchState, registerIpc } from "./ipc.ts";
@@ -31,6 +34,29 @@ function focusMainWindow(): void {
 // Consumed the first time a window opens, so re-activating later returns to
 // the server rather than reopening setup.
 let forceSetup = isSetupMode();
+let initialPairing = pairingAction();
+const pairingCommands = new PairingActions<{
+  window: BrowserWindow; server: string; action: "pair" | "unpair"; onlyIfNeeded?: boolean;
+}>(async ({ window, server, action, onlyIfNeeded }) => {
+  if (onlyIfNeeded) {
+    const record = await storedPairing(server).catch(() => null);
+    if (record && (record.expiresAt === null || Date.parse(record.expiresAt) > Date.now())) return;
+  }
+  if (!window.isDestroyed() || action === "unpair") await pairDesktop(window, server, action === "unpair");
+});
+const pairingOffered = new Set<string>();
+function offerPairing(window: BrowserWindow, server: string): void {
+  const action = initialPairing;
+  initialPairing = null;
+  if (action) {
+    pairingOffered.add(server);
+    void pairingCommands.submit({ window, server, action }).catch(console.error);
+    return;
+  }
+  if (pairingOffered.has(server)) return;
+  pairingOffered.add(server);
+  void pairingCommands.submit({ window, server, action: "pair", onlyIfNeeded: true }).catch(console.error);
+}
 
 // openInitialWindow also runs on macOS "activate", so without this a user who
 // answered "Not now" without ticking the box would be asked again every time
@@ -59,7 +85,17 @@ function offerEmulatorOnce(
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on("second-instance", focusMainWindow);
+  app.on("second-instance", (_event, argv) => {
+    focusMainWindow();
+    const action = pairingAction(argv);
+    if (!action) return;
+    void loadConfig().then((config) => {
+      const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.getParentWindow());
+      if (window && config.serverUrl) {
+        void pairingCommands.submit({ window, server: config.serverUrl, action }).catch(console.error);
+      }
+    });
+  });
 
   void start();
 }
@@ -87,11 +123,10 @@ const NEVER_CANCELLED = new AbortController().signal;
  */
 function reportBacklog(config: DesktopConfig, window: BrowserWindow): void {
   window.webContents.on("did-finish-load", () => {
-    void reportPlaySessions({
-      config,
-      session: window.webContents.session,
-      signal: NEVER_CANCELLED,
-    });
+    if (!config.serverUrl) return;
+    void nativeSession(config.serverUrl, window.webContents.session).then((session) =>
+      reportPlaySessions({ config, session, signal: NEVER_CANCELLED }),
+    ).catch(() => {});
   });
 }
 
@@ -102,6 +137,7 @@ async function openInitialWindow(): Promise<void> {
     // After the page, not beside it: see offerEmulatorOnce.
     offerEmulatorOnce(config, window);
     reportBacklog(config, window);
+    offerPairing(window, config.serverUrl);
     return;
   }
   forceSetup = false;
@@ -124,6 +160,7 @@ async function openInitialWindow(): Promise<void> {
       // same one: a session is only ever offered to the server it was played
       // against.
       reportBacklog(saved, window);
+      offerPairing(window, serverUrl);
     })();
   });
 }

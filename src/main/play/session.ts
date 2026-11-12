@@ -12,6 +12,9 @@
 
 /** What a launch is, for the purposes of being timed. */
 export interface PlaySessionSubject {
+  /** Fixed before the emulator starts. Null means ownership is unknown and
+   *  the record must not be delivered; undefined is the legacy file format. */
+  userId?: number | null;
   romId: number;
   /** The save slot this launch played through, when it synced one. */
   saveSlot: string | null;
@@ -106,6 +109,7 @@ export function closePlaySession(
     romId: open.romId,
     saveSlot: open.saveSlot,
     serverUrl: open.serverUrl,
+    ...(open.userId !== undefined ? { userId: open.userId } : {}),
     startTime: new Date(open.startedAt).toISOString(),
     endTime: new Date(open.startedAt + durationMs).toISOString(),
     durationMs,
@@ -206,7 +210,7 @@ export function userIdFrom(body: unknown): number | null {
  * only unique within one, and two servers can hand out the same one.
  */
 export function identityOf(record: PlaySessionRecord): string {
-  return [record.serverUrl, record.romId, record.startTime].join("\u0000");
+  return [record.serverUrl, record.userId ?? "unknown", record.romId, record.startTime].join("\u0000");
 }
 
 /**
@@ -223,4 +227,9 @@ export function forServer(
   serverUrl: string,
 ): PlaySessionRecord[] {
   return records.filter((record) => record.serverUrl === serverUrl);
+}
+
+/** Only an identified launch owner's records can be filed under this account. */
+export function forAccount(records: readonly PlaySessionRecord[], serverUrl: string, userId: number): PlaySessionRecord[] {
+  return forServer(records, serverUrl).filter((record) => record.userId === userId);
 }

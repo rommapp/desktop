@@ -18,7 +18,7 @@ import { mkdir, mkdtemp, rename, rm, stat, utimes, writeFile } from "node:fs/pro
 import { dirname, join } from "node:path";
 import { folderGame } from "./folder.ts";
 import { ALL_DISCS, type DesktopConfig } from "../../shared/types.ts";
-import { noteSignedOut } from "../auth/recover.ts";
+import { apiRequest } from "../saves/http.ts";
 import { evictToLimit } from "../cache/evict.ts";
 import { downloadFromServer } from "../rom-cache.ts";
 import { resolveDownloadUrl, resolveLibraryRom } from "../safety.ts";
@@ -65,25 +65,11 @@ async function getJson(
   path: string,
   signal: AbortSignal,
 ): Promise<unknown | undefined> {
-  let url: URL;
   try {
-    url = resolveDownloadUrl(serverUrl, path);
-  } catch {
-    return undefined;
-  }
-  try {
-    // The window's own session, so the cookie it already holds authenticates
-    // this and the shell never handles a credential itself.
-    const response = await session.fetch(url.toString(), {
-      credentials: "include",
-      signal,
-    });
-    noteSignedOut(serverUrl, response.status);
-    if (!response.ok) return undefined;
-    return await response.json();
-  } catch {
-    return undefined;
-  }
+    const response = await apiRequest({ serverUrl, session, path, signal, method: "GET" });
+    if (!response || response.status < 200 || response.status >= 300) return undefined;
+    return response.body ?? undefined;
+  } catch { return undefined; }
 }
 
 /**

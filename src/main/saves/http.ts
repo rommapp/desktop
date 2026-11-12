@@ -4,13 +4,15 @@
 // Electron's `net.request` is what the ROM and firmware downloads use, but it
 // hands back a stream and takes no body, so the JSON and multipart calls here go
 // through the session's own `fetch` instead -- the same session, so the same
-// authentication either way, with no credential ever passing through this code.
+// authentication either way. Paired sessions attach their bearer in the main
+// process's webRequest handler and need no CSRF cookie.
 //
 // Nothing here throws except on a cancel. "Could not ask" is a value: the caller
 // decides what it means, and for save sync it always means the same thing, which
 // is to leave the local file alone.
 
 import { type Session } from "electron";
+import { pairedIdentity } from "../auth/paired-session.ts";
 import { noteSignedOut } from "../auth/recover.ts";
 import { resolveDownloadUrl } from "../safety.ts";
 import { CSRF_COOKIE, csrfHeaders } from "./csrf.ts";
@@ -121,7 +123,8 @@ export async function apiRequest({
     return undefined;
   }
 
-  const token = await csrfToken(serverUrl, session, signal);
+  const paired = pairedIdentity(session);
+  const token = paired ? null : await csrfToken(serverUrl, session, signal);
 
   try {
     const response = await session.fetch(url.toString(), {
@@ -139,7 +142,8 @@ export async function apiRequest({
       headers: { ...headers, ...csrfHeaders(method, token) },
     });
 
-    noteSignedOut(serverUrl, response.status);
+    if (!paired) noteSignedOut(serverUrl, response.status);
+    else if (response.status === 401) console.warn("[auth] Device pairing expired or revoked. Run with --pair to reconnect.");
 
     let parsed: unknown = null;
     try {

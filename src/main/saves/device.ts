@@ -14,6 +14,8 @@
 import { app, type Session } from "electron";
 import { hostname, platform } from "node:os";
 import { type DesktopConfig } from "../../shared/types.ts";
+import { DEVICE_CAPABILITIES } from "../auth/pairing.ts";
+import { pairedIdentity } from "../auth/paired-session.ts";
 import { updateConfig } from "../config.ts";
 import { untilSettledOrCancelled } from "../firmware/queue.ts";
 import { apiRequest } from "./http.ts";
@@ -70,6 +72,8 @@ let registering: Promise<string | null> | null = null;
 const OUTLIVES_ANY_LAUNCH = new AbortController().signal;
 
 export function ensureDeviceId(options: DeviceOptions): Promise<string | null> {
+  const paired = pairedIdentity(options.session);
+  if (paired) return Promise.resolve(paired.deviceId);
   if (options.config.deviceId) return Promise.resolve(options.config.deviceId);
 
   // Shared between callers rather than queued behind each other. Two games
@@ -114,6 +118,8 @@ async function register({
       // field as the device type, and anything it does not recognize is shown as
       // "unknown".
       client: "desktop",
+      sync_mode: "api",
+      capabilities: DEVICE_CAPABILITIES,
       client_version: app.getVersion(),
     }),
     signal,

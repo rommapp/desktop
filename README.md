@@ -50,10 +50,13 @@ npm run dev
 ```
 
 On first launch it asks for your server address, then loads it. Log in exactly
-as you would in a browser; the shell holds no credentials of its own.
+as you would in a browser. Device pairing is required for native play;
+browsing keeps its own session.
 
 | Flag      | Effect                                                              |
 | --------- | ------------------------------------------------------------------- |
+| `--pair` | Pair this desktop with the configured server using a client token |
+| `--unpair` | Remove the local pairing for the configured server |
 | `--setup` | Reopen the server-address window to correct a mistyped address      |
 | `--spike` | Inject a test panel, for a server without the RomM-side integration |
 
@@ -81,28 +84,47 @@ returning your provider's end-session URL, so you are signed out of RomM either
 way; whether your provider's session ends depends on the browser that URL opens
 in.
 
-### When the session runs out
+### Pairing this desktop
 
-RomM's session lasts fourteen days by default and is renewed by use, so a shell
-opened regularly stays signed in. One left alone for longer, or signed out from
-elsewhere, comes back to a server that no longer recognises it.
+Native play and background transfers require a paired client token. After you
+configure a server, the shell opens the local pairing window if no usable
+credential is stored. Open its link and approve the code in RomM. Closing the
+window cancels polling; you can restart with `npm start -- --pair` (or pass
+`--pair` to the packaged app) to try again. Codes expire after ten minutes.
 
-The shell notices, because it makes requests the page never sees: the ROM
-download, the disc list, the firmware list, the save negotiation, the play
-session report. RomM answers those with a 401 -- its signal to go and sign in,
-distinct from the 403 it gives an account that simply lacks a scope. On a 401
-the shell reloads the window and lets RomM's own frontend take it from there, so
-you get the login your server ships, and an OIDC server still goes to its
-provider.
+The requested scopes cover profile identity, ROM/platform/firmware reads,
+asset reads/writes, device reads/writes and play-session writes. Review them
+in RomM before approval and keep `me.read` so the token's account can be
+verified. Approval creates a device-bound client token, using the same install
+identifier when you re-pair. RomM's client-token settings can revoke it.
 
-A launch that stops for this says so rather than reporting a failed download,
-and nothing is lost: a save the shell could not send stays on disk for the next
-launch of that game, and a play session it could not report stays queued. Sign
-in and press Play again.
+Credentials are encrypted with Electron's OS-backed `safeStorage`, stored under
+`pairings/` beside the config, one ciphertext file per server origin. They are
+never put in `desktop-config.json`, the preload bridge or the browsing page.
+Native play requires a working OS keychain. Linux's insecure `basic_text`
+backend is refused. Missing, unreadable or expired credentials produce a setup
+error instead of falling back to browser cookies. Use HTTPS for remote servers.
 
-One reload per sign-out, not one per request. A login page already on screen is
-left alone, and so is a window opened for an identity provider, which is a
-sign-in already under way.
+Before native work starts, the shell verifies the browser's account and the
+paired token. A different signed-in account blocks native play until you sign
+in as the paired owner or re-pair. An explicitly signed-out window can use the
+paired account; an unknown identity or unreachable server blocks native work.
+Each launch keeps its selected session through exit work, even if the browsing
+window later signs out or changes accounts. Native requests strip cookies and
+send their bearer only to that server's `/api/` routes, including on redirects.
+The browsing UI still requires its own login.
+
+Run with `--unpair` to remove the local credential. Removal does not wait for
+the remote page to load; if pairing is already running, removal follows it
+when it completes or is cancelled. Native play is then disabled until pairing
+is completed again. Existing runs retain their original session until exit.
+Revoke the token in RomM too to remove server-side access. On the next startup,
+the shell offers pairing again if the credential is missing.
+
+Browser-session expiry affects the browsing UI, while revoked or expired
+client tokens require `--pair` to reconnect native requests. Native failures
+do not reload a valid browsing session or retry with its cookies. Pairing does
+not add an offline UI or keep the app running after quit.
 
 ## Using a controller
 
@@ -140,6 +162,24 @@ These downloads are ordinary files in the location you choose. They do not
 populate the launch cache or start an emulator. Live-server downloads still
 need exercising in this shell.
 
+
+### Checking pairing locally
+
+The normal typecheck, unit tests, lint and build cover the protocol, storage and
+account-selection policy. An additional Electron check uses local HTTP fixtures
+and synthetic credentials:
+
+```bash
+npm run build
+npx electron scripts/check-pairing.cjs
+```
+
+For a headless Linux runner, add `--ozone-platform=headless --disable-gpu` before
+the script path. The check exercises both native transports, redirect blocking,
+cookie isolation, the local pairing window's public-code-only DOM, token
+exchange and persistence. It substitutes an authenticated-encryption fixture
+for the OS keyring. Real-server approval and OS-keychain behavior still need
+verification on supported desktop platforms.
 
 ## Configuration
 
@@ -835,11 +875,14 @@ only ever offered to that one, since a rom id belongs to the server that issued
 it: point the shell elsewhere and the old backlog waits rather than being
 misfiled.
 
-A session is filed against whoever is signed in when it arrives, not whoever
-played it, so the queue is bound to an account as well. Sign a different account
-into the same server while a backlog is waiting and the backlog is discarded
-rather than landing on them. Losing a play record is the lesser of the two, and
-the only one that is not also someone else's business.
+Each play record carries the account identified before its emulator starts.
+Delivery filters by both server and account, so a paired run that exits after
+someone else signs in stays queued for its original owner. Revoking that
+owner's token does not let the next account adopt its backlog. Records whose
+owner could not be identified are retained but never sent automatically.
+Legacy rows without an explicit launch owner are also left unsent, because
+a server-wide queue owner cannot prove which account played a given session. The normal age and size
+bounds still apply.
 
 Like save sync, none of this can fail a launch, and it reports as the same
 `deviceId` the saves sync under. A machine that could not register one sends
