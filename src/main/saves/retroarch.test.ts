@@ -196,3 +196,35 @@ test("gallery captures pin their directory and turn off content redirects", () =
     assert.equal(retroarchLaunchConfig({ autosaveSeconds: 0, screenshotDir: `/bad${char}path` }), null);
   }
 });
+
+test("managed sync disables RetroArch Cloud Sync without persisting the override", () => {
+  const written = retroarchLaunchConfig({
+    autosaveSeconds: 10,
+    disableCloudSync: true,
+    saveDir: "/managed/saves",
+    stateDir: "/managed/states",
+    screenshotDir: "/managed/screenshots",
+  }) ?? "";
+  assert.match(written, /^cloud_sync_enable = "false"$/m);
+  assert.match(written, /^config_save_on_exit = "false"$/m);
+  assert.match(written, /^savefile_directory = "\/managed\/saves"$/m);
+  assert.match(written, /^savestate_directory = "\/managed\/states"$/m);
+  assert.match(written, /^screenshot_directory = "\/managed\/screenshots"$/m);
+  assert.doesNotMatch(written, /cloud_sync_(url|username|password)/);
+});
+
+test("a run with no shell sync leaves RetroArch Cloud Sync and config persistence alone", () => {
+  const written = retroarchLaunchConfig({ autosaveSeconds: 0, fullscreen: true }) ?? "";
+  assert.doesNotMatch(written, /cloud_sync_enable|config_save_on_exit/);
+  assert.equal(retroarchLaunchConfig({ autosaveSeconds: 0, disableCloudSync: false }), null);
+});
+
+test("the cloud guard alone creates a launch config even with autosave disabled", async () => {
+  const root = mkdtempSync(join(tmpdir(), "romm-cloud-sync-"));
+  const target = await writeLaunchConfig(root, 7, { autosaveSeconds: 0, disableCloudSync: true });
+  assert.ok(target);
+  const written = readFileSync(target, "utf8");
+  assert.match(written, /^cloud_sync_enable = "false"$/m);
+  assert.match(written, /^config_save_on_exit = "false"$/m);
+  assert.doesNotMatch(written, /autosave_interval/);
+});

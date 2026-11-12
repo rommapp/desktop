@@ -746,7 +746,7 @@ export class Launcher {
       // here because the generated config below is written from it; the
       // directory itself is read once the launch is resolved, after the restore
       // has put RomM's own states into it.
-      const syncsStates =
+      const wantsStateSync =
         stateSyncEnabled(config) &&
         emulatorUsesStateDir(config, request.platformSlug);
 
@@ -757,9 +757,72 @@ export class Launcher {
       // directory being configured: a mapping that names no save token keeps
       // its saves where the emulator puts them, and syncing around it would
       // move bytes nothing reads.
-      const syncsSaves =
+      const wantsSaveSync =
         saveSyncEnabled(config) &&
         emulatorUsesSaveFile(config, request.platformSlug);
+
+      // Asked for before the launch is resolved, so its path can be named in
+      // the arguments. Without it RetroArch writes the save once, when the
+      // content closes, and a launch that never reaches that moment has nothing
+      // for the push to find.
+      const autosave = autosaveSeconds(config.retroarchAutosaveSeconds);
+      // Only for the launch that will name it. A mapping's arguments are the
+      // user's, so a generated config would be a file nothing reads. The
+      // interval is asked for only where the shell is syncing this launch's
+      // saves; the display mode is the page's answer either way.
+      const askedAutosave = savePaths && wantsSaveSync ? autosave : 0;
+      const screenshotDir = await prepareScreenshots(
+        config,
+        request.romId,
+        usesBuiltInRetroArch(config, request.platformSlug),
+      );
+      const launchConfig =
+        config.saveDataPath &&
+        usesBuiltInRetroArch(config, request.platformSlug)
+          ? await writeLaunchConfig(config.saveDataPath, request.romId, {
+              autosaveSeconds: askedAutosave,
+              disableCloudSync: wantsSaveSync || wantsStateSync || Boolean(screenshotDir),
+              fullscreen: request.fullscreen,
+              screenshotDir: screenshotDir ?? undefined,
+              // The flags name the files and the settings pin the directory:
+              // a redirect in the user's own config beats the flags, and this
+              // config beats the redirect.
+              saveDir: savePaths?.saveDir,
+              stateDir: savePaths?.stateDir,
+              // On the same terms as the interval: the picture is only worth
+              // taking where there is a state mirror to carry it, and this is
+              // the same condition the reading below was taken under.
+              stateThumbnails: Boolean(savePaths) && wantsStateSync,
+            })
+          : null;
+      // The interval is the one thing the arguments below do not show: they
+      // name the generated config, not what is in it.
+      console.info(
+        launchConfig
+          ? `[launch] rom ${request.romId}: asked for a save every ${askedAutosave}s in ${launchConfig}`
+          : `[launch] rom ${request.romId}: no generated config, the emulator keeps its own settings`,
+      );
+
+      // A relaunch must also wait when it skips its own transfers. Without
+      // the launch config, RetroArch may start Cloud Sync immediately, while
+      // the previous run is still pushing its final save or states.
+      await this.pendingRomExits.wait(request.romId);
+      throwIfCancelled(controller.signal);
+
+      // Install the single-writer policy before any pull touches local data.
+      // If the appended config cannot be written, RetroArch keeps its own
+      // Cloud Sync settings and the shell leaves this run's assets alone.
+      const builtInRetroArch = usesBuiltInRetroArch(config, request.platformSlug);
+      const canSync = !builtInRetroArch || Boolean(launchConfig);
+      const syncsSaves = wantsSaveSync && canSync;
+      const syncsStates = wantsStateSync && canSync;
+      if (builtInRetroArch && (wantsSaveSync || wantsStateSync || screenshotDir)) {
+        console.info(
+          launchConfig
+            ? `[sync] rom ${request.romId}: shell owns transfers; RetroArch Cloud Sync disabled for this run`
+            : `[sync] rom ${request.romId}: no launch config; shell asset sync skipped`,
+        );
+      }
 
       let saveSync: PullResult | null = null;
       if (savePaths && syncsSaves) {
@@ -768,7 +831,6 @@ export class Launcher {
           status: "downloading",
           stage: "save",
         });
-        await this.pendingRomExits.wait(request.romId);
         saveSync = await pullSave({
           config,
           session,
@@ -823,47 +885,6 @@ export class Launcher {
         // Except a cancel, which is the user's and belongs to the launch.
         throwIfCancelled(controller.signal);
       }
-
-      // Asked for before the launch is resolved, so its path can be named in
-      // the arguments. Without it RetroArch writes the save once, when the
-      // content closes, and a launch that never reaches that moment has nothing
-      // for the push to find.
-      const autosave = autosaveSeconds(config.retroarchAutosaveSeconds);
-      // Only for the launch that will name it. A mapping's arguments are the
-      // user's, so a generated config would be a file nothing reads. The
-      // interval is asked for only where the shell is syncing this launch's
-      // saves; the display mode is the page's answer either way.
-      const askedAutosave = savePaths && syncsSaves ? autosave : 0;
-      const screenshotDir = await prepareScreenshots(
-        config,
-        request.romId,
-        usesBuiltInRetroArch(config, request.platformSlug),
-      );
-      const launchConfig =
-        config.saveDataPath &&
-        usesBuiltInRetroArch(config, request.platformSlug)
-          ? await writeLaunchConfig(config.saveDataPath, request.romId, {
-              autosaveSeconds: askedAutosave,
-              fullscreen: request.fullscreen,
-              screenshotDir: screenshotDir ?? undefined,
-              // The flags name the files and the settings pin the directory:
-              // a redirect in the user's own config beats the flags, and this
-              // config beats the redirect.
-              saveDir: savePaths?.saveDir,
-              stateDir: savePaths?.stateDir,
-              // On the same terms as the interval: the picture is only worth
-              // taking where there is a state mirror to carry it, and this is
-              // the same condition the reading below was taken under.
-              stateThumbnails: Boolean(savePaths) && syncsStates,
-            })
-          : null;
-      // The interval is the one thing the arguments below do not show: they
-      // name the generated config, not what is in it.
-      console.info(
-        launchConfig
-          ? `[launch] rom ${request.romId}: asked for a save every ${askedAutosave}s in ${launchConfig}`
-          : `[launch] rom ${request.romId}: no generated config, the emulator keeps its own settings`,
-      );
 
       // Resolved again, and this time strictly: the validation above may have
       // assumed a core that had yet to be downloaded, and nothing is spawned

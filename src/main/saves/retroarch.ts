@@ -91,6 +91,9 @@ export interface LaunchSettings {
    *  False and undefined both ask for nothing, which leaves the user's own
    *  setting alone. */
   stateThumbnails?: boolean;
+  /** The shell owns transfers for this run. Prevent RetroArch's WebDAV sync
+   *  from reading or writing the same directories independently. */
+  disableCloudSync?: boolean;
 }
 
 /**
@@ -176,6 +179,15 @@ export function retroarchLaunchConfig(settings: LaunchSettings): string | null {
   // RetroArch's own slot menu keeps them.
   if (settings.stateThumbnails) {
     lines.push('savestate_thumbnail_enable = "true"');
+  }
+
+  if (settings.disableCloudSync) {
+    lines.push(
+      'cloud_sync_enable = "false"',
+      // Appended settings are otherwise saved into the user's main config on
+      // exit. The sync owner and managed directories belong to this run only.
+      'config_save_on_exit = "false"',
+    );
   }
 
   if (lines.length === 0) return null;
