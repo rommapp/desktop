@@ -758,6 +758,34 @@ and every RPCS3 on Windows). Anywhere else needs `standaloneDataPaths`:
 A memory card or MLC folder moved in PCSX2's or Cemu's own settings is not
 followed yet.
 
+### RetroArch Cloud Sync
+
+For built-in RetroArch launches, the shell owns asset transfers whenever it is
+syncing saves, states or screenshots. Its per-launch config sets
+`cloud_sync_enable = "false"` so RetroArch's WebDAV sync cannot independently
+pull or push the same files. This applies even when RetroArch normally syncs
+to a service other than RomM.
+
+The same config sets `config_save_on_exit = "false"`, so the temporary sync
+owner and managed paths are not saved back into your `retroarch.cfg` on exit.
+RetroArch's normal Cloud Sync setting still applies when started separately.
+Settings changed in RetroArch's menu during a managed run are not automatically
+saved on exit either; avoid manually saving its current configuration, which
+would include the temporary settings.
+
+The guard is written before the shell pulls any save or state. If it cannot be
+written, the shell skips its save, state and screenshot transfers for that run
+and logs why; the game still starts with RetroArch's own Cloud Sync settings.
+Turn off `syncSaves`, `syncStates` and `syncScreenshots` together to leave Cloud
+Sync alone on built-in launches. Existing local-directory choices still apply.
+
+Configured emulator mappings keep their own config and arguments. For a custom
+RetroArch mapping, choose one transfer owner yourself: disable its Cloud Sync
+while using the shell's mirrors, or disable the shell's three sync settings to
+use RetroArch Cloud Sync. Do not turn Cloud Sync back on in RetroArch's menu or
+in a separate core/game override during a shell-managed run. Live coexistence
+testing against a RetroArch install and a WebDAV server remains outstanding.
+
 ### Screenshots sent to RomM
 
 With `syncScreenshots` on, the built-in RetroArch launch puts captures into a
