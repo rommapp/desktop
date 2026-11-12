@@ -803,6 +803,12 @@ export class Launcher {
           : `[launch] rom ${request.romId}: no generated config, the emulator keeps its own settings`,
       );
 
+      // A relaunch must also wait when it skips its own transfers. Without
+      // the launch config, RetroArch may start Cloud Sync immediately, while
+      // the previous run is still pushing its final save or states.
+      await this.pendingRomExits.wait(request.romId);
+      throwIfCancelled(controller.signal);
+
       // Install the single-writer policy before any pull touches local data.
       // If the appended config cannot be written, RetroArch keeps its own
       // Cloud Sync settings and the shell leaves this run's assets alone.
@@ -825,7 +831,6 @@ export class Launcher {
           status: "downloading",
           stage: "save",
         });
-        await this.pendingRomExits.wait(request.romId);
         saveSync = await pullSave({
           config,
           session,

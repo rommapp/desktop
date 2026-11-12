@@ -776,6 +776,8 @@ would include the temporary settings.
 The guard is written before the shell pulls any save or state. If it cannot be
 written, the shell skips its save, state and screenshot transfers for that run
 and logs why; the game still starts with RetroArch's own Cloud Sync settings.
+Every relaunch waits for that ROM's previous exit work to finish, including
+this fallback, so it cannot race an earlier save or state upload.
 Turn off `syncSaves`, `syncStates` and `syncScreenshots` together to leave Cloud
 Sync alone on built-in launches. Existing local-directory choices still apply.
 

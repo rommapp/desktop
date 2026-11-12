@@ -116,3 +116,28 @@ test("relaunch waits even before exit work has queued its upload", async () => {
   await launch;
   assert.deepEqual(order, ["uploaded", "pull"]);
 });
+
+test("a relaunch waits for the final state upload after the save has completed", async () => {
+  const pending = new PendingRomWork();
+  const save = deferred<void>();
+  const state = deferred<void>();
+  const order: string[] = [];
+  const exit = (async () => {
+    await save.promise;
+    order.push("save uploaded");
+    await state.promise;
+    order.push("state uploaded");
+  })();
+  pending.track(42, exit);
+
+  // This barrier is independent of whether the next launch will pull a save:
+  // a missing config hands transfers back to RetroArch as soon as it starts.
+  const relaunch = pending.wait(42).then(() => order.push("RetroArch starts"));
+  save.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(order, ["save uploaded"]);
+  state.resolve();
+  await relaunch;
+  assert.deepEqual(order, ["save uploaded", "state uploaded", "RetroArch starts"]);
+});
