@@ -85,6 +85,8 @@ export interface LaunchSettings {
    *  directories to the user's own settings. */
   saveDir?: string;
   stateDir?: string;
+  /** A fresh directory belonging to this run, for gallery captures. */
+  screenshotDir?: string;
   /** Whether to ask RetroArch to write a picture beside each state it saves.
    *  False and undefined both ask for nothing, which leaves the user's own
    *  setting alone. */
@@ -157,6 +159,14 @@ export function retroarchLaunchConfig(settings: LaunchSettings): string | null {
     lines.push(`video_fullscreen = "${fullscreen ? "true" : "false"}"`);
   }
   lines.push(...saveDirectoryLines(settings));
+  const screenshotDir = settings.screenshotDir;
+  if (screenshotDir && !/["\r\n]/.test(screenshotDir)) {
+    lines.push(
+      `screenshot_directory = "${screenshotDir}"`,
+      'screenshots_in_content_dir = "false"',
+      'sort_screenshots_by_content_enable = "false"',
+    );
+  }
 
   // The picture a mirrored state carries in RomM is the one RetroArch takes as
   // it writes the state, and it takes none unless asked: savestate thumbnails

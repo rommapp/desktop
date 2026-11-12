@@ -184,3 +184,15 @@ test("a directory a config cannot quote is left unsaid", () => {
   assert.doesNotMatch(written, /savefile_directory/);
   assert.match(written, /^savestate_directory = "\/data\/4755\/states"$/m);
 });
+
+test("gallery captures pin their directory and turn off content redirects", () => {
+  const written = retroarchLaunchConfig({ autosaveSeconds: 0, screenshotDir: "/shots/run" }) ?? "";
+  assert.match(written, /^screenshot_directory = "\/shots\/run"$/m);
+  assert.match(written, /^screenshots_in_content_dir = "false"$/m);
+  assert.match(written, /^sort_screenshots_by_content_enable = "false"$/m);
+  assert.doesNotMatch(written, /savestate_thumbnail_enable/);
+  assert.equal(retroarchLaunchConfig({ autosaveSeconds: 0 }), null);
+  for (const char of ['"', '\r', '\n']) {
+    assert.equal(retroarchLaunchConfig({ autosaveSeconds: 0, screenshotDir: `/bad${char}path` }), null);
+  }
+});
