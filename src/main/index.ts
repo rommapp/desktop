@@ -1,6 +1,7 @@
 import { BrowserWindow, app } from "electron";
 import { type DesktopConfig } from "../shared/types.ts";
 import { nativeSession } from "./auth/paired-session.ts";
+import { PairingActions } from "./auth/actions.ts";
 import { pairDesktop } from "./auth/pair-window.ts";
 import { pairingAction, isSetupMode } from "./argv.ts";
 import { loadConfig } from "./config.ts";
@@ -33,14 +34,16 @@ function focusMainWindow(): void {
 // Consumed the first time a window opens, so re-activating later returns to
 // the server rather than reopening setup.
 let forceSetup = isSetupMode();
-let pendingPairing = pairingAction();
-let pairingInProgress = false;
+let initialPairing = pairingAction();
+const pairingCommands = new PairingActions<{
+  window: BrowserWindow; server: string; action: "pair" | "unpair";
+}>(async ({ window, server, action }) => {
+  if (!window.isDestroyed() || action === "unpair") await pairDesktop(window, server, action === "unpair");
+});
 function offerPairing(window: BrowserWindow, server: string): void {
-  const action = pendingPairing;
-  if (!action || pairingInProgress) return;
-  pendingPairing = null;
-  pairingInProgress = true;
-  void pairDesktop(window, server, action === "unpair").finally(() => { pairingInProgress = false; });
+  const action = initialPairing;
+  initialPairing = null;
+  if (action) void pairingCommands.submit({ window, server, action }).catch(console.error);
 }
 
 // openInitialWindow also runs on macOS "activate", so without this a user who
@@ -76,7 +79,9 @@ if (!app.requestSingleInstanceLock()) {
     if (!action) return;
     void loadConfig().then((config) => {
       const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.getParentWindow());
-      if (window && config.serverUrl) { pendingPairing = action; offerPairing(window, config.serverUrl); }
+      if (window && config.serverUrl) {
+        void pairingCommands.submit({ window, server: config.serverUrl, action }).catch(console.error);
+      }
     });
   });
 
@@ -120,7 +125,7 @@ async function openInitialWindow(): Promise<void> {
     // After the page, not beside it: see offerEmulatorOnce.
     offerEmulatorOnce(config, window);
     reportBacklog(config, window);
-    window.webContents.once("did-finish-load", () => offerPairing(window, config.serverUrl!));
+    offerPairing(window, config.serverUrl);
     return;
   }
   forceSetup = false;
@@ -143,7 +148,7 @@ async function openInitialWindow(): Promise<void> {
       // same one: a session is only ever offered to the server it was played
       // against.
       reportBacklog(saved, window);
-      window.webContents.once("did-finish-load", () => offerPairing(window, serverUrl));
+      offerPairing(window, serverUrl);
     })();
   });
 }

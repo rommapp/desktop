@@ -93,3 +93,8 @@ test("stored credentials reject foreign servers, malformed tokens and invalid ow
     assert.throws(() => readPairingRecord({ ...record, ...patch }, server));
   }
 });
+
+test("pairing requests both scopes required by firmware platform resolution", () => {
+  assert.ok(DEVICE_SCOPES.includes("platforms.read"));
+  assert.ok(DEVICE_SCOPES.includes("firmware.read"));
+});

@@ -22,19 +22,9 @@ import { identityOf, type PlaySessionRecord } from "./session.ts";
 
 export const QUEUE_FILE = "play-sessions.json";
 
-/**
- * What the file holds: the sessions waiting, and who each server's waiting
- * sessions belong to.
- *
- * The owner is here rather than in the config because it is the queue's own
- * bookkeeping, and here rather than on each record because it has to be
- * recorded before there is anything to stamp -- the point of it is to know, on
- * the first flush after an account change, that what is queued was not this
- * account's. Keyed by server, so repointing the shell and coming back does not
- * read as a different person.
- */
+/** Each record owns its account. A legacy server-wide owner cannot prove
+ *  who played an individual session, so it is never used to label records. */
 interface QueueFile {
-  owners: Record<string, number>;
   sessions: PlaySessionRecord[];
 }
 
@@ -53,6 +43,8 @@ function isRecord(value: unknown): value is PlaySessionRecord {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Partial<PlaySessionRecord>;
   return (
+    (candidate.userId === undefined || candidate.userId === null ||
+      (Number.isSafeInteger(candidate.userId) && candidate.userId > 0)) &&
     typeof candidate.romId === "number" &&
     Number.isInteger(candidate.romId) &&
     typeof candidate.serverUrl === "string" &&
@@ -75,7 +67,7 @@ function isRecord(value: unknown): value is PlaySessionRecord {
  *  there is nothing to recover from it and refusing to start would cost the
  *  sessions that follow as well. */
 async function readFileState(path: string): Promise<QueueFile> {
-  const empty: QueueFile = { owners: {}, sessions: [] };
+  const empty: QueueFile = { sessions: [] };
   let raw: string;
   try {
     raw = await readFile(path, "utf8");
@@ -85,21 +77,16 @@ async function readFileState(path: string): Promise<QueueFile> {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return empty;
-    const { owners, sessions } = parsed as Partial<QueueFile>;
+    const { sessions } = parsed as Partial<QueueFile>;
     return {
-      owners: isOwners(owners) ? owners : {},
-      sessions: Array.isArray(sessions) ? sessions.filter(isRecord) : [],
+      sessions: Array.isArray(sessions) ? sessions.filter(isRecord).map((record) => ({
+        ...record,
+        userId: record.userId ?? null,
+      })) : [],
     };
   } catch {
     return empty;
   }
-}
-
-function isOwners(value: unknown): value is Record<string, number> {
-  if (typeof value !== "object" || value === null) return false;
-  return Object.values(value).every(
-    (id) => typeof id === "number" && Number.isInteger(id),
-  );
 }
 
 /** Everything queued, oldest first. */
@@ -114,60 +101,6 @@ async function writeQueue(path: string, next: QueueFile): Promise<void> {
   const temp = `${path}.tmp`;
   await writeFile(temp, JSON.stringify(next, null, 2), "utf8");
   await rename(temp, path);
-}
-
-/** Which account this server's queued sessions were recorded under, if the
- *  shell has ever been able to ask. */
-export async function ownerOf(
-  path: string,
-  serverUrl: string,
-): Promise<number | undefined> {
-  return (await readFileState(path)).owners[serverUrl];
-}
-
-/**
- * Record who this server's queue belongs to, discarding it if that has changed.
- *
- * A session is attributed to whoever is signed in when it is delivered, not to
- * whoever played it, so a backlog outliving its account would land on the next
- * one. There is no way to hand it to the right person after the fact, so it goes
- * -- losing a play record is the lesser of the two, and the only one that is not
- * also someone else's business.
- *
- * `seen` is what the caller read before it went and asked who was signed in, and
- * only those records are discarded. An exit landing during that question queues
- * a record belonging to the account now answering, and sweeping the server's
- * rows as they stand would take it too. `dequeue` matches on identity for the
- * same reason.
- *
- * Returns how many were discarded, so the caller can tell an ordinary flush from
- * one that found the queue belonged to somebody else.
- */
-export function claimQueue(
-  path: string,
-  serverUrl: string,
-  userId: number,
-  seen: readonly PlaySessionRecord[],
-): Promise<number> {
-  return inTurn(path, async () => {
-    const state = await readFileState(path);
-    const known = state.owners[serverUrl];
-    if (known === userId) return 0;
-
-    // Nothing recorded yet means nothing to contradict, so the queue is adopted
-    // rather than thrown away: discarding here would cost the sessions of
-    // someone who has simply never been online since installing.
-    const gone =
-      known === undefined ? new Set<string>() : new Set(seen.map(identityOf));
-    const kept = state.sessions.filter(
-      (record) => !gone.has(identityOf(record)),
-    );
-    await writeQueue(path, {
-      owners: { ...state.owners, [serverUrl]: userId },
-      sessions: kept,
-    });
-    return state.sessions.length - kept.length;
-  });
 }
 
 /**
@@ -232,7 +165,7 @@ export function enqueue(
   // add their own row, and write back a copy missing the other's.
   return inTurn(path, async () => {
     const state = await readFileState(path);
-    const queued = prune([...state.sessions, record], now);
+    const queued = prune([...state.sessions, { ...record, userId: record.userId ?? null }], now);
     await writeQueue(path, { ...state, sessions: queued });
     return queued;
   });

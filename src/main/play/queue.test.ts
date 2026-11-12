@@ -4,12 +4,10 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { type PlaySessionRecord } from "./session.ts";
+import { forAccount, type PlaySessionRecord } from "./session.ts";
 import {
-  claimQueue,
   dequeue,
   enqueue,
-  ownerOf,
   MAX_QUEUED,
   MAX_QUEUED_AGE_MS,
   prune,
@@ -32,6 +30,7 @@ function record(
 ): PlaySessionRecord {
   return {
     romId,
+    userId: 7,
     saveSlot: "autosave",
     serverUrl,
     startTime: new Date(startedAt).toISOString(),
@@ -177,10 +176,9 @@ test("prune keeps the newest when the backlog runs past its cap", () => {
 
 test("the file on disk is the sessions, their owners, and nothing else", async () => {
   const path = queueFile();
-  await claimQueue(path, SERVER, 7, []);
   await enqueue(path, record(1), NOW);
   const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-  assert.deepEqual(parsed, { owners: { [SERVER]: 7 }, sessions: [record(1)] });
+  assert.deepEqual(parsed, { sessions: [record(1)] });
 });
 
 test("a file in the shape this predates reads as empty rather than as data", async () => {
@@ -233,74 +231,6 @@ test("a queue for another server survives being pruned for this one", async () =
   );
 });
 
-test("a queue with no owner yet is adopted rather than discarded", async () => {
-  const path = queueFile();
-  await enqueue(path, record(1), NOW);
-
-  assert.equal(await ownerOf(path, SERVER), undefined);
-  assert.equal(
-    await claimQueue(path, SERVER, 7, [record(1)]),
-    0,
-    "nothing is discarded",
-  );
-  assert.equal(await ownerOf(path, SERVER), 7);
-  assert.equal((await readQueue(path)).length, 1, "the session survives");
-});
-
-test("claiming for the same account again is a no-op", async () => {
-  const path = queueFile();
-  await enqueue(path, record(1), NOW);
-  await claimQueue(path, SERVER, 7, [record(1)]);
-
-  assert.equal(await claimQueue(path, SERVER, 7, [record(1)]), 0);
-  assert.equal((await readQueue(path)).length, 1);
-});
-
-test("a backlog is discarded rather than filed under whoever signed in next", async () => {
-  const path = queueFile();
-  await enqueue(path, record(1), NOW);
-  await enqueue(path, record(2), NOW);
-  const sevens = [record(1), record(2)];
-  await claimQueue(path, SERVER, 7, sevens);
-
-  // User 7 played these; user 8 is who the server now says is asking. Nobody
-  // can hand them to 7 after the fact, so they go rather than land on 8.
-  assert.equal(await claimQueue(path, SERVER, 8, sevens), 2);
-  assert.deepEqual(await readQueue(path), []);
-  assert.equal(await ownerOf(path, SERVER), 8);
-});
-
-test("an account change on one server leaves another server's backlog alone", async () => {
-  const path = queueFile();
-  const other = "https://other.example";
-  await enqueue(path, record(1), NOW);
-  await enqueue(path, record(2, NOW - 60_000, other), NOW);
-  await claimQueue(path, SERVER, 7, [record(1)]);
-  await claimQueue(path, other, 9, [record(2, NOW - 60_000, other)]);
-
-  assert.equal(await claimQueue(path, SERVER, 8, [record(1)]), 1);
-  assert.deepEqual(
-    (await readQueue(path)).map((entry) => entry.serverUrl),
-    [other],
-    "the other server's session is not this account's business",
-  );
-  assert.equal(await ownerOf(path, other), 9, "and its owner is untouched");
-});
-
-test("owners survive the writes that touch sessions", async () => {
-  const path = queueFile();
-  await claimQueue(path, SERVER, 7, []);
-
-  await enqueue(path, record(1), NOW);
-  assert.equal(await ownerOf(path, SERVER), 7, "enqueue keeps it");
-
-  await pruneQueue(path, NOW);
-  assert.equal(await ownerOf(path, SERVER), 7, "pruning keeps it");
-
-  await dequeue(path, [record(1)]);
-  assert.equal(await ownerOf(path, SERVER), 7, "dequeue keeps it");
-});
-
 test("a row the server would refuse whole never joins a batch", async () => {
   const path = queueFile();
   const backwards = {
@@ -338,23 +268,50 @@ test("the cap drops the oldest by when it was played, not by when it landed", as
   );
 });
 
-test("a session queued while the account was being checked is not swept up", async () => {
+test("an exit from A after B has flushed never becomes B's activity", async () => {
   const path = queueFile();
-  const theirs = record(1);
-  await enqueue(path, theirs, NOW);
-  await claimQueue(path, SERVER, 7, [theirs]);
+  const a = record(1);
+  const b = { ...record(2), userId: 8 };
+  await enqueue(path, b, NOW);
+  const bFlush = forAccount(await readQueue(path), SERVER, 8);
+  // A's fixed token can finish after B has signed in and selected its backlog.
+  await enqueue(path, a, NOW);
+  await dequeue(path, bFlush);
+  assert.deepEqual(forAccount(await readQueue(path), SERVER, 8), []);
+  assert.deepEqual(forAccount(await readQueue(path), SERVER, 7), [a]);
+  // A revoked token cannot flush, but B still cannot adopt the waiting record.
+  await enqueue(path, { ...record(3), userId: 8 }, NOW);
+  await dequeue(path, forAccount(await readQueue(path), SERVER, 8));
+  assert.deepEqual(await readQueue(path), [a]);
+});
 
-  // What the flush read before it went to ask who was signed in.
-  const seen = await readQueue(path);
-  // An emulator exits during that question, and the record belongs to whoever
-  // is answering it.
-  const mine = record(2);
-  await enqueue(path, mine, NOW);
+test("dequeue cannot remove another account's identical ROM and timestamp", async () => {
+  const path = queueFile();
+  const a = record(1);
+  const b = { ...a, userId: 8 };
+  await enqueue(path, a, NOW);
+  await enqueue(path, b, NOW);
+  await dequeue(path, [b]);
+  assert.deepEqual(await readQueue(path), [a]);
+});
 
-  assert.equal(await claimQueue(path, SERVER, 8, seen), 1, "only theirs goes");
-  assert.deepEqual(
-    (await readQueue(path)).map((entry) => entry.romId),
-    [2],
-    "the session queued mid-question survives for the next flush",
-  );
+test("legacy server owners cannot relabel records whose launch owner is unknown", async () => {
+  const path = queueFile();
+  const legacy = { ...record(1) };
+  delete legacy.userId;
+  writeFileSync(path, JSON.stringify({ owners: { [SERVER]: 8 }, sessions: [legacy, record(2)] }));
+  const queued = await readQueue(path);
+  assert.equal(queued[0]?.userId, null);
+  assert.deepEqual(forAccount(queued, SERVER, 8), []);
+  assert.deepEqual(forAccount(queued, SERVER, 7), [record(2)]);
+  await enqueue(path, { ...record(3), userId: 8 }, NOW);
+  assert.equal(JSON.parse(await readFile(path, "utf8")).owners, undefined);
+  assert.equal((await readQueue(path))[0]?.userId, null);
+});
+
+test("a new record with unknown owner does not inherit a legacy server owner", async () => {
+  const path = queueFile();
+  writeFileSync(path, JSON.stringify({ owners: { [SERVER]: 7 }, sessions: [] }));
+  await enqueue(path, { ...record(1), userId: null }, NOW);
+  assert.deepEqual(forAccount(await readQueue(path), SERVER, 7), []);
 });

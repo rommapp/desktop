@@ -22,7 +22,23 @@ const { createPairedSession } = require('../dist/main/auth/paired-session.js');
   let loginHits = 0;
   let inspectDone = Promise.resolve();
   let inspected = false;
+  let tokenRevoked = false;
+  let browserAccount = 7;
+  const ingested = [];
+  let reportStall;
+  const stallArrived = new Promise(resolve => { reportStall = resolve; });
   const server = http.createServer(async (req, res) => {
+    if (req.url === '/stall') { reportStall(); return; }
+    if (tokenRevoked && req.headers.authorization) {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ detail: 'revoked' })); return;
+    }
+    if (req.url === '/api/play-sessions') {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      ingested.push({ userId: req.headers.authorization ? 7 : browserAccount, body: JSON.parse(body) });
+      res.writeHead(201, { 'content-type': 'application/json' }); res.end('{}'); return;
+    }
     if (req.url === '/api/auth/device/init') {
       res.writeHead(201, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ device_code: 'a'.repeat(64), user_code: 'ABCDEFGH', expires_in: 60, interval: 1 }));
@@ -35,7 +51,7 @@ const { createPairedSession } = require('../dist/main/auth/paired-session.js');
       return;
     }
     if (req.url === '/api/users/me') {
-      res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ id: 7 })); return;
+      res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ id: req.headers.authorization ? 7 : browserAccount })); return;
     }
     if (req.url === '/api/devices/device') { res.end('{}'); return; }
     if (req.url === '/api/redirect') { res.writeHead(302, { Location: `http://127.0.0.1:${foreign.address().port}/api/echo` }); res.end(); }
@@ -108,6 +124,43 @@ const { createPairedSession } = require('../dist/main/auth/paired-session.js');
   });
   const parent = new BrowserWindow({ show: false, webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true } });
   await parent.loadURL(origin);
+  // A's revoked token must not reload B's still-valid browsing session or
+  // allow B's next flush to adopt A's waiting activity.
+  const { loadConfig, playQueuePath } = require('../dist/main/config.js');
+  const queue = require('../dist/main/play/queue.js');
+  const { reportPlaySessions } = require('../dist/main/play/report.js');
+  const config = { ...await loadConfig(), serverUrl: origin, deviceId: 'cookie-device', trackPlaySessions: true,
+    useRommFirmware: true, biosPath: join(root, 'bios') };
+  const now = Date.now();
+  const playRecord = (romId, userId) => ({ romId, userId, serverUrl: origin, saveSlot: null,
+    startTime: new Date(now - 60_000).toISOString(), endTime: new Date(now).toISOString(), durationMs: 60_000 });
+  await queue.enqueue(playQueuePath(), playRecord(1, 7));
+  tokenRevoked = true;
+  browserAccount = 8;
+  await reportPlaySessions({ config, session: target, signal: new AbortController().signal });
+  assert.equal(ingested.length, 0);
+  await queue.enqueue(playQueuePath(), playRecord(2, 8));
+  await reportPlaySessions({ config, session: session.defaultSession, signal: new AbortController().signal });
+  assert.equal(ingested.length, 1);
+  assert.equal(ingested[0].userId, 8);
+  assert.equal(ingested[0].body.sessions[0].rom_id, 2);
+  assert.equal((await queue.readQueue(playQueuePath()))[0].userId, 7);
+  const navigations = [];
+  parent.webContents.on('did-start-navigation', (_event, url) => navigations.push(url));
+  const { syncDiscSet } = require('../dist/main/discs/sync.js');
+  const { syncPlatformFirmware } = require('../dist/main/firmware/sync.js');
+  const signal = new AbortController().signal;
+  await syncDiscSet({ config, session: target, romId: 1, signal, playlist: true, platformSlug: 'psx' });
+  await syncPlatformFirmware({ config, session: target, platformSlug: 'psx', signal });
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.deepEqual(navigations, []);
+  tokenRevoked = false;
+  await reportPlaySessions({ config, session: target, signal });
+  assert.equal(ingested[1].userId, 7);
+  assert.equal(ingested[1].body.sessions[0].rom_id, 1);
+  assert.deepEqual(await queue.readQueue(playQueuePath()), []);
+  browserAccount = 7;
+  console.log('PASS: revoked-token metadata requests do not reload browser; play records remain bound to their owners');
   const { pairDesktop } = require('../dist/main/auth/pair-window.js');
   await pairDesktop(parent, origin);
   await inspectDone;
@@ -117,6 +170,13 @@ const { createPairedSession } = require('../dist/main/auth/paired-session.js');
   assert.equal(saved.userId, 7);
   assert.equal(saved.deviceId, 'device');
   assert.equal((await readFile(store.pairingFile(paired.pairingRoot(), origin))).includes('rmm_smoke_fixture'), false);
+  // Local removal must complete while the remote navigation is still stalled.
+  void parent.loadURL(origin + '/stall').catch(() => {});
+  await stallArrived;
+  await pairDesktop(parent, origin, true);
+  assert.equal(await store.readPairing(paired.pairingRoot(), origin, codec), null);
+  assert.ok(messages.includes('Local pairing removed.'));
+  console.log('PASS: local unpairing completes independently of a stalled remote page');
   parent.destroy();
   await rm(root, { recursive: true, force: true });
   console.log('PASS: local pairing window, public-code-only renderer, approval exchange, account lookup, encrypted persistence (fixture codec)');

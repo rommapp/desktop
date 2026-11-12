@@ -92,7 +92,7 @@ in RomM. The native window closes after approval. Closing it earlier cancels
 polling; codes expire after at most ten minutes. A server without
 `/api/auth/device/init` continues to work through cookie sign-in.
 
-The requested scopes cover profile identity, ROM and firmware reads, asset
+The requested scopes cover profile identity, ROM/platform/firmware reads, asset
 reads/writes, device reads/writes and play-session writes. Review them in RomM
 before approval. Keep `me.read` so the shell can bind the token to its owner.
 Approval creates a device-bound client token; re-pairing uses the same install
@@ -119,7 +119,9 @@ routes, including on redirects. The browsing UI still requires its own login.
 A revoked or expired token is not silently retried with cookies. Native
 requests fail until you re-pair or remove the pairing. Run with `--unpair` to
 remove the local credential for the current server; revoke the token in RomM
-too to remove server-side access. Unpairing affects subsequent launches and
+too to remove server-side access. Unpairing is local and does not wait for the remote page to load. If pairing
+is already in progress, the removal runs after it finishes or is cancelled.
+Unpairing affects subsequent launches and
 backlog attempts; existing runs keep their original session until exit.
 Pairing does not keep the application running after you quit it, and does not
 add an offline browsing UI or a background service.
@@ -896,11 +898,14 @@ only ever offered to that one, since a rom id belongs to the server that issued
 it: point the shell elsewhere and the old backlog waits rather than being
 misfiled.
 
-A session is filed against the request's account (the paired owner or cookie
-user), so the queue is bound to an account as well. Sign a different account
-into the same server while a backlog is waiting and the backlog is discarded
-rather than landing on them. Losing a play record is the lesser of the two, and
-the only one that is not also someone else's business.
+Each play record carries the account identified before its emulator starts.
+Delivery filters by both server and account, so a paired run that exits after
+someone else signs in stays queued for its original owner. Revoking that
+owner's token does not let the next account adopt its backlog. Records whose
+owner could not be identified are retained but never sent automatically.
+Legacy rows without an explicit launch owner are also left unsent, because
+a server-wide queue owner cannot prove which account played a given session. The normal age and size
+bounds still apply.
 
 Like save sync, none of this can fail a launch, and it reports as the same
 `deviceId` the saves sync under. A machine that could not register one sends

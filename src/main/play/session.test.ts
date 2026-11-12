@@ -223,3 +223,10 @@ test("the account is read from what /users/me actually answers", () => {
   assert.equal(userIdFrom({ id: 1.5 }), null);
   assert.equal(userIdFrom("not an object"), null);
 });
+
+test("closing a timed session preserves its launch owner after an account change", () => {
+  const clocks = { now: () => Date.UTC(2026, 0, 2), tick: () => 0 };
+  const open = openPlaySession({ romId: 7, serverUrl: "https://romm.test", saveSlot: null, userId: 7 }, clocks);
+  const closed = closePlaySession(open, 1000, { ...clocks, tick: () => 60_000 });
+  assert.equal(closed?.userId, 7);
+});

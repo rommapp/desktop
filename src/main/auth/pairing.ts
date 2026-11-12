@@ -4,7 +4,7 @@
 // this process until it is exchanged once for an account-bound client token.
 
 export const DEVICE_SCOPES = [
-  "me.read", "roms.read", "assets.read", "assets.write",
+  "me.read", "roms.read", "platforms.read", "assets.read", "assets.write",
   "devices.read", "devices.write", "firmware.read", "roms.user.write",
 ] as const;
 

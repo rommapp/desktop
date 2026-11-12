@@ -12,7 +12,7 @@ import {
   type PlatformSupportQuery,
   type SaveSyncOutcome,
 } from "../shared/types.ts";
-import { nativeSession } from "./auth/paired-session.ts";
+import { pairedIdentity, nativeSession } from "./auth/paired-session.ts";
 import { loadConfig, playQueuePath } from "./config.ts";
 import {
   canInstallCore,
@@ -43,7 +43,7 @@ import {
   usesBuiltInRetroArch,
 } from "./emulator/resolve.ts";
 import { syncDiscSet } from "./discs/sync.ts";
-import { reportPlaySessions } from "./play/report.ts";
+import { currentUserId, reportPlaySessions } from "./play/report.ts";
 import { enqueue } from "./play/queue.ts";
 import {
   closePlaySession,
@@ -991,6 +991,14 @@ export class Launcher {
           stage: "save",
         });
       }
+      const playOwner = playTrackingEnabled(config)
+        ? pairedIdentity(session)?.userId ?? await currentUserId({
+            config, session,
+            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+          }).catch(() => null)
+        : null;
+      throwIfCancelled(controller.signal);
+
       const standalone = launch.emulatorId
         ? await startStandaloneSaves({
             config,
@@ -1077,6 +1085,7 @@ export class Launcher {
       const play =
         playTrackingEnabled(config) && config.serverUrl
           ? openPlaySession({
+              userId: playOwner,
               romId: request.romId,
               // The slot this launch plays through, which is what pairs the
               // session with the save it wrote. Taken from whether the launch
