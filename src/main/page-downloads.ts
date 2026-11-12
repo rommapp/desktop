@@ -50,7 +50,19 @@ export function observePageDownloads(
       );
       return;
     }
-    const update = (): void => {
+    const reportInterrupted = (): void => feedback.failed(
+      "The download was interrupted. Check your connection and try again.",
+    );
+    const update = (_event?: Electron.Event, state?: string): void => {
+      if (state === "interrupted") {
+        // A resumable interruption need not emit done. There is no resume UI,
+        // so stop tracking before cancelling, which can itself emit done.
+        cleanup();
+        item.cancel();
+        render();
+        reportInterrupted();
+        return;
+      }
       const total = item.getTotalBytes();
       active.set(
         item,
@@ -69,9 +81,7 @@ export function observePageDownloads(
       cleanup();
       render();
       if (state === "completed") feedback.finished(path);
-      else if (state !== "cancelled") feedback.failed(
-        "The download was interrupted. Check your connection and try again.",
-      );
+      else if (state !== "cancelled") reportInterrupted();
     };
     cleanups.add(cleanup);
     item.on("updated", update);

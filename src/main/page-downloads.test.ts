@@ -19,6 +19,11 @@ function fixture() {
     const item = Object.assign(new EventEmitter(), {
       total: 100,
       received: 25,
+      cancellations: 0,
+      cancel() {
+        this.cancellations++;
+        item.emit("done", {}, "cancelled");
+      },
       getTotalBytes() { return this.total; },
       getReceivedBytes() { return this.received; },
       getSavePath: () => "/downloads/game.zip",
@@ -91,4 +96,34 @@ test("closing the owning window removes session and item listeners", () => {
   assert.equal(item.listenerCount("updated"), 0);
   assert.equal(item.listenerCount("done"), 0);
   assert.equal(f.progress.at(-1), null);
+});
+
+test("resumable interruptions cancel and report once without waiting for done", () => {
+  const f = fixture();
+  const { item } = f.download();
+  item.emit("updated", {}, "interrupted");
+  assert.equal(item.cancellations, 1);
+  assert.equal(item.listenerCount("updated"), 0);
+  assert.equal(item.listenerCount("done"), 0);
+  assert.equal(f.progress.at(-1), null);
+  assert.equal(f.failed.length, 1);
+  assert.deepEqual(f.finished, []);
+  item.emit("updated", {}, "interrupted");
+  item.emit("done", {}, "interrupted");
+  assert.equal(item.cancellations, 1);
+  assert.equal(f.failed.length, 1);
+});
+
+test("an interrupted update preserves progress for another active transfer", () => {
+  const f = fixture();
+  const a = f.download().item;
+  const b = f.download().item;
+  b.received = 75;
+  b.emit("updated", {}, "progressing");
+  a.emit("updated", {}, "interrupted");
+  assert.equal(f.progress.at(-1), 0.75);
+  b.emit("done", {}, "completed");
+  assert.equal(f.progress.at(-1), null);
+  assert.equal(f.failed.length, 1);
+  assert.equal(f.finished.length, 1);
 });
