@@ -1,24 +1,26 @@
-// Showing a transfer on the taskbar or dock.
-//
-// Two lines of Electron, except for the part that is easy to miss: a download
-// outlives the window that started it. Closing the window aborts the transfer,
-// but the abort is only observed at the next chunk boundary, so a progress
-// update can still arrive for a BrowserWindow that has been destroyed -- and
-// calling anything on one of those throws. The guard lives here rather than at
-// each call site so both offers get it.
+// A page download should keep its taskbar feedback while background installs
+// run. Track both sources so finishing one transfer cannot erase the other's
+// progress, and keep window ownership weak so closing it needs no cleanup.
 
-import { type BrowserWindow } from "electron";
-
-/** Show a fraction of a transfer, if there is still a window to show it on. */
-export function showTaskbarProgress(
-  parent: BrowserWindow | null,
-  fraction: number,
-): void {
-  if (!parent || parent.isDestroyed()) return;
-  parent.setProgressBar(fraction);
+interface ProgressWindow {
+  isDestroyed(): boolean;
+  setProgressBar(value: number): void;
+}
+const progress = new WeakMap<ProgressWindow, Map<"page" | "emulator" | "install", number>>();
+export function setTransferProgress(window: ProgressWindow, source: "page" | "emulator" | "install", value: number | null): void {
+  if (window.isDestroyed()) return;
+  const sources = progress.get(window) ?? new Map<"page" | "emulator" | "install", number>();
+  if (value === null) sources.delete(source);
+  else sources.set(source, value);
+  progress.set(window, sources);
+  window.setProgressBar(sources.get("page") ?? sources.get("emulator") ?? sources.get("install") ?? -1);
 }
 
-/** Take the indicator away again. Safe to call when it was never shown. */
-export function clearTaskbarProgress(parent: BrowserWindow | null): void {
+/** Existing emulator offers use these wrappers and keep their progress above
+ *  background installs, with the same destroyed-window guard. */
+export function showTaskbarProgress(parent: ProgressWindow | null, fraction: number): void {
+  if (parent) setTransferProgress(parent, "emulator", fraction < 0 ? null : fraction);
+}
+export function clearTaskbarProgress(parent: ProgressWindow | null): void {
   showTaskbarProgress(parent, -1);
 }

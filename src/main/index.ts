@@ -7,6 +7,7 @@ import { pairingAction, isSetupMode } from "./argv.ts";
 import { loadConfig } from "./config.ts";
 import { offerRetroArchInstall } from "./emulator/bootstrap.ts";
 import { broadcastLaunchState, registerIpc } from "./ipc.ts";
+import { InstallService } from "./installs/service.ts";
 import { Launcher } from "./launcher.ts";
 import { reportPlaySessions } from "./play/report.ts";
 import {
@@ -15,6 +16,7 @@ import {
   installCertificateTrust,
 } from "./window.ts";
 
+const installs = new InstallService();
 const launcher = new Launcher((state) => {
   broadcastLaunchState(state);
   // Quitting the emulator should land back in the shell rather than on the
@@ -169,6 +171,7 @@ async function start(): Promise<void> {
   await app.whenReady();
   installCertificateTrust();
   registerIpc(launcher);
+  installs.start();
   await openInitialWindow();
 
   app.on("activate", () => {
@@ -199,7 +202,7 @@ app.on("before-quit", (event) => {
   quitting = true;
   event.preventDefault();
   void Promise.race([
-    launcher.saveSyncSettled(),
+    Promise.all([launcher.saveSyncSettled(), installs.stop()]),
     new Promise<void>((resolve) => setTimeout(resolve, SAVE_SETTLE_MS)),
   ]).then(() => app.quit());
 });

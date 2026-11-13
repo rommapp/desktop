@@ -101,3 +101,32 @@ test("evictToLimit counts nested PS3 and Wii U assets", async () => {
   assert.equal(existsSync(join(root, "1")), false);
   assert.equal(existsSync(join(root, "2")), true);
 });
+
+test("installed ROMs stay pinned even beyond the budget; removing the pin restores eviction", async () => {
+  const { INSTALL_MANIFEST } = await import("../installs/store.ts");
+  const { unlink } = await import("node:fs/promises");
+  const root = await fakeCache([
+    { id: 1, files: { "installed.nes": 500 }, agedDays: 50 },
+    { id: 2, files: { "temporary.nes": 100 }, agedDays: 20 },
+    { id: 3, files: { "current.nes": 100 }, agedDays: 0 },
+  ]);
+  writeFileSync(join(root, "1", INSTALL_MANIFEST), "{}");
+  await evictToLimit(root, 150, join(root, "3"));
+  assert.ok(existsSync(join(root, "1", "installed.nes")));
+  assert.equal(existsSync(join(root, "2")), false);
+  await unlink(join(root, "1", INSTALL_MANIFEST));
+  await evictToLimit(root, 150, join(root, "3"));
+  assert.equal(existsSync(join(root, "1")), false);
+});
+
+test("pinned data does not consume the temporary-cache budget", async () => {
+  const { INSTALL_MANIFEST } = await import("../installs/store.ts");
+  const root = await fakeCache([
+    { id: 1, files: { "installed.nes": 500 }, agedDays: 50 },
+    { id: 2, files: { "temporary.nes": 50 }, agedDays: 20 },
+    { id: 3, files: { "current.nes": 100 }, agedDays: 0 },
+  ]);
+  writeFileSync(join(root, "1", INSTALL_MANIFEST), "{}");
+  await evictToLimit(root, 150, join(root, "3"));
+  assert.ok(existsSync(join(root, "2", "temporary.nes")));
+});

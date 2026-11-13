@@ -43,6 +43,7 @@ function emptyConfig(): DesktopConfig {
     // replaces them, and a state this machine pushed is not fetched back.
     syncStates: true,
     syncScreenshots: true,
+    acceptRemoteInstalls: true,
     retroarchAutosaveSeconds: DEFAULT_RETROARCH_AUTOSAVE_SECONDS,
     logEmulatorOutput: false,
     // On for the same reason: the server already keeps playtime, a native launch

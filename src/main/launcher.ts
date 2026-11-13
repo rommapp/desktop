@@ -1,6 +1,7 @@
 import { type BrowserWindow, type Session } from "electron";
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { toLaunchError } from "../shared/ipc.ts";
 import {
   type DesktopConfig,
@@ -13,6 +14,8 @@ import {
   type SaveSyncOutcome,
 } from "../shared/types.ts";
 import { pairedIdentity, nativeSession } from "./auth/paired-session.ts";
+import { apiRequest } from "./saves/http.ts";
+import { installedLaunch } from "./installs/store.ts";
 import { loadConfig, playQueuePath } from "./config.ts";
 import {
   canInstallCore,
@@ -568,7 +571,7 @@ export class Launcher {
     this.active.set(request.romId, entry);
 
     try {
-      const config = await loadConfig();
+      let config = await loadConfig();
       assertSeparateRoots(config);
       // Account selection belongs to the registered launch so Cancel can abort
       // its identity request. Keep this session through exit, even if the page
@@ -576,6 +579,13 @@ export class Launcher {
       if (!config.serverUrl) throw new LaunchError("launch-failed", "Configure a RomM server and pair this desktop before native play.");
       session = await nativeSession(config.serverUrl, session, controller.signal);
       throwIfCancelled(controller.signal);
+      const originalConfig = config;
+      const installed = await installedLaunch(config, pairedIdentity(session)!.userId, request.romId, async () => {
+        const response = await apiRequest({ serverUrl: config.serverUrl!, session, path: `/api/roms/${request.romId}`, method: "GET",
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) });
+        return response?.status === 200 ? response.body : null;
+      });
+      if (installed) config = { ...config, cachePath: installed.cachePath, libraryPath: null };
 
       let savePaths = resolveSavePaths(
         config.saveDataPath,
@@ -650,6 +660,7 @@ export class Launcher {
       let shouldReportFile = createProgressGate();
       let fileRateOf = createRateMeter();
       const discs = await syncDiscSet({
+        metadata: installed?.metadata,
         config,
         session,
         romId: request.romId,
@@ -689,6 +700,7 @@ export class Launcher {
       // When the server runs on this machine the file is already on local disk,
       // so copying it into the cache would mean holding a second multi-gigabyte
       // copy and waiting for a transfer that never needed to happen.
+      if (installed && !discs && installed.files.length > 1) config = originalConfig;
       const inLibrary = resolveLibraryRom(
         config.libraryPath,
         request.serverPath,
@@ -696,7 +708,9 @@ export class Launcher {
       );
 
       let romPath: string;
-      if (discs) {
+      if (installed?.files.length === 1) {
+        romPath = join(installed.cachePath, String(request.romId), installed.files[0]!.path);
+      } else if (discs) {
         romPath = discs;
       } else if (inLibrary) {
         romPath = inLibrary;

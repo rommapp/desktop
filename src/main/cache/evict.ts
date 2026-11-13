@@ -1,8 +1,9 @@
 // Kept apart from the downloader, which imports Electron's net and so cannot
 // be loaded by the test runner. Same reasoning as safety.ts.
 
-import { readdir, rm, stat } from "node:fs/promises";
+import { lstat, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { INSTALL_MANIFEST } from "../installs/store.ts";
 
 /** Cache entries are named for their ROM id and nothing else. */
 const ROM_ID = /^\d+$/;
@@ -58,6 +59,9 @@ async function readCache(dir: string): Promise<{
     // Only a ROM id names a cache entry, so nothing else living under the
     // cache directory is ever a candidate for removal.
     if (!romDir.isDirectory() || !ROM_ID.test(romDir.name)) continue;
+    // Installed data has a separate retention policy. Avoid walking its whole
+    // tree on each launch merely to discover that none of it can be evicted.
+    if ((await lstat(join(path, INSTALL_MANIFEST)).catch(() => null))?.isFile()) continue;
     const { size, atime } = await measureTree(path);
     if (size === 0) continue;
     total += size;
@@ -86,6 +90,7 @@ export async function evictToLimit(
     // The ROM this launch needs is never a candidate, even when it alone
     // exceeds the limit.
     if (entry.path === keep) continue;
+    if ((await lstat(join(entry.path, INSTALL_MANIFEST)).catch(() => null))?.isFile()) continue;
     await rm(entry.path, { force: true, recursive: true });
     remaining -= entry.size;
   }

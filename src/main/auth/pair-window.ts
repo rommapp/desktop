@@ -8,6 +8,7 @@ import { rm } from "node:fs/promises";
 import { setTimeout as pause } from "node:timers/promises";
 import { DEVICE_CAPABILITIES, pairDevice, readPairingRecord } from "./pairing.ts";
 import { installIdentifier, pairingFile, savePairing } from "./pairing-store.ts";
+import { loadConfig } from "../config.ts";
 import { pairingRoot, secretCodec } from "./paired-session.ts";
 
 function escapeHtml(value: string): string {
@@ -79,7 +80,7 @@ export async function pairDesktop(parent: BrowserWindow, server: string, forget 
     await parent.webContents.session.fetch(new URL(`/api/devices/${encodeURIComponent(record.deviceId)}`, server).toString(), {
       method: "PUT", credentials: "omit", redirect: "error",
       headers: { Authorization: `Bearer ${record.token}`, "content-type": "application/json" },
-      body: JSON.stringify({ sync_mode: "api", capabilities: DEVICE_CAPABILITIES }),
+      body: JSON.stringify({ sync_mode: "api", capabilities: { ...DEVICE_CAPABILITIES, remote_install: (await loadConfig()).acceptRemoteInstalls !== false } }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
     }).catch(() => undefined);
     if (window && !(window as BrowserWindow).isDestroyed()) (window as BrowserWindow).close();

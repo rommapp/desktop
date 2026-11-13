@@ -63,6 +63,7 @@ export function downloadFromServer({
    *  as the bytes arrive. Absent means no ceiling. */
   maxBytes?: number;
 }): Promise<void> {
+  if (signal.aborted) return Promise.reject(new LaunchError("download-failed", "Download cancelled"));
   return new Promise((resolve, reject) => {
     // Cookie sessions reuse the window's sign-in. Paired sessions strip those
     // cookies and attach their bearer in a server-scoped webRequest handler.

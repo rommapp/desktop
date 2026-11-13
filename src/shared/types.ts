@@ -320,6 +320,8 @@ export interface DesktopConfig {
   /** Upload captures from built-in RetroArch launches after exit. Local images
    *  remain under saveDataPath even when a server cannot receive them. */
   syncScreenshots: boolean;
+  /** Accept queued device installs while the application is running. */
+  acceptRemoteInstalls: boolean;
   /** How often the built-in RetroArch launch is asked to write the save to
    *  disk, in seconds. RetroArch otherwise writes it once, when the content
    *  closes, which is a single moment for a crash or a launcher that exits
