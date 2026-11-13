@@ -12,7 +12,7 @@ export const DEVICE_SCOPES = [
 
 export const DEVICE_CAPABILITIES = {
   save_sync: true, state_sync: true, screenshots: true,
-  play_sessions: true, remote_install: false,
+  play_sessions: true, remote_install: true,
 };
 
 export interface PairingRecord {

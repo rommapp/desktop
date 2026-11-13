@@ -41,6 +41,8 @@ interface SyncOptions {
   session: Session;
   romId: number;
   signal: AbortSignal;
+  /** Already-authorized metadata restricted to a complete installed snapshot. */
+  metadata?: unknown;
   /** Whether this launch's emulator boots an .m3u. When it does not, the first
    *  disc is what starts the game and the rest of the set is a disc change away
    *  in the emulator's own menu, so no playlist is written. */
@@ -85,11 +87,12 @@ export async function syncDiscSet({
   platformSlug,
   disc,
   onProgress,
+  metadata,
 }: SyncOptions): Promise<string | null> {
   const { serverUrl, cachePath } = config;
   if (!serverUrl || !cachePath) return null;
 
-  const body = await getJson(serverUrl, session, `/api/roms/${romId}`, signal);
+  const body = metadata ?? await getJson(serverUrl, session, `/api/roms/${romId}`, signal);
   if (body === undefined) return null;
 
   const folderPlatform = ["ps3", "ps3-games", "wiiu", "wii-u"].includes(platformSlug.toLowerCase());

@@ -213,6 +213,7 @@ launch attempt without a restart.
 | `syncSaves`                | `true`             | [Move saves to and from RomM](#saves-synced-with-romm) around a launch           |
 | `syncStates`               | `true`             | [Move savestates to and from RomM](#savestates-synced-with-romm) around a launch |
 | `syncScreenshots`          | `true`             | [Upload RetroArch captures](#screenshots-sent-to-romm) after exit                  |
+| `acceptRemoteInstalls`     | `true`             | [Claim queued installs](#queued-device-installs) while the app runs              |
 | `retroarchAutosaveSeconds` | `10`               | How often RetroArch is asked to write the save, at least 6s; `0` leaves it alone |
 | `logEmulatorOutput`        | `false`            | [Repeat the emulator's own log](#when-a-save-does-not-sync) in the shell's       |
 | `trackPlaySessions`        | `true`             | [Report how long you played](#play-sessions-reported-to-romm) to RomM            |
@@ -942,6 +943,57 @@ Two limits. PCSX2, Dolphin, RPCS3 and Cemu take no BIOS directory on the command
 line, so for those the mirror is a staging directory you point the emulator at
 once in its own settings. And it is flat, while a few cores want a subdirectory
 (Flycast looks for `dc/dc_boot.bin`) -- put those outside `<biosPath>`.
+
+### Queued device installs
+
+With `acceptRemoteInstalls` on, the paired desktop advertises remote-install
+support. Queue a game to this device from RomM's web UI and leave the app
+running. The worker polls the claim endpoint every 15 seconds; claims refresh
+online presence, so no socket connection is needed. Connection failures back
+off up to 60 seconds. Install requests belong to the paired account even if
+the browsing window is signed into someone else.
+
+The worker downloads the request's exact file ids, checks every byte count,
+and publishes the complete game only when the request is still live. It keeps
+a completion manifest, which lets it report `already_installed` after a
+restart or a lost acknowledgement instead of downloading the game again.
+Interrupted staging trees are removed on the next startup. An existing
+installation with different contents is preserved and the new request fails;
+remove its local directory before requesting a replacement.
+
+Taskbar progress and logs show bytes transferred. Foreground page downloads
+keep priority over background progress. RomM's current API accepts terminal
+outcomes (`done`, `already_installed`, `failed`), not byte-level progress, so
+the web UI shows the taken request until its outcome arrives. Cancellation
+and credential/config changes are checked during transfers about every two
+seconds. Uncertain contact pauses the transfer without reporting false
+success; a later claim retries it. A transfer with no incoming bytes for two
+minutes fails. Partial transfers restart from the beginning.
+
+Installed data lives under:
+
+```
+<cachePath>/.installed/<server-and-account hash>/<romId>/
+```
+
+The manifest pins that directory against eviction. Native play validates it
+against current ROM file ids, sizes and available hash/mtime revisions and reuses its files through the existing single,
+disc-set and folder-game launch paths. Installed games are kept separately
+from temporary launch downloads, so `cacheLimitBytes` does not reclaim their
+space. To uninstall, remove the whole ROM directory while that game is not
+running. Removing a request in RomM does not uninstall completed local data.
+A cancellation arriving after publication may leave a completed installation.
+
+Set `acceptRemoteInstalls` to `false` to stop claiming and clear the advertised
+capability. Quitting the app aborts active install work; it does not install
+emulators or start downloaded games. On macOS, installs can continue with the
+window closed while the app remains running. The worker accepts at most 500
+claims and 10,000 files per ROM metadata response and rejects unsafe or
+ambiguous paths. It uses the same scopes requested during device pairing.
+
+To exercise downloads, cancellation, restart recovery and cache reuse against
+local fixtures, build and run `npx electron scripts/check-installs.cjs`.
+Real-server queuing and platform taskbar behavior still need verification.
 
 ### ROM cache
 

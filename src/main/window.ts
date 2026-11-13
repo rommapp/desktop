@@ -2,6 +2,7 @@ import { BrowserWindow, app, dialog, shell } from "electron";
 import { join } from "node:path";
 import { type DesktopConfig } from "../shared/types.ts";
 import { loadConfig, updateConfig } from "./config.ts";
+import { setTransferProgress } from "./window-progress.ts";
 import { observePageDownloads } from "./page-downloads.ts";
 import { isSpikeMode, spikeScript } from "./spike.ts";
 import {
@@ -302,7 +303,7 @@ export function createMainWindow(
     {
       progress(value) {
         if (window.isDestroyed()) return;
-        window.setProgressBar(value === null ? -1 : value < 0 ? 2 : value);
+        setTransferProgress(window, "page", value === null ? null : value < 0 ? 2 : value);
         downloadTitle = value === null ? null : value < 0
           ? "Downloading… | RomM"
           : `Downloading ${Math.floor(value * 100)}% | RomM`;
