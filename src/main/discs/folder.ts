@@ -48,3 +48,25 @@ export function folderGame(files: DiscFile[], platformSlug: string): FolderGame 
   if ([...seen].some((path) => directories.has(path))) return null;
   return { files: staged, bootFileId: files[entry]!.id };
 }
+
+/**
+ * Whether a folder-platform rom that is not a folder game can be staged as
+ * flat files instead: every row in one directory, no two sharing a name.
+ *
+ * An image beside its manual qualifies. A nested tree does not, because
+ * staging it flat would drop the layout, and neither do two names that differ
+ * only in case, because the flat reader keeps one of them and the game would
+ * arrive incomplete.
+ */
+export function isFlatLayout(files: DiscFile[]): boolean {
+  const directories = new Set<string>();
+  const names = new Set<string>();
+  for (const file of files) {
+    const parts = file.fullPath.replaceAll("\\", "/").split("/");
+    directories.add(parts.slice(0, -1).join("/").toLowerCase());
+    const name = file.fileName.toLowerCase();
+    if (names.has(name)) return false;
+    names.add(name);
+  }
+  return directories.size <= 1;
+}

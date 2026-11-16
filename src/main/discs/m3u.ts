@@ -129,13 +129,13 @@ export function selectStagedFiles(files: DiscFile[]): DiscFile[] {
 }
 
 /** Files that ride along with a rom without ever being what boots it: the
- *  manual, the scans, a readme, checksums, a playlist with nothing to list. */
+ *  manual, the scans, a readme, checksums, a playlist with nothing to list.
+ *  Not `.md`, which is a Mega Drive rom as often as it is Markdown. */
 const EXTRA_EXTENSIONS = [
   ".pdf",
   ".txt",
   ".nfo",
   ".diz",
-  ".md",
   ".htm",
   ".html",
   ".png",

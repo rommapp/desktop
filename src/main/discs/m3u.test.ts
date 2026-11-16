@@ -514,3 +514,10 @@ test("planRomFiles calls a rom with several candidates ambiguous", () => {
     { kind: "ambiguous" },
   );
 });
+
+test("selectBootFile treats .md as a Mega Drive rom, not an extra", () => {
+  assert.equal(
+    selectBootFile([file("Game.md", 1), file("readme.txt", 2)])?.id,
+    1,
+  );
+});

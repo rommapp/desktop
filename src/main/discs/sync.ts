@@ -21,7 +21,7 @@
 import { type Session } from "electron";
 import { mkdir, mkdtemp, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { folderGame } from "./folder.ts";
+import { folderGame, isFlatLayout } from "./folder.ts";
 import { ALL_DISCS, type DesktopConfig } from "../../shared/types.ts";
 import { apiRequest } from "../saves/http.ts";
 import { evictToLimit } from "../cache/evict.ts";
@@ -145,6 +145,13 @@ export async function syncDiscSet({
     if (!(paths instanceof Map)) return unstageable(paths.reason);
     const boot = paths.get(folder.bootFileId);
     return boot ? staged(boot) : unstageable("The game's boot file was not staged.");
+  }
+  // A tree that is not a folder game, and not flat either, cannot be staged
+  // file by file without losing part of it, and its archive does not boot.
+  if (folderFiles.length > 1 && !isFlatLayout(folderFiles)) {
+    return unstageable(
+      "This rom's files are not a folder game the shell recognises, and the emulator cannot open them as an archive.",
+    );
   }
 
   const files = readRomFiles(body);
