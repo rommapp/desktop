@@ -79,39 +79,46 @@ test("an NTSC IPL belongs to both NTSC regions and a PAL one to EUR", () => {
   assert.deepEqual(iplRegions(Buffer.alloc(16)), []);
 });
 
-test("GC file names match whatever case they were uploaded in", () => {
-  assert.equal(gcFileName("DSP_ROM.BIN"), "dsp_rom.bin");
-  assert.equal(gcFileName("font_western.bin"), "font_western.bin");
-  assert.equal(gcFileName("IPL.bin"), null);
+test("GC file names match any case, at the size Dolphin accepts", () => {
+  assert.equal(gcFileName("DSP_ROM.BIN", 8192), "dsp_rom.bin");
+  assert.equal(gcFileName("dsp_coef.bin", 4096), "dsp_coef.bin");
+  assert.equal(gcFileName("dsp_rom.bin", 100), null);
+  // Dolphin reads loose fonts only from its own install.
+  assert.equal(gcFileName("font_western.bin", 0x3000), null);
+  assert.equal(gcFileName("IPL.bin", IPL_SIZE), null);
 });
 
 test("places DSP ROMs and an IPL under its region folders", async () => {
   const f = fixture();
-  writeFileSync(join(f.mirrorDir, "DSP_ROM.bin"), "dsp");
+  writeFileSync(join(f.mirrorDir, "DSP_ROM.bin"), Buffer.alloc(8192, 7));
   writeFileSync(join(f.mirrorDir, "gc-ntsc-10.bin"), bufferWithCrc(NTSC_1_0));
   writeFileSync(join(f.mirrorDir, "gc-pal-12.bin"), bufferWithCrc(PAL_1_2));
   assert.equal(await f.supply(), 4);
-  assert.equal(readFileSync(join(f.user, "GC", "dsp_rom.bin"), "utf8"), "dsp");
+  assert.equal(readFileSync(join(f.user, "GC", "dsp_rom.bin"))[0], 7);
   for (const region of ["USA", "JAP", "EUR"]) {
     assert.ok(existsSync(join(f.user, "GC", region, "IPL.bin")), region);
   }
   assert.equal(crc32(readFileSync(join(f.user, "GC", "EUR", "IPL.bin"))), PAL_1_2);
 });
 
-test("ignores unknown files and keeps the user's own", async () => {
+test("ignores unknown and wrong-sized files and keeps the user's own", async () => {
   const f = fixture();
-  writeFileSync(join(f.mirrorDir, "dsp_coef.bin"), "romm");
+  writeFileSync(join(f.mirrorDir, "dsp_coef.bin"), Buffer.alloc(4096, 1));
+  writeFileSync(join(f.mirrorDir, "dsp_rom.bin"), "truncated");
+  writeFileSync(join(f.mirrorDir, "font_western.bin"), "font");
   writeFileSync(join(f.mirrorDir, "unknown.bin"), Buffer.alloc(IPL_SIZE));
   mkdirSync(join(f.user, "GC"));
   writeFileSync(join(f.user, "GC", "dsp_coef.bin"), "mine");
   assert.equal(await f.supply(), 0);
   assert.equal(readFileSync(join(f.user, "GC", "dsp_coef.bin"), "utf8"), "mine");
+  assert.equal(existsSync(join(f.user, "GC", "dsp_rom.bin")), false);
+  assert.equal(existsSync(join(f.user, "GC", "font_western.bin")), false);
   assert.equal(existsSync(join(f.user, "GC", "USA")), false);
 });
 
 test("does not create a user folder Dolphin has not", async () => {
   const f = fixture();
-  writeFileSync(join(f.mirrorDir, "dsp_rom.bin"), "dsp");
+  writeFileSync(join(f.mirrorDir, "dsp_rom.bin"), Buffer.alloc(8192));
   const missing = join(f.root, "not-initialized");
   f.config.standaloneDataPaths.dolphin = missing;
   assert.equal(await f.supply(), 0);

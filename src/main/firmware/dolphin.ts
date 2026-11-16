@@ -1,8 +1,9 @@
 // Supply Dolphin's GameCube folder from RomM's firmware mirror.
 //
 // Dolphin looks for GameCube system files in GC/ inside its user folder: the
-// DSP ROMs and fonts by fixed names, and the IPL as GC/<region>/IPL.bin. The
-// Wii needs nothing of the kind, so only those files are placed.
+// DSP ROMs by fixed names, and the IPL as GC/<region>/IPL.bin. Loose fonts are
+// read only from Dolphin's own install, and the Wii needs nothing of the kind,
+// so only those files are placed.
 //
 // A mirrored IPL can carry any name the user uploaded it under, so it is
 // identified by content instead, against the same Redump CRC32s Dolphin checks
@@ -18,13 +19,13 @@ import { type DesktopConfig } from "../../shared/types.ts";
 import { standaloneData } from "../standalone/data.ts";
 import { copyIfMissing, type MirrorSummary, mirroredFiles } from "./place.ts";
 
-/** Files Dolphin reads from GC/ by exactly these names. */
-const GC_FILES = [
-  "dsp_rom.bin",
-  "dsp_coef.bin",
-  "font_western.bin",
-  "font_japanese.bin",
-];
+/** Files Dolphin reads from GC/ by exactly these names, and the size it
+ *  rejects any other size of. A user copy overrides the replacement Dolphin
+ *  ships, so a wrong one would break low-level DSP emulation until removed. */
+const GC_FILES: ReadonlyMap<string, number> = new Map([
+  ["dsp_rom.bin", 8192],
+  ["dsp_coef.bin", 4096],
+]);
 
 /** The size of every official IPL dump. */
 export const IPL_SIZE = 2 * 1024 * 1024;
@@ -47,10 +48,10 @@ export function iplRegions(contents: Uint8Array): readonly string[] {
   return IPL_REGIONS.get(crc32(contents)) ?? [];
 }
 
-/** The fixed GC/ name a mirrored file matches, ignoring case. */
-export function gcFileName(name: string): string | null {
+/** The fixed GC/ name a mirrored file of this size matches, ignoring case. */
+export function gcFileName(name: string, size: number): string | null {
   const lower = name.toLowerCase();
-  return GC_FILES.find((known) => known === lower) ?? null;
+  return GC_FILES.get(lower) === size ? lower : null;
 }
 
 export async function supplyDolphinFirmware(options: {
@@ -76,14 +77,15 @@ export async function supplyDolphinFirmware(options: {
   let copied = 0;
   for (const name of await mirroredFiles(mirror.directory)) {
     const source = join(mirror.directory, name);
-    const fixed = gcFileName(name);
+    const info = await stat(source).catch(() => null);
+    if (!info) continue;
+    const fixed = gcFileName(name, info.size);
     if (fixed) {
       if (await copyIfMissing(source, gc, fixed)) copied++;
       continue;
     }
     // Only a file of the right size is read whole to be hashed.
-    const info = await stat(source).catch(() => null);
-    if (info?.size !== IPL_SIZE) continue;
+    if (info.size !== IPL_SIZE) continue;
     const contents = await readFile(source).catch(() => null);
     if (!contents) continue;
     for (const region of iplRegions(contents)) {

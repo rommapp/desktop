@@ -300,7 +300,7 @@ shell looks for them where they land:
 | Emulator | Platforms    | Looked for in                                                                    |
 | -------- | ------------ | -------------------------------------------------------------------------------- |
 | PCSX2    | `ps2`        | `/Applications`, Program Files, the per-user Programs directory, scoop, RetroBat |
-| Dolphin  | `ngc`, `wii` | the same, plus `/usr/bin` and `/usr/games` and its Flatpak on Linux              |
+| Dolphin  | `dsp_rom.bin` and `dsp_coef.bin` (at their exact sizes) into `GC/`; a retail IPL dump, recognised by its checksum, as `GC/<region>/IPL.bin` |
 | RPCS3    | `ps3`        | the same, plus `/usr/bin` and `/usr/local/bin` and its Flatpak on Linux          |
 | Cemu     | `wiiu`       | the same, plus `%LOCALAPPDATA%\Cemu`, which is where its own installer puts it   |
 
