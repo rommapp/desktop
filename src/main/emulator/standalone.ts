@@ -23,6 +23,7 @@ import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import { type EmulatorMapping } from "../../shared/types.ts";
 import { compareVersions } from "../version.ts";
+import { frontendCandidates } from "./frontends.ts";
 
 export interface StandaloneEmulator {
   /** Stable identifier, used in config and messages. */
@@ -128,6 +129,15 @@ function flatpak(home: string, appId: string): string[] {
 }
 
 /**
+ * An AppImage in ~/Applications, where EmuDeck puts its own and where
+ * AppImageLauncher integrates any other. An AppImage the user keeps anywhere
+ * else is theirs to name in an emulators row.
+ */
+function appImage(home: string, name: string): string[] {
+  return [posix.join(home, "Applications", name)];
+}
+
+/**
  * The two Windows roots an installer picks between, with their defaults.
  *
  * Both are read from the environment rather than assumed, because a machine
@@ -162,10 +172,6 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
             win32.join(programFiles, "PCSX2\\pcsx2-qt.exe"),
             win32.join(localAppData, "Programs\\PCSX2\\pcsx2-qt.exe"),
             win32.join(home, "scoop\\apps\\pcsx2\\current\\pcsx2-qt.exe"),
-            // A frontend's own tree. Its emulators are perfectly good ones, and
-            // finding them beats asking someone to configure what they already
-            // installed.
-            "C:\\RetroBat\\emulators\\pcsx2\\pcsx2-qt.exe",
           ];
         }
         default:
@@ -173,6 +179,7 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
             "/usr/bin/pcsx2-qt",
             "/usr/local/bin/pcsx2-qt",
             ...flatpak(home, "net.pcsx2.PCSX2"),
+            ...appImage(home, "pcsx2-Qt.AppImage"),
           ];
       }
     },
@@ -195,7 +202,6 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
             win32.join(programFiles, "Dolphin\\Dolphin.exe"),
             win32.join(localAppData, "Programs\\Dolphin\\Dolphin.exe"),
             win32.join(home, "scoop\\apps\\dolphin\\current\\Dolphin.exe"),
-            "C:\\RetroBat\\emulators\\dolphin-emu\\Dolphin.exe",
           ];
         }
         default:
@@ -227,7 +233,6 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
             win32.join(programFiles, "RPCS3\\rpcs3.exe"),
             win32.join(localAppData, "Programs\\RPCS3\\rpcs3.exe"),
             win32.join(home, "scoop\\apps\\rpcs3\\current\\rpcs3.exe"),
-            "C:\\RetroBat\\emulators\\rpcs3\\rpcs3.exe",
           ];
         }
         default:
@@ -235,6 +240,7 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
             "/usr/bin/rpcs3",
             "/usr/local/bin/rpcs3",
             ...flatpak(home, "net.rpcs3.RPCS3"),
+            ...appImage(home, "rpcs3.AppImage"),
           ];
       }
     },
@@ -261,7 +267,6 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
             win32.join(programFiles, "Cemu\\Cemu.exe"),
             win32.join(localAppData, "Programs\\Cemu\\Cemu.exe"),
             win32.join(home, "scoop\\apps\\cemu\\current\\Cemu.exe"),
-            "C:\\RetroBat\\emulators\\cemu\\Cemu.exe",
           ];
         }
         default:
@@ -271,6 +276,7 @@ export const STANDALONE_EMULATORS: StandaloneEmulator[] = [
             "/usr/bin/Cemu",
             "/usr/local/bin/Cemu",
             ...flatpak(home, "info.cemu.Cemu"),
+            ...appImage(home, "Cemu.AppImage"),
           ];
       }
     },
@@ -296,11 +302,26 @@ export function detectStandalone(
   exists: (path: string) => boolean = existsSync,
   readDir: ReadDir = readDirSafe,
   only?: ReadonlySet<string>,
+  /** The frontend folder the user chose, `emulatorsBasePath`. */
+  basePath: string | null = null,
 ): DetectedEmulator[] {
   const found: DetectedEmulator[] = [];
   for (const emulator of STANDALONE_EMULATORS) {
     if (only && !only.has(emulator.id)) continue;
-    const command = emulator.paths(platform, home, env, readDir).find(exists);
+    // A frontend folder someone chose outranks a standard install, which
+    // outranks a frontend nobody pointed at.
+    const frontend = frontendCandidates(
+      emulator.id,
+      basePath,
+      platform,
+      home,
+      env,
+    );
+    const command = [
+      ...frontend.chosen,
+      ...emulator.paths(platform, home, env, readDir),
+      ...frontend.defaults,
+    ].find(exists);
     if (command) found.push({ emulator, command });
   }
   return found;
@@ -348,8 +369,11 @@ function detectStandaloneCached(
   env: NodeJS.ProcessEnv,
   exists: (path: string) => boolean,
   readDir: ReadDir = readDirSafe,
+  basePath: string | null = null,
 ): DetectedEmulator[] {
-  const key = `${platform}\u0000${home}`;
+  // The chosen folder is part of the key: picking one has to be seen on the
+  // very next launch, not after a restart.
+  const key = `${platform}\u0000${home}\u0000${basePath ?? ""}`;
   if (!memo || memo.key !== key) memo = { key, found: new Map() };
 
   // A remembered path can stop being one: PCSX2-v2.8.2.app becomes
@@ -375,6 +399,7 @@ function detectStandaloneCached(
       exists,
       readDir,
       missing,
+      basePath,
     )) {
       memo.found.set(detected.emulator.id, detected);
     }
@@ -398,6 +423,7 @@ export function detectedMappingFor(
   env: NodeJS.ProcessEnv = process.env,
   exists: (path: string) => boolean = existsSync,
   readDir: ReadDir = readDirSafe,
+  basePath: string | null = null,
 ): EmulatorMapping | null {
   // findMapping asks this for every platform, and detection is a directory scan
   // plus a dozen stats per emulator. Only the handful of platforms in the table
@@ -407,7 +433,7 @@ export function detectedMappingFor(
   const wanted = platformSlug.toLowerCase();
   return (
     toEmulatorMappings(
-      detectStandaloneCached(platform, home, env, exists, readDir),
+      detectStandaloneCached(platform, home, env, exists, readDir, basePath),
     ).find((mapping) => mapping.platformSlug === wanted) ?? null
   );
 }
@@ -426,9 +452,18 @@ export function standaloneIsInstalled(
   env: NodeJS.ProcessEnv = process.env,
   exists: (path: string) => boolean = existsSync,
   readDir: ReadDir = readDirSafe,
+  basePath: string | null = null,
 ): boolean {
   resetStandaloneDetection();
-  return detectStandalone(platform, home, env, exists, readDir).some(
+  return detectStandalone(
+    platform,
+    home,
+    env,
+    exists,
+    readDir,
+    undefined,
+    basePath,
+  ).some(
     ({ emulator }) => emulator.id === emulatorId,
   );
 }
@@ -448,8 +483,17 @@ export function detectedStandaloneLabels(
   env: NodeJS.ProcessEnv = process.env,
   exists: (path: string) => boolean = existsSync,
   readDir: ReadDir = readDirSafe,
+  basePath: string | null = null,
 ): string[] {
-  return detectStandalone(platform, home, env, exists, readDir).map(
+  return detectStandalone(
+    platform,
+    home,
+    env,
+    exists,
+    readDir,
+    undefined,
+    basePath,
+  ).map(
     ({ emulator }) => emulator.label,
   );
 }

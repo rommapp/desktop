@@ -7,6 +7,7 @@
 // As parameters they can all be checked from any machine.
 
 import { win32, posix } from "node:path";
+import { frontendCandidates } from "./frontends.ts";
 
 // Each branch joins with its own platform's separator -- win32 for the Windows
 // paths, posix for the rest -- rather than with node:path's default, which
@@ -14,11 +15,26 @@ import { win32, posix } from "node:path";
 // made the Windows branch impossible to check anywhere except Windows, which is
 // exactly the branch most likely to be wrong.
 
-/** Common install locations, most specific first. */
+/** Common install locations, most specific first. A frontend's folder the
+ *  user chose comes ahead of them all, and its default roots after. */
 export function retroarchCandidates(
   platform: NodeJS.Platform = process.platform,
   home: string,
   env: NodeJS.ProcessEnv = process.env,
+  basePath: string | null = null,
+): string[] {
+  const frontend = frontendCandidates("retroarch", basePath, platform, home, env);
+  return [
+    ...frontend.chosen,
+    ...installCandidates(platform, home, env),
+    ...frontend.defaults,
+  ];
+}
+
+function installCandidates(
+  platform: NodeJS.Platform,
+  home: string,
+  env: NodeJS.ProcessEnv,
 ): string[] {
   switch (platform) {
     case "darwin":
@@ -28,9 +44,9 @@ export function retroarchCandidates(
       ];
     case "win32": {
       const p = win32;
-      // RetroArch ships portable about as often as it is installed, and
-      // frontends bundle their own copy, so cover the usual roots. An install
-      // on another drive still needs retroarchPath set by hand.
+      // RetroArch ships portable about as often as it is installed, so cover
+      // the usual roots. An install on another drive still needs retroarchPath
+      // set by hand, unless it is a frontend's and that folder is chosen.
       const programFiles = env.ProgramFiles ?? "C:\\Program Files";
       const programFilesX86 =
         env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)";
@@ -49,7 +65,6 @@ export function retroarchCandidates(
           programFiles,
           "Steam\\steamapps\\common\\RetroArch\\retroarch.exe",
         ),
-        "C:\\RetroBat\\emulators\\retroarch\\retroarch.exe",
       ];
     }
     default:

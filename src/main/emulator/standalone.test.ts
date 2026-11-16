@@ -238,6 +238,50 @@ test("finds an emulator inside a frontend's own tree", () => {
   assert.equal(found[0]?.emulator.id, "pcsx2");
 });
 
+test("finds a frontend's tree on another drive once that folder is chosen", () => {
+  const fs = fakeFs("D:\\RetroBat\\emulators\\dolphin-emu\\Dolphin.exe");
+  const args = ["win32", "C:\\Users\\sam", WIN_ENV, fs.exists, fs.readDir] as const;
+  assert.deepEqual(detectStandalone(...args), []);
+  const found = detectStandalone(...args, undefined, "D:\\RetroBat");
+  assert.equal(found[0]?.command, "D:\\RetroBat\\emulators\\dolphin-emu\\Dolphin.exe");
+});
+
+test("a chosen frontend folder outranks a standard install, and a default root does not", () => {
+  const programFiles = "C:\\Program Files\\PCSX2\\pcsx2-qt.exe";
+  const chosen = "E:\\Games\\RetroBat\\emulators\\pcsx2\\pcsx2-qt.exe";
+  const retrobat = "C:\\RetroBat\\emulators\\pcsx2\\pcsx2-qt.exe";
+  const fs = fakeFs(programFiles, chosen, retrobat);
+  const args = ["win32", "C:\\Users\\sam", WIN_ENV, fs.exists, fs.readDir] as const;
+  assert.equal(detectStandalone(...args)[0]?.command, programFiles);
+  assert.equal(
+    detectStandalone(...args, undefined, "E:\\Games\\RetroBat")[0]?.command,
+    chosen,
+  );
+});
+
+test("choosing a folder is seen by the next lookup, not after a restart", () => {
+  resetStandaloneDetection();
+  const fs = fakeFs("D:\\RetroBat\\emulators\\rpcs3\\rpcs3.exe");
+  const lookup = (basePath: string | null) =>
+    detectedMappingFor("ps3", "win32", "C:\\Users\\sam", WIN_ENV, fs.exists, fs.readDir, basePath);
+  assert.equal(lookup(null), null);
+  assert.equal(lookup("D:\\RetroBat")?.command, "D:\\RetroBat\\emulators\\rpcs3\\rpcs3.exe");
+  resetStandaloneDetection();
+});
+
+test("finds the AppImages EmuDeck puts in ~/Applications", () => {
+  const found = detect(
+    "linux",
+    "/home/deck",
+    "/home/deck/Applications/pcsx2-Qt.AppImage",
+    "/home/deck/Applications/rpcs3.AppImage",
+  );
+  assert.deepEqual(
+    found.map((entry) => entry.command),
+    ["/home/deck/Applications/pcsx2-Qt.AppImage", "/home/deck/Applications/rpcs3.AppImage"],
+  );
+});
+
 test("Windows paths are built with Windows separators", () => {
   // node:path follows the host, so without the win32 flavour these could only
   // ever be checked on Windows.

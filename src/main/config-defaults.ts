@@ -41,7 +41,9 @@ export function withDetectedDefaults(
 
   const retroarchPath =
     config.retroarchPath ??
-    firstExisting(retroarchCandidates(platform, home, env));
+    firstExisting(
+      retroarchCandidates(platform, home, env, config.emulatorsBasePath),
+    );
   return {
     ...config,
     retroarchPath,

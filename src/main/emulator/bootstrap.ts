@@ -103,7 +103,14 @@ export async function offerRetroArchInstall(
   // each. Still worth offering RetroArch for the rest of the library, but not
   // worth claiming to have found nothing.
   const alreadyHere = config.useDetectedEmulators
-    ? detectedStandaloneLabels()
+    ? detectedStandaloneLabels(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        config.emulatorsBasePath,
+      )
     : [];
 
   const { response, checkboxChecked } = await ask(parent, {

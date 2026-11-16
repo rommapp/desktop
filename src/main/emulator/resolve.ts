@@ -139,6 +139,23 @@ function appendConfigArgs(
   return generated.length > 0 ? [`--appendconfig=${generated.join("|")}`] : [];
 }
 
+/** The detected row for a platform, looking in the user's chosen frontend
+ *  folder as well as the standard install locations. */
+function detectedFor(
+  config: DesktopConfig,
+  platformSlug: string,
+): EmulatorMapping | null {
+  return detectedMappingFor(
+    platformSlug,
+    undefined,
+    homedir(),
+    undefined,
+    undefined,
+    undefined,
+    config.emulatorsBasePath,
+  );
+}
+
 function findMapping(
   config: DesktopConfig,
   platformSlug: string,
@@ -155,7 +172,7 @@ function findMapping(
   // for it. Detection is what makes PS2 and GameCube launchable at all under
   // RetroAchievements, which recognises no libretro core for either.
   if (config.useDetectedEmulators) {
-    const detected = detectedMappingFor(platformSlug, undefined, homedir());
+    const detected = detectedFor(config, platformSlug);
     if (detected) return detected;
   }
 
@@ -186,7 +203,7 @@ export function hasPlatformSpecificEmulator(
   if (config.emulators.some((row) => row.platformSlug.toLowerCase() === wanted))
     return true;
   if (!config.useDetectedEmulators) return false;
-  return detectedMappingFor(platformSlug, undefined, homedir()) !== null;
+  return detectedFor(config, platformSlug) !== null;
 }
 
 /** Emulators known to boot an .m3u, for a mapping that does not say. Matched

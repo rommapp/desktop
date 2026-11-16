@@ -276,9 +276,9 @@ export interface DesktopConfig {
    *  platform slug, matched case-insensitively. A name the frontend never
    *  offered is still honoured, so this can reach a core RomM does not list. */
   preferredCores: Record<string, string[]>;
-  /** Directory the frontends install emulators under, so an emulators entry can
-   *  name a relative path instead of repeating an absolute one. Null means every
-   *  command must be absolute. */
+  /** A frontend's emulator folder (RetroBat, ES-DE, EmuDeck), searched for
+   *  RetroArch and the standalone emulators ahead of the standard install
+   *  locations. An emulators entry can also name a path relative to it. */
   emulatorsBasePath: string | null;
   /** Per-platform overrides, consulted before the RetroArch default. */
   emulators: EmulatorMapping[];

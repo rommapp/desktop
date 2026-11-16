@@ -519,7 +519,22 @@ export class Launcher {
       throwIfCancelled(signal);
       // Drops the detection memo as it goes, so the launch that follows this
       // sees what was just installed rather than the answer from before it.
-      if (standaloneIsInstalled(emulatorId)) return;
+      // The config is read each time round because the folder it names can
+      // be the very thing that just changed.
+      const { emulatorsBasePath } = await loadConfig();
+      if (
+        standaloneIsInstalled(
+          emulatorId,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          emulatorsBasePath,
+        )
+      ) {
+        return;
+      }
       // Returning rather than throwing: this launch then fails the way it would
       // have without the wait, which is the honest answer once nobody is
       // installing anything.

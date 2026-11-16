@@ -33,6 +33,14 @@ test("looks for RetroArch where each platform actually puts it", () => {
   ]);
 });
 
+test("a chosen frontend folder comes first and default frontend roots last", () => {
+  const candidates = retroarchCandidates("win32", WIN_HOME, WIN_ENV, "D:\\RetroBat");
+  assert.equal(candidates[0], "D:\\RetroBat\\emulators\\retroarch\\retroarch.exe");
+  const installed = candidates.indexOf("C:\\Program Files\\RetroArch\\retroarch.exe");
+  const retrobat = candidates.indexOf("C:\\RetroBat\\emulators\\retroarch\\retroarch.exe");
+  assert.ok(installed > 0 && retrobat > installed, candidates.join(", "));
+});
+
 test("falls back to conventional roots when the environment is bare", () => {
   // A Windows process can be missing these; the defaults have to stand in
   // rather than producing "undefined\\RetroArch".

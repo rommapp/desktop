@@ -209,7 +209,7 @@ settled on is in the log whenever the settings are opened.
 | `useDetectedEmulators`     | `true`             | Use [detected](#detected-standalone-emulators) PCSX2, Dolphin, RPCS3, Cemu       |
 | `offerStandaloneInstall`   | `true`             | Offer to fetch those when they are missing                                       |
 | `emulators`                | none               | [Your own platform-to-command rows](#your-own-emulator-rows)                     |
-| `emulatorsBasePath`        | none               | Prefix for relative `command` values                                             |
+| `emulatorsBasePath`        | none               | [A frontend's emulator folder](#frontend-emulator-folders), and the root for relative `command` values |
 | `standaloneDataPaths`      | none               | [A standalone emulator's user folder](#standalone-emulator-saves), by id         |
 | `libraryPath`              | none               | [Library root](#local-library), to launch in place instead of downloading        |
 | `cachePath`                | `rom-cache`        | [ROM cache](#rom-cache) directory                                                |
@@ -241,9 +241,10 @@ fullscreen at runtime on Windows and Linux, Control Command F on macOS.
 RetroArch and its cores directory are detected from the usual install locations:
 standard packages on Linux and macOS, and on Windows the portable
 `C:\RetroArch-Win64` layout, both Program Files directories, the per-user
-Programs directory, scoop, Steam, and RetroBat's bundled copy. Anywhere else --
-notably a drive other than C: -- needs `retroarchPath`, pointed at the
-executable; the cores directory is derived from its parent.
+Programs directory, scoop, Steam, and the copy a [frontend](#frontend-emulator-folders)
+bundles. Anywhere else -- notably a drive other than C: -- needs
+`retroarchPath`, pointed at the executable, or the frontend's folder chosen as
+`emulatorsBasePath`; the cores directory is derived from its parent.
 
 With nothing installed and nothing configured, the shell offers once on startup
 to fetch RetroArch's installer and open it, keeping it in `installers` beside
@@ -304,18 +305,37 @@ shell looks for them where they land:
 
 | Emulator | Platforms    | Looked for in                                                                    |
 | -------- | ------------ | -------------------------------------------------------------------------------- |
-| PCSX2    | `ps2`        | `/Applications`, Program Files, the per-user Programs directory, scoop, RetroBat |
+| PCSX2    | `ps2`        | `/Applications`, Program Files, the per-user Programs directory, scoop           |
 | Dolphin  | `ngc`, `wii` | the same, plus `/usr/bin` and `/usr/games` and its Flatpak on Linux              |
 | RPCS3    | `ps3`        | the same, plus `/usr/bin` and `/usr/local/bin` and its Flatpak on Linux          |
 | Cemu     | `wiiu`       | the same, plus `%LOCALAPPDATA%\Cemu`, which is where its own installer puts it   |
 
-Nothing is written to your config, so RetroBat in `C:\RetroBat` needs no
-configuring; a portable RetroBat on another drive needs `emulatorsBasePath` and
-an `emulators` row.
+On Linux, PCSX2, RPCS3 and Cemu are also found as AppImages in
+`~/Applications`, which is where EmuDeck and AppImageLauncher put them. All four
+are found inside a [frontend's folder](#frontend-emulator-folders) too. Nothing
+is written to your config.
 
 A row you wrote yourself always wins, but a detected emulator beats a `*`
 wildcard row. `useDetectedEmulators: false` switches the whole thing off, and
 takes the download offer with it.
+
+#### Frontend emulator folders
+
+RetroBat, ES-DE and EmuDeck on Windows keep RetroArch and the standalone
+emulators in one folder of their own, and the shell uses them as they are.
+
+| Frontend | Found by itself in                                   | Folder names                                                  |
+| -------- | ---------------------------------------------------- | ------------------------------------------------------------- |
+| RetroBat | `C:\RetroBat\emulators`                              | `retroarch`, `pcsx2`, `dolphin-emu`, `rpcs3`, `cemu`          |
+| EmuDeck  | `%USERPROFILE%\emudeck\EmulationStation-DE\Emulators` | ES-DE's                                                      |
+| ES-DE    | nowhere, since its portable folder can be anywhere   | `RetroArch-Win64`, `PCSX2-Qt`, `Dolphin-x64`, `RPCS3`, `cemu` |
+
+Anywhere else, set `emulatorsBasePath` to the frontend's folder: its root
+(`D:\RetroBat`), its emulators folder, EmuDeck's `emudeck` folder, or a single
+emulator's own folder all work. A folder chosen this way outranks every
+standard install location, so its RetroArch and emulators are the ones that
+launch; a frontend at its default root ranks below them. Relative `command`
+values in `emulators` rows also resolve against it.
 
 #### Offering to fetch one
 
