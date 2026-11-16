@@ -21,7 +21,46 @@ import {
   type RomIdentity,
   type SaveTargetLayout,
 } from "./identity.ts";
-import { type Tree } from "./tree.ts";
+import { type Tree, type TreeEntry } from "./tree.ts";
+
+/**
+ * How the paths under one save root relate to the names a set travels under.
+ *
+ * Usually the same thing. Not always: an emulator whose settings moved a save
+ * folder can also lay it out differently from its default, and a set has to
+ * read the same on every machine or two of them never agree. So members are
+ * always named the default way, and a root laid out otherwise translates on
+ * the way in and out.
+ */
+export interface MemberLayout {
+  /** A path under this root, as a member name. */
+  toArchive(local: string): string;
+  /** A member name, as a path under this root. */
+  toLocal(archive: string): string;
+}
+
+/**
+ * A listing renamed into member names.
+ *
+ * Two paths that would become one name make the listing incomplete, so the
+ * set is read as unreadable and nothing syncs: guessing which of them is the
+ * save would be choosing which one to lose.
+ */
+export function translateTree(tree: Tree, layout: MemberLayout): Tree {
+  const files = new Map<string, TreeEntry>();
+  let complete = tree.complete;
+  for (const [path, entry] of tree.files) {
+    const name = layout.toArchive(path);
+    if (files.has(name)) complete = false;
+    files.set(name, entry);
+  }
+  return {
+    ...tree,
+    files,
+    complete,
+    skipped: tree.skipped.map((path) => layout.toArchive(path)),
+  };
+}
 
 /** One member of the set, named relative to the save root and "/"-separated:
  *  how a listing spells it, how the archive spells it, and what the target is

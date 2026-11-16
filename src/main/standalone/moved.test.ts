@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { iniValue, movedFolders, vfsDirectory, xmlElement } from "./moved.ts";
+import {
+  CONFIGURED_GCI_LAYOUT,
+  iniValue,
+  movedFolders,
+  vfsDirectory,
+  xmlElement,
+} from "./moved.ts";
 import { standaloneData } from "./data.ts";
 
 /** Stand in for the filesystem: a map of file to text. */
@@ -48,10 +54,13 @@ test("a relative PCSX2 folder resolves against PCSX2's own, as PCSX2 does", () =
   assert.deepEqual(moved, { stateDir: `${folder}\\sstates` });
 });
 
-test("follows Dolphin's GCI folder up to the GC root, with or without the region", () => {
+test("follows Dolphin's GCI folder to the folder its regions sit in", () => {
+  // Dolphin wants the setting as <folder>/<region> and swaps the region for
+  // the game's own, which is how RetroBat writes it; without one, the folder
+  // is the root already.
   const folder = `${RB_EMU}\\dolphin-emu\\User`;
   const gcRoot = `${RB}\\saves\\gamecube\\dolphin-emu\\User\\GC`;
-  for (const gci of [`${gcRoot}\\USA`, `${gcRoot}\\EUR\\Card A`, gcRoot]) {
+  for (const gci of [`${gcRoot}\\USA`, `${gcRoot}\\JPN\\`, gcRoot]) {
     const moved = movedFolders({
       emulatorId: "dolphin",
       platformSlug: "ngc",
@@ -59,7 +68,30 @@ test("follows Dolphin's GCI folder up to the GC root, with or without the region
       platform: "win32",
       read: files({ [`${folder}\\Config\\Dolphin.ini`]: `[Core]\nGCIFolderAPath = ${gci}\n` }),
     });
-    assert.deepEqual(moved, { saveDir: gcRoot }, gci);
+    assert.equal(moved.saveDir, gcRoot, gci);
+    assert.equal(moved.layout, CONFIGURED_GCI_LAYOUT, gci);
+  }
+});
+
+test("a configured GCI folder has no card level, so members are translated", () => {
+  // Default: GC/USA/Card A/x.gci. Configured: <folder>/USA/x.gci. Members are
+  // named the default way on every machine.
+  const { toArchive, toLocal } = CONFIGURED_GCI_LAYOUT;
+  assert.equal(toArchive("USA/01-GALE-SuperSmashBros.gci"), "USA/Card A/01-GALE-SuperSmashBros.gci");
+  assert.equal(toLocal("USA/Card A/01-GALE-SuperSmashBros.gci"), "USA/01-GALE-SuperSmashBros.gci");
+  assert.equal(toLocal("JAP/card a/x.gci"), "JAP/x.gci");
+  for (const name of [
+    "USA/Card A/x.gci",
+    "EUR/x.gci",
+    "DEV/sub/x.gci",
+  ]) {
+    assert.equal(toArchive(toLocal(toArchive(name))), toArchive(name), name);
+  }
+  // Anything outside a region folder, and slot B, which this setting is not
+  // for, keep their names.
+  for (const name of ["MemoryCardA.USA.raw", "USA/Card B/x.gci", "Other/x.gci"]) {
+    assert.equal(toArchive(name), name);
+    assert.equal(toLocal(name), name);
   }
 });
 
@@ -76,6 +108,18 @@ test("follows Dolphin's NAND root for a Wii game", () => {
     }),
   });
   assert.deepEqual(moved, { saveDir: `${nand}\\title` });
+});
+
+test("follows an escaped Cemu mlc_path to the folder Cemu reads", () => {
+  const folder = "C:\\cemu\\portable";
+  const moved = movedFolders({
+    emulatorId: "cemu",
+    platformSlug: "wiiu",
+    folder,
+    platform: "win32",
+    read: files({ [`${folder}\\settings.xml`]: "<mlc_path>D:/Saves &amp; More/mlc01</mlc_path>" }),
+  });
+  assert.deepEqual(moved, { saveDir: "D:\\Saves & More\\mlc01\\usr\\save" });
 });
 
 test("follows Cemu's mlc_path", () => {
@@ -173,5 +217,14 @@ test("the parsers read what the emulators write", () => {
   assert.equal(iniValue("[folders]\nmemorycards = \"C:/cards\"", "Folders", "MemoryCards"), "C:/cards");
   assert.equal(iniValue("[Folders]\n; MemoryCards = no", "Folders", "MemoryCards"), null);
   assert.equal(xmlElement("<mlc_path></mlc_path>", "mlc_path"), null);
+  // Cemu writes settings.xml with tinyxml2, which escapes what XML needs.
+  assert.equal(
+    xmlElement("<mlc_path>D:/Games &amp; Emus/mlc01 &#x26;&#38;</mlc_path>", "mlc_path"),
+    "D:/Games & Emus/mlc01 &&",
+  );
+  // A bare or unknown reference is no path anyone wrote.
+  for (const text of ["D:/A & B", "D:/A &amp B", "D:/&nbsp;", "D:/&#0;"]) {
+    assert.equal(xmlElement(`<mlc_path>${text}</mlc_path>`, "mlc_path"), null, text);
+  }
   assert.equal(vfsDirectory("/c", null, "/dev_hdd0/"), "/c/dev_hdd0/");
 });

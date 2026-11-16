@@ -757,6 +757,12 @@ shell follows them: PCSX2's `MemoryCards` and `SaveStates`, Dolphin's
 emulator would resolve somewhere the shell cannot know, leaves the default in
 place. The log line below says `moved by its settings` when one was followed.
 
+A configured Dolphin GCI folder is also laid out differently: Dolphin keeps
+`<folder>/<region>/` where its default is `GC/<region>/Card A/`. A set always
+travels under the default's names, and the card level is added or removed on
+this machine, so a save moves between a RetroBat Dolphin and a default one
+without landing a level too deep or too shallow.
+
 One consequence of following them: RetroBat keeps one Dolphin for GameCube and
 Wii, and points its settings at `saves\gamecube` or `saves\wii` according to
 the last game it started. The shell reads whichever is written at launch,

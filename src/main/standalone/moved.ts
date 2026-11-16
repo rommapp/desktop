@@ -22,6 +22,7 @@
 // without a filesystem.
 
 import { posix, win32 } from "node:path";
+import { type MemberLayout } from "./set.ts";
 
 /** Reads a config file's text, or null when it is not there. */
 export type ReadText = (path: string) => string | null;
@@ -31,6 +32,8 @@ export interface MovedFolders {
   saveDir?: string;
   /** Its savestates, absolute, when the config moves them. */
   stateDir?: string;
+  /** How the moved save folder is laid out, when not as the default is. */
+  layout?: MemberLayout;
 }
 
 function pathFor(platform: NodeJS.Platform) {
@@ -67,11 +70,48 @@ export function iniValue(
   return null;
 }
 
-/** The text of a simple XML element, or null when it is absent or empty. */
+const XML_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+};
+
+/**
+ * Text as an XML writer escaped it, decoded. Cemu writes settings.xml with
+ * tinyxml2, which turns a "&" in a path into "&amp;". Null for a reference
+ * this does not know, or a bare "&", which no writer produces and which
+ * would otherwise be read as a different path.
+ */
+function decodeXmlText(text: string): string | null {
+  let malformed = false;
+  const decoded = text.replace(/&([^;&\s]*);?/g, (match, body: string) => {
+    if (!match.endsWith(";")) {
+      malformed = true;
+      return match;
+    }
+    const named = XML_ENTITIES[body];
+    if (named !== undefined) return named;
+    const numeric = /^#(?:x([0-9a-f]+)|([0-9]+))$/i.exec(body);
+    const code = numeric
+      ? Number.parseInt(numeric[1] ?? numeric[2] ?? "", numeric[1] ? 16 : 10)
+      : Number.NaN;
+    if (!Number.isInteger(code) || code < 1 || code > 0x10ffff) {
+      malformed = true;
+      return match;
+    }
+    return String.fromCodePoint(code);
+  });
+  return malformed ? null : decoded;
+}
+
+/** The text of a simple XML element, decoded, or null when it is absent,
+ *  empty or cannot be decoded. */
 export function xmlElement(xml: string, name: string): string | null {
   const match = new RegExp(`<${name}>([^<]*)</${name}>`).exec(xml);
   const value = match?.[1]?.trim();
-  return value ? value : null;
+  return value ? decodeXmlText(value) : null;
 }
 
 /**
@@ -147,25 +187,60 @@ export function readVfsYml(
   );
 }
 
-const GC_REGIONS = new Set(["usa", "eur", "jap", "jpn", "kor"]);
+/** Dolphin's region folders (CommonPaths.h), which a configured GCI folder
+ *  may end in and which sit at the top of both layouts. */
+const GC_REGIONS = new Set(["usa", "jap", "jpn", "eur", "dev"]);
 
 /**
- * The GameCube save root a configured GCI folder belongs to.
+ * The folder a configured GCI folder keeps its regions in.
  *
- * Dolphin's own default is GC/<region>/Card A under its user folder, and the
- * save root data.ts uses is the GC folder above both. RetroBat writes the
- * override with the region on the end; a user may write it with or without
- * either part. Stepping up past whichever are there lands on the same root.
+ * Dolphin expects the setting as `<folder>/<region>`, strips the region and
+ * puts the game's own on instead (GetGCIFolderPath), so the folder above the
+ * region is the root. A setting without one is taken as that folder already.
  */
 function gcRoot(platform: NodeJS.Platform, gciFolder: string): string {
   const path = pathFor(platform);
-  let root = gciFolder.replace(/[/\\]+$/, "");
-  if (/^card [ab]$/i.test(path.basename(root))) root = path.dirname(root);
-  if (GC_REGIONS.has(path.basename(root).toLowerCase())) {
-    root = path.dirname(root);
-  }
-  return root;
+  const root = gciFolder.replace(/[/\\]+$/, "");
+  return GC_REGIONS.has(path.basename(root).toLowerCase())
+    ? path.dirname(root)
+    : root;
 }
+
+/**
+ * The difference a configured GCI folder makes to where saves sit.
+ *
+ * Dolphin's default slot A folder is `GC/<region>/Card A`; a configured one is
+ * `<folder>/<region>`, with no card level. A set uploaded from one would be
+ * restored a level too deep, or too shallow, on the other, where Dolphin does
+ * not read it. Members keep the default's names, so this adds and removes the
+ * card level at the edge.
+ */
+export const CONFIGURED_GCI_LAYOUT: MemberLayout = {
+  toArchive(local) {
+    const parts = local.split("/");
+    const [region, next] = parts;
+    if (
+      parts.length < 2 ||
+      !GC_REGIONS.has((region ?? "").toLowerCase()) ||
+      /^card [ab]$/i.test(next ?? "")
+    ) {
+      return local;
+    }
+    return [region, "Card A", ...parts.slice(1)].join("/");
+  },
+  toLocal(archive) {
+    const parts = archive.split("/");
+    const [region, card] = parts;
+    if (
+      parts.length < 3 ||
+      !GC_REGIONS.has((region ?? "").toLowerCase()) ||
+      !/^card a$/i.test(card ?? "")
+    ) {
+      return archive;
+    }
+    return [region, ...parts.slice(2)].join("/");
+  },
+};
 
 /**
  * The save and state folders this emulator's config moves, for a launch of
@@ -214,7 +289,7 @@ export function movedFolders(options: {
       }
       const gci = iniValue(ini, "Core", "GCIFolderAPath");
       return gci && isAbsoluteAnywhere(gci)
-        ? { saveDir: gcRoot(platform, gci) }
+        ? { saveDir: gcRoot(platform, gci), layout: CONFIGURED_GCI_LAYOUT }
         : {};
     }
     case "cemu": {

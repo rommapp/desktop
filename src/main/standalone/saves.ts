@@ -61,8 +61,10 @@ import {
   setFileName,
   staleAfterRestore,
   type LocalSet,
+  type MemberLayout,
   type SaveTarget,
   type SetMember,
+  translateTree,
 } from "./set.ts";
 import { listTree } from "./tree.ts";
 
@@ -76,10 +78,23 @@ import { listTree } from "./tree.ts";
 async function readSet(
   saveRoot: string,
   target: SaveTarget,
+  layout: MemberLayout | null,
 ): Promise<LocalSet | null> {
-  return assembleSet(await listTree(saveRoot), target, (path) =>
-    readFile(join(saveRoot, path)).catch(() => null),
+  const tree = await listTree(saveRoot);
+  return assembleSet(
+    layout ? translateTree(tree, layout) : tree,
+    target,
+    (path) => readFile(localPath(saveRoot, path, layout)).catch(() => null),
   );
+}
+
+/** Where a member lives under this save root. */
+function localPath(
+  saveRoot: string,
+  name: string,
+  layout: MemberLayout | null,
+): string {
+  return join(saveRoot, layout ? layout.toLocal(name) : name);
 }
 
 /** What the set is, as the negotiation and the push compare it. Null for an
@@ -116,6 +131,8 @@ export interface SetSyncOptions {
   emulatorId: string;
   /** The emulator's save folder for this platform, already joined. */
   saveRoot: string;
+  /** How that folder is laid out, when not as the emulator's default is. */
+  layout: MemberLayout | null;
   target: SaveTarget;
   /** The ROM's name without its extension, which the archive is named for. */
   base: string;
@@ -137,7 +154,7 @@ export function pullSet(options: SetSyncOptions): Promise<SetPullResult> {
 async function runPullSet(options: SetSyncOptions): Promise<SetPullResult> {
   const { config, session, romId, emulatorId, saveRoot, target, signal } =
     options;
-  const local = await readSet(saveRoot, target);
+  const local = await readSet(saveRoot, target, options.layout);
   const idle: SetPullResult = {
     allowance: "unreachable",
     before: stampOf(local),
@@ -266,6 +283,7 @@ async function runPullSet(options: SetSyncOptions): Promise<SetPullResult> {
       expectedHash: operation.server_content_hash,
       romId,
       saveRoot,
+      layout: options.layout,
       target,
       replacing: local.paths,
       signal,
@@ -284,7 +302,7 @@ async function runPullSet(options: SetSyncOptions): Promise<SetPullResult> {
       // The push has to compare against the set the emulator will boot. A
       // folder that will not read back leaves it nothing to compare, and
       // re-sending what just arrived is the one wrong answer here.
-      const settled = await readSet(saveRoot, target);
+      const settled = await readSet(saveRoot, target, options.layout);
       if (settled) {
         before = stampOf(settled);
       } else {
@@ -353,8 +371,9 @@ async function restoreSet(options: {
   expectedHash: string | null;
   romId: number;
   saveRoot: string;
+  layout: MemberLayout | null;
   target: SaveTarget;
-  /** The set on disk, which is what the archive replaces. */
+  /** The set on disk, by member name, which is what the archive replaces. */
   replacing: readonly string[];
   signal: AbortSignal;
 }): Promise<RestoreOutcome> {
@@ -429,7 +448,7 @@ async function restoreSet(options: {
     // half a restored set is worse than none.
     const writing = plan.write.map((member) => ({
       member,
-      destination: join(saveRoot, member.name),
+      destination: localPath(saveRoot, member.name, options.layout),
     }));
     for (const entry of writing) {
       const refusal = await unsafeDestination(saveRoot, entry.destination);
@@ -454,7 +473,7 @@ async function restoreSet(options: {
     // A removal that fails is not swallowed: the leftover would read as a
     // local change on the next negotiation and be offered back as progress.
     for (const path of staleAfterRestore(options.replacing, plan.write)) {
-      const stale = join(saveRoot, path);
+      const stale = localPath(saveRoot, path, options.layout);
       if (!isWithin(saveRoot, stale)) continue;
       await rm(stale, { force: true });
     }
@@ -501,7 +520,7 @@ async function runPushSet(
   const serverUrl = config.serverUrl;
   if (!serverUrl) return null;
 
-  const local = await readSet(saveRoot, target);
+  const local = await readSet(saveRoot, target, options.layout);
   if (!local) {
     console.info(
       `[standalone] rom ${romId}: ${saveRoot} could not be read whole after the run, so nothing is sent`,

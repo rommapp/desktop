@@ -25,6 +25,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, posix, win32 } from "node:path";
 import { STANDALONE_EMULATORS } from "../emulator/standalone.ts";
 import { movedFolders, type ReadText } from "./moved.ts";
+import { type MemberLayout } from "./set.ts";
 
 /** Where a data folder came from, for the log. */
 export type DataFolderSource =
@@ -49,6 +50,8 @@ export interface StandaloneData {
   stateRoot: string | null;
   /** Whether the emulator's settings moved either of them. */
   moved: boolean;
+  /** How a moved save folder is laid out, when not as the default is. */
+  layout: MemberLayout | null;
 }
 
 /** A save or state root as a path, whichever form it is in. */
@@ -321,6 +324,7 @@ export function standaloneData(options: {
     // An emulator that writes no states has none to move.
     stateRoot: data.stateRoot === null ? null : (moved.stateDir ?? data.stateRoot),
     moved: moved.saveDir !== undefined || moved.stateDir !== undefined,
+    layout: moved.layout ?? null,
   };
 }
 

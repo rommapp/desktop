@@ -37,7 +37,7 @@ import {
   type StandaloneStateOptions,
 } from "./state-sync.ts";
 import { knowsStates, type StateFile } from "./states.ts";
-import { saveTargetOf, type SaveTarget } from "./set.ts";
+import { saveTargetOf, type MemberLayout, type SaveTarget } from "./set.ts";
 import { listTree, type Tree } from "./tree.ts";
 
 export interface StandaloneLaunch {
@@ -200,6 +200,7 @@ export async function startStandaloneSaves(
           romId,
           emulatorId: options.emulatorId,
           saveRoot,
+          layout: data.layout,
           target,
           base,
           signal: options.signal,
@@ -221,6 +222,7 @@ export async function startStandaloneSaves(
         finish({
           ...options,
           saveRoot,
+          layout: data.layout,
           stateRoot,
           target,
           base,
@@ -245,6 +247,7 @@ export async function startStandaloneSaves(
 async function finish(
   context: StandaloneOptions & {
     saveRoot: string;
+    layout: MemberLayout | null;
     stateRoot: string | null;
     target: SaveTarget | null;
     base: string;
@@ -314,6 +317,7 @@ async function finish(
       romId,
       emulatorId: context.emulatorId,
       saveRoot,
+      layout: context.layout,
       target,
       base: context.base,
       deviceId: pulled.deviceId,
