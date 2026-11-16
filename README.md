@@ -848,8 +848,9 @@ and every RPCS3 on Windows). Anywhere else needs `standaloneDataPaths`:
 }
 ```
 
-A memory card or MLC folder moved in PCSX2's or Cemu's own settings is not
-followed yet.
+Inside that folder, a save or state folder the emulator's own settings have
+moved is followed, as described under
+[Standalone emulator saves](#standalone-emulator-saves).
 
 ### RetroArch Cloud Sync
 
