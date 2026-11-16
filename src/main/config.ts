@@ -37,6 +37,7 @@ function emptyConfig(): DesktopConfig {
     // On for the same reason again: a slot's own bytes go up before anything
     // replaces them, and a state this machine pushed is not fetched back.
     syncStates: true,
+    syncMemoryCards: true,
     syncScreenshots: true,
     acceptRemoteInstalls: true,
     retroarchAutosaveSeconds: DEFAULT_RETROARCH_AUTOSAVE_SECONDS,
