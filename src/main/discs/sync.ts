@@ -7,16 +7,21 @@
 // has, one request each, and an .m3u naming them is written for the emulators
 // that read one. The rest are handed the first disc, with the set beside it.
 //
-// Nothing here can fail a launch. A server that will not answer, a rom whose
-// files cannot be read, a set with fewer than two discs, and a transfer that
-// fails all return null, and the caller falls back to the single-payload
-// download it would have done. Only a cancellation stays fatal, that one being
-// the user's own.
+// The same goes for any multi-file rom: a single disc with its tracks or its
+// manual, and a cartridge with a readme beside it, are fetched as the file
+// that boots (and what it needs) rather than as an archive of everything.
+//
+// What happens when that fails depends on whether the archive could still
+// work. A server that will not describe the rom, or a rom with no single file
+// to boot, falls back to the ordinary download. A disc or a folder game does
+// not: its archive is known not to boot, so the launch stops with a reason
+// instead of handing the emulator a zip and leaving the player to read the
+// emulator's error. A cancellation stays fatal, that one being the user's own.
 
 import { type Session } from "electron";
 import { mkdir, mkdtemp, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { folderGame } from "./folder.ts";
+import { folderGame, isFlatLayout } from "./folder.ts";
 import { ALL_DISCS, type DesktopConfig } from "../../shared/types.ts";
 import { apiRequest } from "../saves/http.ts";
 import { evictToLimit } from "../cache/evict.ts";
@@ -27,7 +32,7 @@ import {
   ownPlaylist,
   readRomFiles,
   renderM3u,
-  selectDiscs,
+  planRomFiles,
   selectPickedDisc,
   selectStagedFiles,
   selectStagedForDisc,
@@ -75,8 +80,33 @@ async function getJson(
 }
 
 /**
- * Fetch a rom's discs and return what the emulator should be handed, or null
- * when this rom is not a disc set or the set could not be staged.
+ * What a launch should do with a rom's files.
+ *
+ * `not-mine` means the ordinary download is the right one, or the best left: a
+ * single-file rom, a server that would not describe the rom, or a rom with no
+ * rule for which of its files boots. `unstageable` means the rom is one the
+ * ordinary download cannot serve (a disc set or a folder game, which arrive as
+ * an archive no emulator boots), and staging it failed, so the launch should
+ * stop and say so rather than hand the emulator a zip.
+ */
+export type DiscSyncResult =
+  | { kind: "not-mine" }
+  | { kind: "staged"; path: string }
+  | { kind: "unstageable"; reason: string };
+
+const NOT_MINE: DiscSyncResult = { kind: "not-mine" };
+
+function staged(path: string): DiscSyncResult {
+  return { kind: "staged", path };
+}
+
+function unstageable(reason: string): DiscSyncResult {
+  return { kind: "unstageable", reason };
+}
+
+/**
+ * Fetch a rom's files individually where the ordinary download would hand the
+ * emulator an archive, and say what the emulator should be handed.
  */
 export async function syncDiscSet({
   config,
@@ -88,56 +118,80 @@ export async function syncDiscSet({
   disc,
   onProgress,
   metadata,
-}: SyncOptions): Promise<string | null> {
+}: SyncOptions): Promise<DiscSyncResult> {
   const { serverUrl, cachePath } = config;
-  if (!serverUrl || !cachePath) return null;
+  if (!serverUrl || !cachePath) return NOT_MINE;
 
   const body = metadata ?? await getJson(serverUrl, session, `/api/roms/${romId}`, signal);
-  if (body === undefined) return null;
+  if (body === undefined) return NOT_MINE;
 
+  const stage = (files: DiscFile[], relativePaths?: Map<number, string>) =>
+    cachePaths({
+      staged: files, serverUrl, session, romId, cachePath,
+      cacheLimitBytes: config.cacheLimitBytes, signal, onProgress, relativePaths,
+    });
+
+  // RPCS3 and Cemu cannot open an archive at all, so for these platforms no
+  // multi-file rom is one the ordinary download can serve.
   const folderPlatform = ["ps3", "ps3-games", "wiiu", "wii-u"].includes(platformSlug.toLowerCase());
   const folderFiles = folderPlatform ? readRomFiles(body, true) : [];
   const folder = folderGame(folderFiles, platformSlug);
-  // Invalid folder trees must not fall back to a flattened, incomplete ZIP.
-  if (folderPlatform && folderFiles.length > 1 && !folder) return null;
-  const files = folderPlatform ? folderFiles : readRomFiles(body);
   if (folder) {
-    const staged = folder.files.map(({ file }) => file);
-    const paths = folderLibraryPaths(staged, config.libraryPath) ??
-      (await cachePaths({
-        staged, serverUrl, session, romId, cachePath,
-        cacheLimitBytes: config.cacheLimitBytes, signal, onProgress,
-        relativePaths: new Map(folder.files.map(({ file, relativePath }) => [file.id, relativePath])),
-      }));
-    return paths?.get(folder.bootFileId) ?? null;
+    const paths = folderLibraryPaths(folder.files.map(({ file }) => file), config.libraryPath) ??
+      (await stage(
+        folder.files.map(({ file }) => file),
+        new Map(folder.files.map(({ file, relativePath }) => [file.id, relativePath])),
+      ));
+    if (!(paths instanceof Map)) return unstageable(paths.reason);
+    const boot = paths.get(folder.bootFileId);
+    return boot ? staged(boot) : unstageable("The game's boot file was not staged.");
   }
-  const discs = selectDiscs(files);
-  // A single-disc folder (cue/bin, gdi/tracks, or disc plus playlist)
-  // is multi-file content too. The ordinary endpoint returns a ZIP.
-  if (discs.length === 0) return null;
-  if (discs.length === 1) {
-    const discFile = discs[0]!;
-    const staged = selectStagedFiles(files);
-    if (staged.length < 2) return null;
-    const paths =
-      libraryPaths(staged, config.libraryPath) ??
-      (await cachePaths({
-        staged, serverUrl, session, romId, cachePath,
-        cacheLimitBytes: config.cacheLimitBytes, signal, onProgress,
-      }));
-    if (!paths) return null;
-    return paths.get(discFile.id) ?? null;
+  // A tree that is not a folder game, and not flat either, cannot be staged
+  // file by file without losing part of it, and its archive does not boot.
+  if (folderFiles.length > 1 && !isFlatLayout(folderFiles)) {
+    return unstageable(
+      "This rom's files are not a folder game the shell recognises, and the emulator cannot open them as an archive.",
+    );
   }
+
+  const files = readRomFiles(body);
+  const plan = planRomFiles(files);
+  if (plan.kind === "single") return NOT_MINE;
+  if (plan.kind === "ambiguous") {
+    if (folderPlatform) {
+      return unstageable(
+        "This rom's files are not a folder game the shell recognises, and the emulator cannot open them as an archive.",
+      );
+    }
+    console.warn(
+      `[discs] rom ${romId}: ${files.length} files and no single one to boot, using the server's archive`,
+    );
+    return NOT_MINE;
+  }
+  if (plan.kind === "boot") {
+    const boot = plan.file;
+    const paths = libraryPaths([boot], config.libraryPath) ?? (await stage([boot]));
+    const path = paths instanceof Map ? paths.get(boot.id) : undefined;
+    if (path) return staged(path);
+    if (folderPlatform) {
+      return unstageable(`Could not fetch ${boot.fileName} from the server.`);
+    }
+    // A cartridge in an archive is one RetroArch can often still open, so the
+    // archive is a fallback here where it is not for a disc.
+    console.warn(`[discs] rom ${romId}: could not fetch ${boot.fileName} alone, using the server's archive`);
+    return NOT_MINE;
+  }
+  const { discs } = plan;
 
   // One disc of the set, where the page's disc selector picked one. Booted on
   // its own with no playlist in front of it, which is what that choice means:
   // the rest of the set is not fetched, so a four-disc game the player is only
   // replaying disc one of costs one transfer.
   const picked =
-    disc === undefined || disc === ALL_DISCS
+    discs.length < 2 || disc === undefined || disc === ALL_DISCS
       ? null
       : selectPickedDisc(files, disc);
-  if (disc !== undefined && disc !== ALL_DISCS && !picked) {
+  if (discs.length > 1 && disc !== undefined && disc !== ALL_DISCS && !picked) {
     // A pick the rom does not answer to, which a page whose view of the rom
     // predates a rescan can send. The whole set still plays the game.
     console.warn(
@@ -145,44 +199,38 @@ export async function syncDiscSet({
     );
   }
 
-  const staged = picked
+  const toStage = picked
     ? selectStagedForDisc(files, picked)
     : selectStagedFiles(files);
 
   // The set comes from one place: all of it from the library, in one
   // directory, or all of it from the cache.
-  const paths =
-    libraryPaths(staged, config.libraryPath) ??
-    (await cachePaths({
-      staged,
-      serverUrl,
-      session,
-      romId,
-      cachePath,
-      cacheLimitBytes: config.cacheLimitBytes,
-      signal,
-      onProgress,
-    }));
-  if (!paths) return null;
+  const paths = libraryPaths(toStage, config.libraryPath) ?? (await stage(toStage));
+  if (!(paths instanceof Map)) return unstageable(paths.reason);
 
   // The pick is the whole of what was staged, so it is the whole of what boots.
-  if (picked) return paths.get(picked.id) ?? null;
+  if (picked) {
+    const path = paths.get(picked.id);
+    return path ? staged(path) : unstageable(`${picked.fileName} was not staged.`);
+  }
 
   const bootPaths: string[] = [];
   for (const entry of discs) {
     const path = paths.get(entry.id);
     // A disc the staged set does not hold is a set that cannot be launched.
-    if (!path) return null;
+    if (!path) return unstageable(`${entry.fileName} was not staged.`);
     bootPaths.push(path);
   }
 
-  if (!playlist) return bootPaths[0] as string;
+  // A single disc boots as itself, and so does a set whose emulator takes the
+  // first disc and finds the rest beside it.
+  if (bootPaths.length === 1 || !playlist) return staged(bootPaths[0]!);
 
   // A set that ships its own playlist has an order nobody should be guessing
   // at, and it was staged with the discs, so its relative entries resolve.
-  const own = ownPlaylist(staged);
+  const own = ownPlaylist(toStage);
   const ownPath = own && paths.get(own.id);
-  if (ownPath) return ownPath;
+  if (ownPath) return staged(ownPath);
 
   // Written to the cache even when every disc came from the library, because
   // the library is the user's and a playlist left in it is one more file for
@@ -191,7 +239,7 @@ export async function syncDiscSet({
   await mkdir(romDir, { recursive: true });
   const playlistPath = join(romDir, PLAYLIST_NAME);
   await writeFile(playlistPath, renderM3u(bootPaths), "utf8");
-  return playlistPath;
+  return staged(playlistPath);
 }
 
 /**
@@ -230,8 +278,8 @@ function folderLibraryPaths(staged: DiscFile[], libraryPath: string | null): Map
   return paths;
 }
 
-/** Fetch the whole set into this rom's cache directory, or null when any of it
- *  could not be fetched. */
+/** Fetch the whole set into this rom's cache directory, or the reason it could
+ *  not all be fetched. */
 async function cachePaths({
   staged,
   serverUrl,
@@ -252,7 +300,7 @@ async function cachePaths({
   signal: AbortSignal;
   onProgress: SyncOptions["onProgress"];
   relativePaths?: Map<number, string>;
-}): Promise<Map<number, string> | null> {
+}): Promise<Map<number, string> | { reason: string }> {
   const romDir = join(cachePath, String(romId));
   await mkdir(romDir, { recursive: true });
 
@@ -275,7 +323,9 @@ async function cachePaths({
           staged.length,
         ),
     });
-    if (!target) return null;
+    if (!target) {
+      return { reason: `Could not fetch ${file.fileName} from the server.` };
+    }
     found.set(file.id, target);
   }
 
@@ -357,8 +407,8 @@ async function stageFile({
     return target;
   } catch (error) {
     // A cancellation is the user's and stays fatal. A refused or interrupted
-    // transfer is not: it falls back to the ordinary download, which is also
-    // what a server too old to serve one file by id ends up doing.
+    // transfer is reported to the caller, which knows whether the server's
+    // archive is worth falling back to for this rom.
     if (signal.aborted) throw error;
     return null;
   } finally {

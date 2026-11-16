@@ -671,11 +671,11 @@ export class Launcher {
       // landing during it is only observed here.
       throwIfCancelled(controller.signal);
 
-      // A disc set is fetched as the individual discs the server holds,
+      // A multi-file rom is fetched as the individual files the server holds,
       // because the archive the content endpoint would otherwise hand over is
-      // not something any emulator can boot a multi-disc game out of. Returns
-      // null for everything else, including a server that would not answer, and
-      // the ordinary download below runs.
+      // not something an emulator can boot a disc or a folder game out of.
+      // "not-mine" covers everything else, including a server that would not
+      // answer, and the ordinary download below runs.
       // One gate and one meter per file, not per set: both read the byte count
       // of the transfer in front of them, and the next file starting over at
       // zero would otherwise measure as a transfer running backwards.
@@ -719,11 +719,16 @@ export class Launcher {
         },
       });
       throwIfCancelled(controller.signal);
+      // The ordinary download would only hand the emulator an archive it
+      // cannot boot, so the launch stops here with the reason.
+      if (discs.kind === "unstageable") {
+        throw new LaunchError("download-failed", discs.reason);
+      }
 
       // When the server runs on this machine the file is already on local disk,
       // so copying it into the cache would mean holding a second multi-gigabyte
       // copy and waiting for a transfer that never needed to happen.
-      if (installed && !discs && installed.files.length > 1) config = originalConfig;
+      if (installed && discs.kind !== "staged" && installed.files.length > 1) config = originalConfig;
       const inLibrary = resolveLibraryRom(
         config.libraryPath,
         request.serverPath,
@@ -733,8 +738,8 @@ export class Launcher {
       let romPath: string;
       if (installed?.files.length === 1) {
         romPath = join(installed.cachePath, String(request.romId), installed.files[0]!.path);
-      } else if (discs) {
-        romPath = discs;
+      } else if (discs.kind === "staged") {
+        romPath = discs.path;
       } else if (inLibrary) {
         romPath = inLibrary;
       } else {
