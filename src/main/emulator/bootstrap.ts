@@ -17,6 +17,11 @@ import { type DesktopConfig } from "../../shared/types.ts";
 import { updateConfig } from "../config.ts";
 import { downloadToFile } from "../download.ts";
 import { detectedStandaloneLabels } from "./standalone.ts";
+import {
+  CHOOSE_FOLDER_BUTTON,
+  canChooseEmulatorFolder,
+  chooseEmulatorFolder,
+} from "./folder-picker.ts";
 import { createProgressGate } from "../progress.ts";
 import {
   clearTaskbarProgress,
@@ -103,14 +108,27 @@ export async function offerRetroArchInstall(
   // each. Still worth offering RetroArch for the rest of the library, but not
   // worth claiming to have found nothing.
   const alreadyHere = config.useDetectedEmulators
-    ? detectedStandaloneLabels()
+    ? detectedStandaloneLabels(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        config.emulatorsBasePath,
+      )
     : [];
 
+  const chooser = canChooseEmulatorFolder();
+  const elsewhere = chooser
+    ? "Already have RetroBat, ES-DE or EmuDeck? Choose its folder instead."
+    : "Already have an emulator somewhere unusual? Point at it in the settings instead.";
   const { response, checkboxChecked } = await ask(parent, {
     type: "question",
-    buttons: available
-      ? ["Not now", "Download RetroArch"]
-      : ["Not now", "Open download page"],
+    buttons: [
+      "Not now",
+      available ? "Download RetroArch" : "Open download page",
+      ...(chooser ? [CHOOSE_FOLDER_BUTTON] : []),
+    ],
     defaultId: 1,
     cancelId: 0,
     title:
@@ -119,13 +137,18 @@ export async function offerRetroArchInstall(
         : "No emulator found",
     message: noEmulatorMessage(alreadyHere),
     detail: available
-      ? "It can download RetroArch's official installer (about 200 MB) and open it for you. The install is RetroArch's own, so it runs with the usual prompts and keeps updating itself afterwards.\n\nAlready have an emulator somewhere unusual? Point at it in the settings instead."
-      : "On Linux, RetroArch is best installed through your distribution's package manager, which will also keep it updated. The download page lists the options.\n\nAlready have an emulator somewhere unusual? Point at it in the settings instead.",
+      ? `It can download RetroArch's official installer (about 200 MB) and open it for you. The install is RetroArch's own, so it runs with the usual prompts and keeps updating itself afterwards.\n\n${elsewhere}`
+      : `On Linux, RetroArch is best installed through your distribution's package manager, which will also keep it updated. The download page lists the options.\n\n${elsewhere}`,
     checkboxLabel: "Don't ask again",
     checkboxChecked: false,
   });
 
   if (checkboxChecked) await updateConfig({ offerRetroArchInstall: false });
+  if (response === 2) {
+    // Any emulator will do here: this asks because nothing at all was found.
+    await chooseEmulatorFolder(parent, null);
+    return;
+  }
   if (response !== 1) return;
   if (!available) {
     openDownloadPage();

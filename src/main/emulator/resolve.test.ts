@@ -529,6 +529,30 @@ test("a RetroArch launch is pointed at the firmware only once there is some", ()
   ]);
 });
 
+test("once the firmware is in RetroArch's own directory, the mirror is not pinned", () => {
+  // The rest of that directory has to stay visible, so only the launch's own
+  // config is appended.
+  const install = fakeInstall(["mgba"]);
+  const biosRoot = mkdtempSync(join(tmpdir(), "romm-bios-"));
+  mkdirSync(join(biosRoot, ".retroarch"), { recursive: true });
+  writeFileSync(join(biosRoot, ".retroarch", "gba.cfg"), 'system_directory = "x"');
+  const launch = resolveLaunch({
+    config: testConfig({
+      retroarchPath: install.binary,
+      retroarchCoresPath: install.root,
+      biosPath: biosRoot,
+    }),
+    platformSlug: "gba",
+    cores: ["mgba"],
+    romPath: "/cache/1/game.gba",
+    savePaths: null,
+    launchConfig: "/save-data/.retroarch/autosave.cfg",
+    pinFirmware: false,
+  });
+  assert.equal(launch.builtIn, true);
+  assert.equal(launch.args[0], "--appendconfig=/save-data/.retroarch/autosave.cfg");
+});
+
 test("a RetroArch launch appends the launch config beside the firmware one", () => {
   // RetroArch takes a "|"-delimited list, so the save interval this launch asks
   // for does not displace the firmware directory it also needs.

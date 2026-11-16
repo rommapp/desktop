@@ -194,6 +194,11 @@ Config lives in `desktop-config.json` in Electron's `userData` directory:
 It is re-read whenever it changes on disk, so an edit takes effect on the next
 launch attempt without a restart.
 
+The file holds only what you set. A path left `null` is detected again on every
+read and never written back, so an emulator installed, moved or removed later
+is noticed rather than pinned to wherever it was first found. What detection
+settled on is in the log whenever the settings are opened.
+
 | Key                        | Default            | What it does                                                                     |
 | -------------------------- | ------------------ | -------------------------------------------------------------------------------- |
 | `retroarchPath`            | autodetected       | RetroArch executable, for an install somewhere unusual                           |
@@ -204,7 +209,7 @@ launch attempt without a restart.
 | `useDetectedEmulators`     | `true`             | Use [detected](#detected-standalone-emulators) PCSX2, Dolphin, RPCS3, Cemu       |
 | `offerStandaloneInstall`   | `true`             | Offer to fetch those when they are missing                                       |
 | `emulators`                | none               | [Your own platform-to-command rows](#your-own-emulator-rows)                     |
-| `emulatorsBasePath`        | none               | Prefix for relative `command` values                                             |
+| `emulatorsBasePath`        | none               | [A frontend's emulator folder](#frontend-emulator-folders), and the root for relative `command` values |
 | `standaloneDataPaths`      | none               | [A standalone emulator's user folder](#standalone-emulator-saves), by id         |
 | `libraryPath`              | none               | [Library root](#local-library), to launch in place instead of downloading        |
 | `cachePath`                | `rom-cache`        | [ROM cache](#rom-cache) directory                                                |
@@ -236,9 +241,10 @@ fullscreen at runtime on Windows and Linux, Control Command F on macOS.
 RetroArch and its cores directory are detected from the usual install locations:
 standard packages on Linux and macOS, and on Windows the portable
 `C:\RetroArch-Win64` layout, both Program Files directories, the per-user
-Programs directory, scoop, Steam, and RetroBat's bundled copy. Anywhere else --
-notably a drive other than C: -- needs `retroarchPath`, pointed at the
-executable; the cores directory is derived from its parent.
+Programs directory, scoop, Steam, and the copy a [frontend](#frontend-emulator-folders)
+bundles. Anywhere else -- notably a drive other than C: -- needs
+`retroarchPath`, pointed at the executable, or the frontend's folder chosen as
+`emulatorsBasePath`; the cores directory is derived from its parent.
 
 With nothing installed and nothing configured, the shell offers once on startup
 to fetch RetroArch's installer and open it, keeping it in `installers` beside
@@ -299,18 +305,43 @@ shell looks for them where they land:
 
 | Emulator | Platforms    | Looked for in                                                                    |
 | -------- | ------------ | -------------------------------------------------------------------------------- |
-| PCSX2    | `ps2`        | `/Applications`, Program Files, the per-user Programs directory, scoop, RetroBat |
+| PCSX2    | `ps2`        | `/Applications`, Program Files, the per-user Programs directory, scoop           |
 | Dolphin  | `ngc`, `wii` | the same, plus `/usr/bin` and `/usr/games` and its Flatpak on Linux              |
 | RPCS3    | `ps3`        | the same, plus `/usr/bin` and `/usr/local/bin` and its Flatpak on Linux          |
 | Cemu     | `wiiu`       | the same, plus `%LOCALAPPDATA%\Cemu`, which is where its own installer puts it   |
 
-Nothing is written to your config, so RetroBat in `C:\RetroBat` needs no
-configuring; a portable RetroBat on another drive needs `emulatorsBasePath` and
-an `emulators` row.
+On Linux, PCSX2, RPCS3 and Cemu are also found as AppImages in
+`~/Applications`, which is where EmuDeck and AppImageLauncher put them. All four
+are found inside a [frontend's folder](#frontend-emulator-folders) too. Nothing
+is written to your config.
 
 A row you wrote yourself always wins, but a detected emulator beats a `*`
 wildcard row. `useDetectedEmulators: false` switches the whole thing off, and
 takes the download offer with it.
+
+#### Frontend emulator folders
+
+RetroBat, ES-DE and EmuDeck on Windows keep RetroArch and the standalone
+emulators in one folder of their own, and the shell uses them as they are.
+
+| Frontend | Found by itself in                                   | Folder names                                                  |
+| -------- | ---------------------------------------------------- | ------------------------------------------------------------- |
+| RetroBat | `C:\RetroBat\emulators`                              | `retroarch`, `pcsx2`, `dolphin-emu`, `rpcs3`, `cemu`          |
+| EmuDeck  | `%USERPROFILE%\emudeck\EmulationStation-DE\Emulators` | ES-DE's                                                      |
+| ES-DE    | nowhere, since its portable folder can be anywhere   | `RetroArch-Win64`, `PCSX2-Qt`, `Dolphin-x64`, `RPCS3`, `cemu` |
+
+Anywhere else, set `emulatorsBasePath` to the frontend's folder: its root
+(`D:\RetroBat`), its emulators folder, EmuDeck's `emudeck` folder, or a single
+emulator's own folder all work. A folder chosen this way outranks every
+standard install location, so its RetroArch and emulators are the ones that
+launch; a frontend at its default root ranks below them. Relative `command`
+values in `emulators` rows also resolve against it.
+
+You rarely need to type it. When a launch cannot find an emulator, the dialog
+offering to fetch one (or RetroArch, when nothing is installed at all) also
+offers "Choose an emulator folder…". The folder is checked before it is saved,
+so one without the emulator the game needs is refused and says what it does
+hold; one with it is saved and the game starts.
 
 #### Offering to fetch one
 
@@ -716,6 +747,27 @@ folder, beside their settings, under names taken from the game's own id
 not given a directory per game the way RetroArch is: a launch pointed at a
 folder of its own would also boot an emulator with none of your settings.
 
+Each lets its settings move those folders, and a frontend usually does:
+RetroBat rewrites all four into its own `saves` tree before every game it
+starts, and EmuDeck moves RPCS3's `dev_hdd0`. The settings stay written, so
+the emulator keeps using those folders when the shell starts it too, and the
+shell follows them: PCSX2's `MemoryCards` and `SaveStates`, Dolphin's
+`GCIFolderAPath` and `NANDRootPath`, Cemu's `mlc_path` and RPCS3's
+`/dev_hdd0/` in `vfs.yml`. A value it cannot read, or a relative one the
+emulator would resolve somewhere the shell cannot know, leaves the default in
+place. The log line below says `moved by its settings` when one was followed.
+
+A configured Dolphin GCI folder is also laid out differently: Dolphin keeps
+`<folder>/<region>/` where its default is `GC/<region>/Card A/`. A set always
+travels under the default's names, and the card level is added or removed on
+this machine, so a save moves between a RetroBat Dolphin and a default one
+without landing a level too deep or too shallow.
+
+One consequence of following them: RetroBat keeps one Dolphin for GameCube and
+Wii, and points its settings at `saves\gamecube` or `saves\wii` according to
+the last game it started. The shell reads whichever is written at launch,
+which is the folder Dolphin will use.
+
 What a game's save is, in such a folder, is whatever sits under the name its
 own id gives it: a folder for an RPCS3 or Cemu save, a Wii title's storage
 tree, a `.gci` per game in a Dolphin card folder. So the unit that syncs is
@@ -907,10 +959,20 @@ deleted in RomM goes from here on the next launch -- but only in response to a
 list actually received, and nothing about it can fail a launch. Set
 `useRommFirmware` to `false` to switch it off, or `biosPath` to move it.
 
-A detected RetroArch is pointed at the mirror for you, with a generated config
-naming `system_directory` passed as `--appendconfig`, layered over your own
-settings rather than editing your `retroarch.cfg`. A hand-configured one needs
-`{biosconfig}`; any other emulator takes `{bios}`, that platform's directory:
+A detected RetroArch gets the mirror in its own system directory. The shell
+reads `system_directory` from the `retroarch.cfg` that RetroArch uses (the one
+beside a portable or frontend-bundled copy on Windows, otherwise your profile's)
+and copies in each mirrored file you do not already have there. Your own files
+stay visible to the launch, which matters most with a frontend, whose `bios`
+folder is where everything already lives, and a file you have is never
+replaced. When the config names no directory this can use (none, `default`, or
+one that does not exist), RetroArch is pointed at the mirror instead, with a
+generated config naming `system_directory` passed as `--appendconfig`, layered
+over your own settings rather than editing your `retroarch.cfg`. That launch
+sees only RomM's files for the platform.
+
+A hand-configured RetroArch needs `{biosconfig}`, which always points at the
+mirror; any other emulator takes `{bios}`, that platform's directory:
 
 ```json
 {

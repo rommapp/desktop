@@ -10,9 +10,11 @@ import {
   selectSet,
   setFileName,
   staleAfterRestore,
+  translateTree,
   type SaveTarget,
   type SetMember,
 } from "./set.ts";
+import { CONFIGURED_GCI_LAYOUT } from "./moved.ts";
 import { type Tree } from "./tree.ts";
 
 const RPCS3: SaveTarget = { target: "BLUS30001", layout: "folder-exact" };
@@ -389,4 +391,43 @@ test("a folder with none of this game's files is an empty set, not an absent one
   assert.ok(set);
   assert.deepEqual(set.members, []);
   assert.equal(set.stamp.size, 0);
+});
+
+// A GameCube save as a default Dolphin and a RetroBat one keep it: the second
+// has a configured GCI folder, which has no card level.
+const GALE: SaveTarget = { target: "01-GALE", layout: "file-prefix" };
+
+function listing(...paths: string[]): Tree {
+  return tree(Object.fromEntries(paths.map((path) => [path, {}])));
+}
+
+test("a set reads the same from either GCI layout, and restores into each", async () => {
+  const read = async () => Buffer.from("x");
+  const fromDefault = await assembleSet(listing("USA/Card A/01-GALE-SSBM.gci"), GALE, read);
+  const fromConfigured = await assembleSet(
+    translateTree(listing("USA/01-GALE-SSBM.gci"), CONFIGURED_GCI_LAYOUT),
+    GALE,
+    read,
+  );
+  // Same names and the same hash, so the two machines agree.
+  assert.deepEqual(fromConfigured?.paths, ["USA/Card A/01-GALE-SSBM.gci"]);
+  assert.equal(fromConfigured?.stamp.hash, fromDefault?.stamp.hash);
+
+  // Coming down onto the configured layout, the member lands where Dolphin
+  // reads it, not a level deeper.
+  const plan = planRestore([member("USA/Card A/01-GALE-SSBM.gci")], GALE);
+  assert.deepEqual(
+    plan.write.map((entry) => CONFIGURED_GCI_LAYOUT.toLocal(entry.name)),
+    ["USA/01-GALE-SSBM.gci"],
+  );
+});
+
+test("two files that would become one member make the listing unreadable", () => {
+  // A stray Card A folder under a configured root holds a file Dolphin does
+  // not read. Picking one of the two would be picking which to lose.
+  const translated = translateTree(
+    listing("USA/01-GALE-SSBM.gci", "USA/Card A/01-GALE-SSBM.gci"),
+    CONFIGURED_GCI_LAYOUT,
+  );
+  assert.equal(translated.complete, false);
 });

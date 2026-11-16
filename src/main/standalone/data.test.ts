@@ -43,6 +43,8 @@ test("Dolphin on Linux uses its XDG folder, and the platform picks the tree", ()
     exists: true,
     saveRoot: "Wii/title",
     stateRoot: "StateSaves",
+    moved: false,
+    layout: null,
   });
   assert.equal(
     standaloneData({ ...options, platformSlug: "ngc" })?.saveRoot,

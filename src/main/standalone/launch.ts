@@ -18,7 +18,6 @@
 
 import { type Session } from "electron";
 import { homedir } from "node:os";
-import { join } from "node:path";
 import {
   type DesktopConfig,
   type SaveSyncOutcome,
@@ -27,7 +26,7 @@ import { apiRequest } from "../saves/http.ts";
 import { saveBaseName } from "../saves/paths.ts";
 import { completeSync } from "../saves/sync.ts";
 import { claimFolder } from "./claims.ts";
-import { standaloneData } from "./data.ts";
+import { dataPath, standaloneData } from "./data.ts";
 import { parseRomIdentity, type RomIdentity } from "./identity.ts";
 import { describeAfter, describeBefore } from "./report.ts";
 import { pullSet, pushSet, type SetPullResult } from "./saves.ts";
@@ -38,7 +37,7 @@ import {
   type StandaloneStateOptions,
 } from "./state-sync.ts";
 import { knowsStates, type StateFile } from "./states.ts";
-import { saveTargetOf, type SaveTarget } from "./set.ts";
+import { saveTargetOf, type MemberLayout, type SaveTarget } from "./set.ts";
 import { listTree, type Tree } from "./tree.ts";
 
 export interface StandaloneLaunch {
@@ -154,8 +153,8 @@ export async function startStandaloneSaves(
       signal: options.signal,
     }).catch(() => null);
 
-    const saveRoot = join(data.folder, data.saveRoot);
-    const stateRoot = data.stateRoot ? join(data.folder, data.stateRoot) : null;
+    const saveRoot = dataPath(data, data.saveRoot);
+    const stateRoot = data.stateRoot ? dataPath(data, data.stateRoot) : null;
     const target = config.syncSaves ? saveTargetOf(identity) : null;
     const base = saveBaseName(options.fileName);
 
@@ -201,6 +200,7 @@ export async function startStandaloneSaves(
           romId,
           emulatorId: options.emulatorId,
           saveRoot,
+          layout: data.layout,
           target,
           base,
           signal: options.signal,
@@ -222,6 +222,7 @@ export async function startStandaloneSaves(
         finish({
           ...options,
           saveRoot,
+          layout: data.layout,
           stateRoot,
           target,
           base,
@@ -246,6 +247,7 @@ export async function startStandaloneSaves(
 async function finish(
   context: StandaloneOptions & {
     saveRoot: string;
+    layout: MemberLayout | null;
     stateRoot: string | null;
     target: SaveTarget | null;
     base: string;
@@ -315,6 +317,7 @@ async function finish(
       romId,
       emulatorId: context.emulatorId,
       saveRoot,
+      layout: context.layout,
       target,
       base: context.base,
       deviceId: pulled.deviceId,

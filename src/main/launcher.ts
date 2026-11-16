@@ -27,6 +27,7 @@ import { createLineBudget, createLineSink } from "./emulator/output.ts";
 import { offerStandaloneInstall } from "./emulator/standalone-install.ts";
 import { syncPlatformFirmware } from "./firmware/sync.ts";
 import { supplyStandaloneFirmware } from "./firmware/standalone.ts";
+import { supplyRetroArchFirmware } from "./firmware/retroarch.ts";
 import { RELEASE_SOURCES } from "./emulator/standalone-release.ts";
 import {
   emulatorForPlatform,
@@ -519,7 +520,22 @@ export class Launcher {
       throwIfCancelled(signal);
       // Drops the detection memo as it goes, so the launch that follows this
       // sees what was just installed rather than the answer from before it.
-      if (standaloneIsInstalled(emulatorId)) return;
+      // The config is read each time round because the folder it names can
+      // be the very thing that just changed.
+      const { emulatorsBasePath } = await loadConfig();
+      if (
+        standaloneIsInstalled(
+          emulatorId,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          emulatorsBasePath,
+        )
+      ) {
+        return;
+      }
       // Returning rather than throwing: this launch then fails the way it would
       // have without the wait, which is the honest answer once nobody is
       // installing anything.
@@ -599,6 +615,13 @@ export class Launcher {
       // This returns once the emulator is there, so the launch below simply
       // finds it.
       await this.offerMissingEmulator(config, request, parent, entry);
+      // The offer can end with a frontend folder chosen, which this launch has
+      // to resolve against. Only that field is taken: the rest of the config
+      // in hand has already been adjusted for an installed game.
+      config = {
+        ...config,
+        emulatorsBasePath: (await loadConfig()).emulatorsBasePath,
+      };
 
       // Applied before anything consults the list, so validation, installation
       // and the spawn all agree on which core this launch is about.
@@ -916,7 +939,7 @@ export class Launcher {
       // Resolved again, and this time strictly: the validation above may have
       // assumed a core that had yet to be downloaded, and nothing is spawned
       // from an assumption.
-      const launch = resolveLaunch({
+      const strict = {
         config,
         platformSlug: request.platformSlug,
         cores,
@@ -924,7 +947,30 @@ export class Launcher {
         savePaths,
         launchConfig,
         fullscreen: request.fullscreen,
-      });
+      };
+      let launch = resolveLaunch(strict);
+
+      // RetroArch's own system directory takes the mirror's files when its
+      // config names one, so the rest of that directory stays visible to the
+      // launch; pointing RetroArch at the mirror is the fallback. Nonfatal
+      // like the rest of the firmware, except a cancel.
+      if (launch.builtIn && config.retroarchPath) {
+        try {
+          const supplied = await supplyRetroArchFirmware({
+            retroarchPath: config.retroarchPath,
+            mirror: firmwareMirror,
+          });
+          if (supplied) {
+            launch = resolveLaunch({ ...strict, pinFirmware: false });
+            console.info(
+              `[firmware] rom ${request.romId}: ${supplied.copied} of ${firmwareMirror?.count ?? 0} files copied into RetroArch's system directory ${supplied.directory}`,
+            );
+          }
+        } catch (error) {
+          throwIfCancelled(controller.signal);
+          console.warn("[firmware] RetroArch firmware skipped:", error);
+        }
+      }
 
       // A standalone emulator reads firmware from its own folders, not from
       // RetroArch's system_directory. Existing files and emulator settings

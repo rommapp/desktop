@@ -37,6 +37,11 @@ import {
   mayAppearWhereDetectionLooks,
   unwrapRelease,
 } from "./standalone-release.ts";
+import {
+  CHOOSE_FOLDER_BUTTON,
+  canChooseEmulatorFolder,
+  chooseEmulatorFolder,
+} from "./folder-picker.ts";
 
 /** Dolphin's macOS image is the largest of these at a few hundred megabytes. */
 const MAX_EMULATOR_BYTES = 1024 * 1024 * 1024;
@@ -174,20 +179,33 @@ async function runOffer(
   const index = await fetchIndex(source.indexUrl, source.indexPolicy, signal);
   const artifact = index ? source.pick(unwrapRelease(source.id, index)) : null;
 
+  const chooser = canChooseEmulatorFolder();
+  const elsewhere = chooser
+    ? `Already have it in RetroBat, ES-DE or EmuDeck? Choose that folder instead.`
+    : `Already have it somewhere unusual? Point at it under "emulators" in the settings instead.`;
   const { response } = await ask(parent, {
     type: "question",
-    buttons: artifact
-      ? ["Not now", `Download ${source.label}`]
-      : ["Not now", "Open download page"],
+    buttons: [
+      "Not now",
+      artifact ? `Download ${source.label}` : "Open download page",
+      ...(chooser ? [CHOOSE_FOLDER_BUTTON] : []),
+    ],
     defaultId: 1,
     cancelId: 0,
     title: `${source.label} is not installed`,
     message: `This game needs ${source.label}, which RomM Desktop could not find on this machine.`,
     detail: artifact
-      ? `${source.label} ${artifact.version} can be downloaded from the project directly. ${whatHappensNext(artifact, source.label)}\n\nAlready have it somewhere unusual? Point at it under "emulators" in the settings instead.`
-      : `Nothing could be fetched automatically for this system. The download page has the options; install it from there and your game starts by itself.\n\nAlready have it somewhere unusual? Point at it under "emulators" in the settings instead.`,
+      ? `${source.label} ${artifact.version} can be downloaded from the project directly. ${whatHappensNext(artifact, source.label)}\n\n${elsewhere}`
+      : `Nothing could be fetched automatically for this system. The download page has the options; install it from there and your game starts by itself.\n\n${elsewhere}`,
   });
 
+  if (response === 2) {
+    // A saved folder already has the emulator in it, so the wait that follows
+    // ends on its first look and the launch goes ahead.
+    return (await chooseEmulatorFolder(parent, source.id))
+      ? { handedOff: true, mayAppear: true }
+      : DECLINED;
+  }
   if (response !== 1) return DECLINED;
   if (!artifact) {
     // Awaited, because the wait that follows is only justified by the page
