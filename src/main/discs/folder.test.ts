@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { folderGame } from "./folder.ts";
+import { folderGame, isFlatLayout } from "./folder.ts";
 import { readRomFiles, type DiscFile } from "./m3u.ts";
 
 const file = (id: number, path: string): DiscFile => ({
@@ -80,4 +80,22 @@ test("rejects case-insensitive duplicates after API parsing", () => {
   })) }, true);
   assert.equal(parsed.length, 2);
   assert.equal(folderGame(parsed, "wiiu"), null);
+});
+
+test("isFlatLayout accepts an image beside its manual", () => {
+  assert.equal(isFlatLayout([
+    file(1, "wiiu/My Game/game.wua"),
+    file(2, "wiiu/My Game/manual.pdf"),
+  ]), true);
+});
+
+test("isFlatLayout rejects nested trees and case-only name collisions", () => {
+  assert.equal(isFlatLayout([
+    file(1, "wiiu/My Game/code/game.rpx"),
+    file(2, "wiiu/My Game/content/data.bin"),
+  ]), false);
+  assert.equal(isFlatLayout([
+    file(1, "wiiu/My Game/game.rpx"),
+    file(2, "wiiu/My Game/GAME.RPX"),
+  ]), false);
 });
