@@ -337,6 +337,12 @@ standard install location, so its RetroArch and emulators are the ones that
 launch; a frontend at its default root ranks below them. Relative `command`
 values in `emulators` rows also resolve against it.
 
+You rarely need to type it. When a launch cannot find an emulator, the dialog
+offering to fetch one (or RetroArch, when nothing is installed at all) also
+offers "Choose an emulator folder…". The folder is checked before it is saved,
+so one without the emulator the game needs is refused and says what it does
+hold; one with it is saved and the game starts.
+
 #### Offering to fetch one
 
 When there is nothing to find, the platform is still reported as launchable and

@@ -614,6 +614,13 @@ export class Launcher {
       // This returns once the emulator is there, so the launch below simply
       // finds it.
       await this.offerMissingEmulator(config, request, parent, entry);
+      // The offer can end with a frontend folder chosen, which this launch has
+      // to resolve against. Only that field is taken: the rest of the config
+      // in hand has already been adjusted for an installed game.
+      config = {
+        ...config,
+        emulatorsBasePath: (await loadConfig()).emulatorsBasePath,
+      };
 
       // Applied before anything consults the list, so validation, installation
       // and the spawn all agree on which core this launch is about.
