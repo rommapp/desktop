@@ -41,8 +41,8 @@ export async function oneAtATime<T>(
   signal: AbortSignal,
   work: () => Promise<T>,
 ): Promise<T> {
-  const inFlight = running.get(key) as Promise<T> | undefined;
-  if (inFlight) {
+  let inFlight = running.get(key) as Promise<T> | undefined;
+  while (inFlight) {
     try {
       return await untilSettledOrCancelled(inFlight, signal);
     } catch (error) {
@@ -51,6 +51,11 @@ export async function oneAtATime<T>(
       // Otherwise the failure belonged to the run that was already going, and
       // there is nothing in it about whether this one would succeed.
     }
+    // Several callers can have been waiting on the run that failed. The first
+    // to resume starts the retry and the rest wait on it, rather than each
+    // starting one. The failed run itself is never waited on twice.
+    const next = running.get(key) as Promise<T> | undefined;
+    inFlight = next === inFlight ? undefined : next;
   }
 
   // Registered synchronously, before the first await inside work can yield, so

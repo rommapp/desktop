@@ -318,3 +318,8 @@ export function knownStandaloneId(id: string | undefined): string | null {
     ? id
     : null;
 }
+
+/** The Flatpak app id this shell knows an emulator by, or null. */
+export function flatpakAppId(emulatorId: string): string | null {
+  return DATA[emulatorId]?.flatpak.appId ?? null;
+}

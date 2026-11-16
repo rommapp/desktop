@@ -26,7 +26,7 @@ import { installCore } from "./emulator/install.ts";
 import { createLineBudget, createLineSink } from "./emulator/output.ts";
 import { offerStandaloneInstall } from "./emulator/standalone-install.ts";
 import { syncPlatformFirmware } from "./firmware/sync.ts";
-import { supplyPcsx2Firmware } from "./firmware/pcsx2.ts";
+import { supplyStandaloneFirmware } from "./firmware/standalone.ts";
 import { RELEASE_SOURCES } from "./emulator/standalone-release.ts";
 import {
   emulatorForPlatform,
@@ -921,20 +921,29 @@ export class Launcher {
         fullscreen: request.fullscreen,
       });
 
-      // PCSX2 reads BIOS images from its own data directory, not RetroArch's
-      // system_directory. Populate only missing files; existing BIOS and
-      // emulator settings always win. Failure is nonfatal, like the mirror.
-      if (launch.emulatorId === "pcsx2") {
-        try {
-          await supplyPcsx2Firmware({
-            config,
-            mirror: firmwareMirror,
-            command: launch.command,
-            args: launch.args,
-          });
-        } catch (error) {
-          console.warn("[firmware] PCSX2 BIOS provisioning skipped:", error);
-        }
+      // A standalone emulator reads firmware from its own folders, not from
+      // RetroArch's system_directory. Existing files and emulator settings
+      // always win. Failure is nonfatal, like the mirror; a cancel is not.
+      try {
+        await supplyStandaloneFirmware({
+          emulatorId: launch.emulatorId,
+          config,
+          mirror: firmwareMirror,
+          command: launch.command,
+          args: launch.args,
+          signal: controller.signal,
+          // RPCS3 unpacks a PUP, which has no progress to report.
+          onInstall: (fileName) =>
+            this.emit({
+              romId: request.romId,
+              status: "downloading",
+              stage: "firmware",
+              firmware: fileName,
+            }),
+        });
+      } catch (error) {
+        throwIfCancelled(controller.signal);
+        console.warn("[firmware] standalone firmware skipped:", error);
       }
 
       // What this launch runs. The push records its states against it and the

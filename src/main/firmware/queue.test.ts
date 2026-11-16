@@ -75,6 +75,27 @@ test("a waiting launch tries for itself when the running sync fails", async () =
   assert.equal(await b, "mirrored by the second");
 });
 
+test("launches waiting on a failed sync retry it once, not once each", async () => {
+  const first = pending<string>();
+  const retry = pending<string>();
+  let runs = 0;
+  const work = () => {
+    runs += 1;
+    return runs === 1 ? first.promise : retry.promise;
+  };
+  const shared = key();
+  const a = oneAtATime(shared, NEVER_CANCELLED, work);
+  const b = oneAtATime(shared, NEVER_CANCELLED, work);
+  const c = oneAtATime(shared, NEVER_CANCELLED, work);
+  first.fail(new Error("first launch cancelled"));
+  await assert.rejects(a);
+  // Let both waiters resume before the retry settles.
+  await new Promise((resolve) => setImmediate(resolve));
+  retry.settle("mirrored");
+  assert.deepEqual(await Promise.all([b, c]), ["mirrored", "mirrored"]);
+  assert.equal(runs, 2);
+});
+
 test("a later launch runs again once the first has finished", async () => {
   // The queue holds nothing between launches: firmware can change in RomM
   // between one game and the next.
