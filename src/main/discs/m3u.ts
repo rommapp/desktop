@@ -128,6 +128,69 @@ export function selectStagedFiles(files: DiscFile[]): DiscFile[] {
   );
 }
 
+/** Files that ride along with a rom without ever being what boots it: the
+ *  manual, the scans, a readme, checksums, a playlist with nothing to list. */
+const EXTRA_EXTENSIONS = [
+  ".pdf",
+  ".txt",
+  ".nfo",
+  ".diz",
+  ".md",
+  ".htm",
+  ".html",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".bmp",
+  ".webp",
+  ".sfv",
+  ".md5",
+  ".sha1",
+  ".m3u",
+];
+
+/**
+ * The one file that boots a multi-file rom holding no disc, or null when there
+ * is not exactly one candidate.
+ *
+ * A cartridge beside its manual is still one cartridge, and fetching it by id
+ * hands the emulator the file rather than an archive of both. Two candidates
+ * (a base game and its update, say) are a choice the shell has no rule for, so
+ * it does not guess.
+ */
+export function selectBootFile(files: DiscFile[]): DiscFile | null {
+  const candidates = files.filter(
+    (file) => !EXTRA_EXTENSIONS.includes(extensionOf(file.fileName)),
+  );
+  return candidates.length === 1 ? candidates[0]! : null;
+}
+
+/**
+ * How a rom's files should reach the emulator.
+ *
+ * - `single`: one file, which the ordinary download serves as itself.
+ * - `discs`: one disc or more, which only boot from individual files; the
+ *   server's archive of them is not a fallback.
+ * - `boot`: no disc, but one file that is plainly the game. Fetched alone,
+ *   with the archive as a fallback that RetroArch can often still open.
+ * - `ambiguous`: no disc and no single file to boot, so the shell has no rule
+ *   and leaves it to the archive.
+ */
+export type RomFilePlan =
+  | { kind: "single" }
+  | { kind: "discs"; discs: DiscFile[] }
+  | { kind: "boot"; file: DiscFile }
+  | { kind: "ambiguous" };
+
+export function planRomFiles(files: DiscFile[]): RomFilePlan {
+  if (files.length < 2) return { kind: "single" };
+  const discs = selectDiscs(files);
+  if (discs.length > 0) return { kind: "discs", discs };
+  const file = selectBootFile(files);
+  return file ? { kind: "boot", file } : { kind: "ambiguous" };
+}
+
 /**
  * The disc the play page picked, or null when its pick is not a disc of this
  * rom.

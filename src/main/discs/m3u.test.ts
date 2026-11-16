@@ -5,7 +5,9 @@ import {
   discNumberOf,
   readRomFiles,
   ownPlaylist,
+  planRomFiles,
   renderM3u,
+  selectBootFile,
   selectDiscs,
   selectPickedDisc,
   selectStagedFiles,
@@ -450,4 +452,65 @@ test("single GDI game stages all referenced track formats", () => {
   assert.deepEqual(selectStagedFiles(files).map((f) => f.fileName), [
     "game.gdi", "track01.bin", "track02.raw",
   ]);
+});
+
+test("selectBootFile picks the one file that is not an extra", () => {
+  const boot = selectBootFile([
+    file("Game.sfc", 1),
+    file("manual.pdf", 2),
+    file("readme.txt", 3),
+    file("cover.PNG", 4),
+  ]);
+  assert.equal(boot?.id, 1);
+});
+
+test("selectBootFile does not guess between two candidates", () => {
+  // A base game and its update: which one boots is not the shell's call.
+  assert.equal(
+    selectBootFile([file("Game.nsp", 1), file("Game [Update].nsp", 2)]),
+    null,
+  );
+  // Nothing but extras is nothing to boot either.
+  assert.equal(selectBootFile([file("a.pdf", 1), file("b.txt", 2)]), null);
+});
+
+test("planRomFiles leaves a single-file rom to the ordinary download", () => {
+  assert.deepEqual(planRomFiles([file("Game.chd")]), { kind: "single" });
+  assert.deepEqual(planRomFiles([]), { kind: "single" });
+});
+
+test("planRomFiles stages a single disc that has company", () => {
+  // The archive of a cue and its tracks, or a disc and its manual, is not
+  // something a disc core can boot, so even one disc is a disc plan.
+  const cueBin = planRomFiles([
+    file("Game.cue", 1),
+    file("Game (Track 1).bin", 2),
+    file("Game (Track 2).bin", 3),
+  ]);
+  assert.equal(cueBin.kind, "discs");
+  assert.deepEqual(
+    cueBin.kind === "discs" && cueBin.discs.map((d) => d.id),
+    [1],
+  );
+
+  const withManual = planRomFiles([file("Game.chd", 1), file("manual.pdf", 2)]);
+  assert.equal(withManual.kind, "discs");
+  assert.deepEqual(
+    withManual.kind === "discs" && withManual.discs.map((d) => d.id),
+    [1],
+  );
+});
+
+test("planRomFiles fetches the cartridge out of a rom with extras", () => {
+  assert.deepEqual(
+    planRomFiles([file("Game.gba", 1), file("readme.txt", 2)]),
+    { kind: "boot", file: file("Game.gba", 1) },
+  );
+});
+
+test("planRomFiles calls a rom with several candidates ambiguous", () => {
+  assert.deepEqual(
+    planRomFiles([file("Game.nsp", 1), file("Update.nsp", 2), file("a.txt", 3)]),
+    { kind: "ambiguous" },
+  );
 });
