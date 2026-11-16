@@ -300,7 +300,7 @@ shell looks for them where they land:
 | Emulator | Platforms    | Looked for in                                                                    |
 | -------- | ------------ | -------------------------------------------------------------------------------- |
 | PCSX2    | `ps2`        | `/Applications`, Program Files, the per-user Programs directory, scoop, RetroBat |
-| Dolphin  | `dsp_rom.bin` and `dsp_coef.bin` (at their exact sizes) into `GC/`; a retail IPL dump, recognised by its checksum, as `GC/<region>/IPL.bin` |
+| Dolphin  | `ngc`, `wii` | the same, plus `/usr/bin` and `/usr/games` and its Flatpak on Linux              |
 | RPCS3    | `ps3`        | the same, plus `/usr/bin` and `/usr/local/bin` and its Flatpak on Linux          |
 | Cemu     | `wiiu`       | the same, plus `%LOCALAPPDATA%\Cemu`, which is where its own installer puts it   |
 
@@ -948,7 +948,7 @@ emulator setting is changed:
 | Emulator | What is placed                                                                                                               |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | PCSX2    | Every mirrored file, into its BIOS folder (the `[Folders] Bios` path in `PCSX2.ini` when set)                                |
-| Dolphin  | `dsp_rom.bin`, `dsp_coef.bin` and the fonts into `GC/`; a retail IPL dump, recognised by its checksum, as `GC/<region>/IPL.bin` |
+| Dolphin  | `dsp_rom.bin` and `dsp_coef.bin` (at their exact sizes) into `GC/`; a retail IPL dump, recognised by its checksum, as `GC/<region>/IPL.bin` |
 | RPCS3    | A `.pup` (preferably `PS3UPDAT.PUP`), installed with `rpcs3 --headless --installfw` when its `dev_flash` has no firmware    |
 | Cemu     | Keys from `keys.txt` that its own `keys.txt` lacks, appended under a comment; `otp.bin` and `seeprom.bin` when missing        |
 
