@@ -953,10 +953,20 @@ deleted in RomM goes from here on the next launch -- but only in response to a
 list actually received, and nothing about it can fail a launch. Set
 `useRommFirmware` to `false` to switch it off, or `biosPath` to move it.
 
-A detected RetroArch is pointed at the mirror for you, with a generated config
-naming `system_directory` passed as `--appendconfig`, layered over your own
-settings rather than editing your `retroarch.cfg`. A hand-configured one needs
-`{biosconfig}`; any other emulator takes `{bios}`, that platform's directory:
+A detected RetroArch gets the mirror in its own system directory. The shell
+reads `system_directory` from the `retroarch.cfg` that RetroArch uses (the one
+beside a portable or frontend-bundled copy on Windows, otherwise your profile's)
+and copies in each mirrored file you do not already have there. Your own files
+stay visible to the launch, which matters most with a frontend, whose `bios`
+folder is where everything already lives, and a file you have is never
+replaced. When the config names no directory this can use (none, `default`, or
+one that does not exist), RetroArch is pointed at the mirror instead, with a
+generated config naming `system_directory` passed as `--appendconfig`, layered
+over your own settings rather than editing your `retroarch.cfg`. That launch
+sees only RomM's files for the platform.
+
+A hand-configured RetroArch needs `{biosconfig}`, which always points at the
+mirror; any other emulator takes `{bios}`, that platform's directory:
 
 ```json
 {

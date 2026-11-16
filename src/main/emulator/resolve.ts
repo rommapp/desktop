@@ -54,6 +54,9 @@ export interface ResolvedLaunch {
   /** The standalone emulator this launch runs, when it is one the shell knows
    *  where to find the saves of. */
   emulatorId: string | null;
+  /** Whether this is the shell's own RetroArch launch, the one whose
+   *  arguments it writes, rather than a row from the user's table. */
+  builtIn: boolean;
 }
 
 /**
@@ -514,6 +517,7 @@ export function resolveLaunch({
   launchConfig = null,
   fullscreen = false,
   assumeMissingCoreInstalled = false,
+  pinFirmware = true,
 }: {
   config: DesktopConfig;
   platformSlug: string;
@@ -531,6 +535,10 @@ export function resolveLaunch({
    *  launch can be validated in full before the transfer. Validation only: the
    *  result names a core that is not on disk yet and must not be spawned. */
   assumeMissingCoreInstalled?: boolean;
+  /** Point the built-in RetroArch launch at the firmware mirror. False once
+   *  the mirror has been copied into RetroArch's own system directory, so
+   *  the rest of that directory stays visible. */
+  pinFirmware?: boolean;
 }): ResolvedLaunch {
   // Derived rather than passed in, so the launch and the support probe agree
   // without either of them having synced anything: the directory is a pure
@@ -582,6 +590,7 @@ export function resolveLaunch({
       label: mapping.label ?? mapping.command,
       core: core?.name ?? null,
       emulatorId: knownStandaloneId(mapping.emulatorId),
+      builtIn: false,
     };
   }
 
@@ -638,7 +647,9 @@ export function resolveLaunch({
     // The generated configs first: --appendconfig is read as RetroArch starts
     // up, and the core and content that follow are what the run is about.
     args: [
-      ...appendConfigArgs(biosPaths, launchConfig),
+      // Without the mirror's system_directory once the firmware has been
+      // copied into RetroArch's own; see firmware/retroarch.ts.
+      ...appendConfigArgs(pinFirmware ? biosPaths : null, launchConfig),
       "-L",
       core.path,
       ...saveArgs,
@@ -649,5 +660,6 @@ export function resolveLaunch({
     label: `RetroArch (${core.name})`,
     core: core.name,
     emulatorId: null,
+    builtIn: true,
   };
 }

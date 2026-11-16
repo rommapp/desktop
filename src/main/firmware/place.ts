@@ -1,9 +1,9 @@
-// Copying mirrored firmware into a standalone emulator's own folders.
+// Copying mirrored firmware into an emulator's own folders.
 //
-// RetroArch can be pointed at the mirror per launch. The standalone emulators
-// cannot, short of moving their whole user folder, so the files are copied to
-// where each one already looks. The rule every caller shares: a file the user
-// already has wins, and nothing here edits a setting.
+// The standalone emulators cannot be pointed at the mirror short of moving
+// their whole user folder, and RetroArch pointed at it sees nothing else, so
+// the files are copied to where each one already looks. The rule every caller
+// shares: a file the user already has wins, and nothing here edits a setting.
 
 import { constants } from "node:fs";
 import { copyFile, mkdir, readdir, stat } from "node:fs/promises";
