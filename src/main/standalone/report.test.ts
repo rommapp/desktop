@@ -13,6 +13,7 @@ const DATA: StandaloneData = {
   exists: true,
   saveRoot: "dev_hdd0/home/00000001/savedata",
   stateRoot: "savestates",
+  moved: false,
 };
 
 function tree(paths: Record<string, number>, complete = true): Tree {

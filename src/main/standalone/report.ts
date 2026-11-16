@@ -5,8 +5,7 @@
 // and save target logic is checked against on real installs, so what they
 // claim is worth pinning down.
 
-import { join } from "node:path";
-import { type StandaloneData } from "./data.ts";
+import { dataPath, type StandaloneData } from "./data.ts";
 import { selectSaveFiles, type RomIdentity } from "./identity.ts";
 import { changedFiles, type Tree } from "./tree.ts";
 
@@ -46,7 +45,7 @@ export function describeBefore(
   saves: Tree,
   identity: RomIdentity | null,
 ): string {
-  const where = `${data.emulatorId} keeps saves in ${join(data.folder, data.saveRoot)} (${data.source}${data.exists ? "" : ", not there yet"})`;
+  const where = `${data.emulatorId} keeps saves in ${dataPath(data, data.saveRoot)} (${data.source}${data.moved ? ", moved by its settings" : ""}${data.exists ? "" : ", not there yet"})`;
   const selected = selectedCount([...saves.files.keys()], identity);
   const count =
     selected === null

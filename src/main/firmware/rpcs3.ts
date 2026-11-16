@@ -16,9 +16,10 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, posix, win32 } from "node:path";
+import { join, posix } from "node:path";
 import { type DesktopConfig } from "../../shared/types.ts";
 import { flatpakAppId, standaloneData } from "../standalone/data.ts";
+import { vfsDirectory } from "../standalone/moved.ts";
 import { type MirrorSummary, mirroredFiles } from "./place.ts";
 import { oneAtATime } from "./queue.ts";
 
@@ -29,39 +30,7 @@ const FIRMWARE_MARKER = ["sys", "external", "liblv2.sprx"];
  *  build that ignores the flags does not hold the launch for good. */
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 
-/**
- * A scalar as YAML writes it: quoted, or plain with an optional trailing
- * comment. Undefined for a form this does not decode, so the caller can
- * decline rather than guess.
- */
-export function yamlScalar(raw: string): string | undefined {
-  const text = raw.trim();
-  const quote = text[0];
-  if (quote === '"' || quote === "'") {
-    const end = text.indexOf(quote, 1);
-    if (end < 0) return undefined;
-    const value = text.slice(1, end);
-    // Escapes and doubled quotes are not decoded.
-    if (quote === '"' && value.includes("\\")) return undefined;
-    if (text[end + 1] === quote) return undefined;
-    const rest = text.slice(end + 1).trim();
-    return rest === "" || rest.startsWith("#") ? value : undefined;
-  }
-  // A plain scalar's comment starts at a "#" after whitespace.
-  return text.replace(/(^|\s)#.*$/, "").trim();
-}
-
-/** One value out of vfs.yml's flat `key: value` lines: null when the key is
- *  absent, undefined when its value cannot be decoded. */
-function vfsValue(yml: string, key: string): string | null | undefined {
-  for (const line of yml.split(/\r?\n/)) {
-    const separator = line.indexOf(": ");
-    if (separator < 0) continue;
-    if (yamlScalar(line.slice(0, separator)) !== key) continue;
-    return yamlScalar(line.slice(separator + 2));
-  }
-  return null;
-}
+export { yamlScalar } from "../standalone/moved.ts";
 
 /**
  * Where RPCS3's dev_flash is, given its folder and its vfs.yml, or null when
@@ -71,18 +40,7 @@ export function devFlashDirectory(
   folder: string,
   vfsYml: string | null,
 ): string | null {
-  const emulatorDirValue = vfsYml ? vfsValue(vfsYml, "$(EmulatorDir)") : null;
-  const devFlashValue = vfsYml ? vfsValue(vfsYml, "/dev_flash/") : null;
-  if (emulatorDirValue === undefined || devFlashValue === undefined) {
-    return null;
-  }
-  const emulatorDir = emulatorDirValue || folder;
-  const withSlash = /[/\\]$/.test(emulatorDir)
-    ? emulatorDir
-    : `${emulatorDir}/`;
-  const configured = devFlashValue || "$(EmulatorDir)dev_flash/";
-  const path = configured.split("$(EmulatorDir)").join(withSlash);
-  return isAbsolute(path) || win32.isAbsolute(path) ? path : null;
+  return vfsDirectory(folder, vfsYml, "/dev_flash/");
 }
 
 /** The PUP to install: PS3UPDAT.PUP when it is there, any .pup otherwise. */

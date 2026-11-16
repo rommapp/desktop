@@ -18,7 +18,6 @@
 
 import { type Session } from "electron";
 import { homedir } from "node:os";
-import { join } from "node:path";
 import {
   type DesktopConfig,
   type SaveSyncOutcome,
@@ -27,7 +26,7 @@ import { apiRequest } from "../saves/http.ts";
 import { saveBaseName } from "../saves/paths.ts";
 import { completeSync } from "../saves/sync.ts";
 import { claimFolder } from "./claims.ts";
-import { standaloneData } from "./data.ts";
+import { dataPath, standaloneData } from "./data.ts";
 import { parseRomIdentity, type RomIdentity } from "./identity.ts";
 import { describeAfter, describeBefore } from "./report.ts";
 import { pullSet, pushSet, type SetPullResult } from "./saves.ts";
@@ -154,8 +153,8 @@ export async function startStandaloneSaves(
       signal: options.signal,
     }).catch(() => null);
 
-    const saveRoot = join(data.folder, data.saveRoot);
-    const stateRoot = data.stateRoot ? join(data.folder, data.stateRoot) : null;
+    const saveRoot = dataPath(data, data.saveRoot);
+    const stateRoot = data.stateRoot ? dataPath(data, data.stateRoot) : null;
     const target = config.syncSaves ? saveTargetOf(identity) : null;
     const base = saveBaseName(options.fileName);
 

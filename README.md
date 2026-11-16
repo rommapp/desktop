@@ -747,6 +747,21 @@ folder, beside their settings, under names taken from the game's own id
 not given a directory per game the way RetroArch is: a launch pointed at a
 folder of its own would also boot an emulator with none of your settings.
 
+Each lets its settings move those folders, and a frontend usually does:
+RetroBat rewrites all four into its own `saves` tree before every game it
+starts, and EmuDeck moves RPCS3's `dev_hdd0`. The settings stay written, so
+the emulator keeps using those folders when the shell starts it too, and the
+shell follows them: PCSX2's `MemoryCards` and `SaveStates`, Dolphin's
+`GCIFolderAPath` and `NANDRootPath`, Cemu's `mlc_path` and RPCS3's
+`/dev_hdd0/` in `vfs.yml`. A value it cannot read, or a relative one the
+emulator would resolve somewhere the shell cannot know, leaves the default in
+place. The log line below says `moved by its settings` when one was followed.
+
+One consequence of following them: RetroBat keeps one Dolphin for GameCube and
+Wii, and points its settings at `saves\gamecube` or `saves\wii` according to
+the last game it started. The shell reads whichever is written at launch,
+which is the folder Dolphin will use.
+
 What a game's save is, in such a folder, is whatever sits under the name its
 own id gives it: a folder for an RPCS3 or Cemu save, a Wii title's storage
 tree, a `.gci` per game in a Dolphin card folder. So the unit that syncs is

@@ -15,15 +15,16 @@
 // copy on Linux, which is a different folder from the native package's.
 //
 // Inside it, each emulator keeps saves and states in folders of fixed names.
-// Those are the defaults; PCSX2 and Cemu let the memory card or MLC folder be
-// moved in their settings, and a moved one is not followed here yet.
+// Those are the defaults. Each also lets its settings move them, which is what
+// a frontend like RetroBat does, and a moved one is followed: see moved.ts.
 //
 // Platform, home and environment are parameters, like the detection beside it,
 // so every platform's answer can be exercised from any machine.
 
-import { existsSync } from "node:fs";
-import { posix, win32 } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, join, posix, win32 } from "node:path";
 import { STANDALONE_EMULATORS } from "../emulator/standalone.ts";
+import { movedFolders, type ReadText } from "./moved.ts";
 
 /** Where a data folder came from, for the log. */
 export type DataFolderSource =
@@ -40,11 +41,28 @@ export interface StandaloneData {
   /** Whether the folder is there. One that is not means the emulator has
    *  never run on this machine, which is not the same as not knowing. */
   exists: boolean;
-  /** Where this platform's saves sit inside the folder, "/"-separated. */
+  /** Where this platform's saves sit: inside the folder and "/"-separated,
+   *  or absolute when the emulator's own settings moved them. */
   saveRoot: string;
-  /** Where its states sit, or null for an emulator that writes none. */
+  /** Where its states sit, in the same form, or null for an emulator that
+   *  writes none. */
   stateRoot: string | null;
+  /** Whether the emulator's settings moved either of them. */
+  moved: boolean;
 }
+
+/** A save or state root as a path, whichever form it is in. */
+export function dataPath(data: StandaloneData, root: string): string {
+  return isAbsolute(root) ? root : join(data.folder, root);
+}
+
+const readTextSafe: ReadText = (path) => {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+};
 
 interface PathContext {
   platform: NodeJS.Platform;
@@ -253,6 +271,8 @@ export function standaloneData(options: {
   home: string;
   env?: NodeJS.ProcessEnv;
   exists?: (path: string) => boolean;
+  /** Reads the emulator's own settings, for a folder they move. */
+  read?: ReadText;
 }): StandaloneData | null {
   const data = DATA[options.emulatorId];
   if (!data) return null;
@@ -286,12 +306,21 @@ export function standaloneData(options: {
     };
   })();
 
+  const moved = movedFolders({
+    emulatorId: options.emulatorId,
+    platformSlug: options.platformSlug,
+    folder: located.folder,
+    platform: context.platform,
+    read: options.read ?? readTextSafe,
+  });
   return {
     emulatorId: options.emulatorId,
     ...located,
     exists: context.exists(located.folder),
-    saveRoot: data.saveRoot(options.platformSlug.toLowerCase()),
-    stateRoot: data.stateRoot,
+    saveRoot: moved.saveDir ?? data.saveRoot(options.platformSlug.toLowerCase()),
+    // An emulator that writes no states has none to move.
+    stateRoot: data.stateRoot === null ? null : (moved.stateDir ?? data.stateRoot),
+    moved: moved.saveDir !== undefined || moved.stateDir !== undefined,
   };
 }
 
