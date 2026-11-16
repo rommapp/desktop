@@ -25,9 +25,18 @@ import {
 import { apiRequest } from "../saves/http.ts";
 import { saveBaseName } from "../saves/paths.ts";
 import { completeSync } from "../saves/sync.ts";
+import { localCardFor, readLocalCard, type LocalCard } from "../cards/local.ts";
+import { type SplitCard } from "../cards/merge.ts";
+import { syncMemoryCard } from "../cards/sync.ts";
+import {
+  memoryCardHint,
+  pcsx2CardKind,
+  pcsx2RestoreRefusal,
+} from "./cards.ts";
 import { claimFolder } from "./claims.ts";
-import { dataPath, standaloneData } from "./data.ts";
+import { dataPath, standaloneData, type StandaloneData } from "./data.ts";
 import { parseRomIdentity, type RomIdentity } from "./identity.ts";
+import { readTextSafe } from "./moved.ts";
 import { describeAfter, describeBefore } from "./report.ts";
 import { pullSet, pushSet, type SetPullResult } from "./saves.ts";
 import {
@@ -193,6 +202,23 @@ export async function startStandaloneSaves(
 
     // Before the listing below, so a file that came down reads as one that was
     // already there rather than as one the run wrote.
+    // The memory card first, so the per-game set below reads the card as it
+    // will boot: a save the card library brought down is then already here.
+    const card =
+      config.syncSaves && config.syncMemoryCards !== false
+        ? await memoryCardFor(options.emulatorId, options.platformSlug, data, saveRoot)
+        : null;
+    if (card) {
+      await syncMemoryCard({
+        config,
+        session: options.session,
+        romId,
+        card,
+        writeLocal: true,
+        signal: options.signal,
+      });
+    }
+
     const pulled = target
       ? await pullSet({
           config,
@@ -201,6 +227,13 @@ export async function startStandaloneSaves(
           emulatorId: options.emulatorId,
           saveRoot,
           layout: data.layout,
+          // A PS2 save only lands in a card PCSX2 will read as one.
+          ...(options.emulatorId === "pcsx2"
+            ? {
+                canRestore: (members: readonly string[]) =>
+                  pcsx2RestoreRefusal(saveRoot, members),
+              }
+            : {}),
           target,
           base,
           signal: options.signal,
@@ -216,6 +249,15 @@ export async function startStandaloneSaves(
       ? await readStateFolder(stateSync.stateRoot)
       : null;
     console.info(describeBefore(romId, data, savesBefore, identity));
+    const hint = await memoryCardHint({
+      emulatorId: options.emulatorId,
+      platformSlug: options.platformSlug,
+      folder: data.folder,
+      saveRoot,
+      platform: process.platform,
+      read: readTextSafe,
+    }).catch(() => null);
+    if (hint) console.info(`[standalone] rom ${romId}: ${hint}`);
 
     return {
       finish: () =>
@@ -232,6 +274,7 @@ export async function startStandaloneSaves(
           statesBefore,
           stateSync,
           statesOnDisk,
+          card,
           claim,
         }),
       release: () => claim.release(),
@@ -260,6 +303,8 @@ async function finish(
     stateSync: StandaloneStateOptions | null;
     /** The state folder as it stood before the emulator started. */
     statesOnDisk: StateFile[] | null;
+    /** The memory card this launch keeps in step with the card library. */
+    card: LocalCard | null;
     claim: { readonly contested: boolean; release(): void };
   },
 ): Promise<void> {
@@ -268,8 +313,15 @@ async function finish(
   // Read and released before anything is sent: an upload has no deadline, and
   // a server that never answers must not keep the folder claimed.
   let savesAfter, statesAfter, statesNow, contested;
+  let cardAfter: SplitCard | null | undefined;
   try {
     savesAfter = await listTree(saveRoot);
+    // The card as the run left it, read now for the same reason as the states:
+    // what it is sent as has to be this run's card, not another launch's.
+    if (context.card) {
+      const card = await refreshedCard(context.card);
+      cardAfter = card.exists ? await readLocalCard(card) : null;
+    }
     statesAfter = stateRoot ? await listTree(stateRoot) : null;
     // Read here rather than at the push, which runs behind the save requests
     // below and so after the claim is given up: by then another launch may
@@ -344,6 +396,22 @@ async function finish(
     }
   }
 
+  // The card after the per-game set, which has had its say about this game's
+  // save by now. Not written here: the folder has been released, so what the
+  // server won comes down at the next launch. Skipped when another launch
+  // shared the folder, since the card then holds its writes as well.
+  if (context.card && cardAfter !== undefined && !contested) {
+    await syncMemoryCard({
+      config: context.config,
+      session: context.session,
+      romId,
+      card: context.card,
+      writeLocal: false,
+      local: cardAfter,
+      signal: context.signal,
+    });
+  }
+
   // After the saves, and reached whether or not there were any: a state is a
   // convenience and a save is the game, so a pile of states does not sit in
   // front of one, but a launch that syncs no saves still mirrors its states.
@@ -360,4 +428,38 @@ async function finish(
       );
     }
   }
+}
+
+/**
+ * The memory card a PS2 or GameCube launch keeps in step with the card
+ * library, or null when there is none to. A card that cannot be merged says
+ * why in the log.
+ */
+async function memoryCardFor(
+  emulatorId: string,
+  platformSlug: string,
+  data: StandaloneData,
+  saveRoot: string,
+): Promise<LocalCard | null> {
+  const card = await localCardFor({
+    emulatorId,
+    platformSlug,
+    folder: data.folder,
+    saveRoot,
+    layout: data.layout,
+    platform: process.platform,
+    read: readTextSafe,
+  }).catch(() => null);
+  if (card && "skip" in card) {
+    console.info(`[cards] ${emulatorId} card not synced: ${card.skip}`);
+    return null;
+  }
+  return card;
+}
+
+/** The card as it stands now: a card this launch created from the server's
+ *  exists by the time the run is over. */
+async function refreshedCard(card: LocalCard): Promise<LocalCard> {
+  if (card.exists || card.emulator !== "pcsx2") return card;
+  return { ...card, exists: (await pcsx2CardKind(card.root)) === "folder" };
 }

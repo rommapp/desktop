@@ -317,6 +317,11 @@ export interface DesktopConfig {
    *  build that wrote it, so only a state that core wrote is ever offered to
    *  it. */
   syncStates: boolean;
+  /** Keep the PCSX2 or Dolphin memory card a PS2 or GameCube launch uses in
+   *  step with RomM's memory card library, the cards its streaming plays on,
+   *  merged save by save. Needs `syncSaves` too. Optional, and on when
+   *  absent. */
+  syncMemoryCards?: boolean;
   /** Upload captures from built-in RetroArch launches after exit. Local images
    *  remain under saveDataPath even when a server cannot receive them. */
   syncScreenshots: boolean;

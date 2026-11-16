@@ -35,6 +35,7 @@ export function testConfig(patch: Partial<DesktopConfig> = {}): DesktopConfig {
     // the state mirror uploads to it, so a test that wants either says so.
     syncSaves: false,
     syncStates: false,
+    syncMemoryCards: false,
     syncScreenshots: false,
     acceptRemoteInstalls: false,
     retroarchAutosaveSeconds: DEFAULT_RETROARCH_AUTOSAVE_SECONDS,

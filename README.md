@@ -217,6 +217,7 @@ settled on is in the log whenever the settings are opened.
 | `saveDataPath`             | `save-data`        | [Save and state](#save-data) directories                                         |
 | `syncSaves`                | `true`             | [Move saves to and from RomM](#saves-synced-with-romm) around a launch           |
 | `syncStates`               | `true`             | [Move savestates to and from RomM](#savestates-synced-with-romm) around a launch |
+| `syncMemoryCards`          | `true`             | [Keep PS2 and GameCube cards in step with RomM's card library](#romms-memory-card-library) |
 | `syncScreenshots`          | `true`             | [Upload RetroArch captures](#screenshots-sent-to-romm) after exit                  |
 | `acceptRemoteInstalls`     | `true`             | [Claim queued installs](#queued-device-installs) while the app runs              |
 | `retroarchAutosaveSeconds` | `10`               | How often RetroArch is asked to write the save, at least 6s; `0` leaves it alone |
@@ -805,6 +806,61 @@ The rules the set sync keeps, which are not the ones the RetroArch path keeps:
   re-hashing the whole set, so the push after the exit is the whole of it.
 - **Two games on one emulator at once**: the second leaves the folder alone, as
   before, and syncs nothing that run.
+
+#### Memory cards
+
+PS2 and GameCube saves live on a memory card, and a card holds many games. They
+sync per game only where the emulator keeps each game apart on disk:
+
+| Emulator | Syncs per game                                                    | Does not                                     |
+| -------- | ----------------------------------------------------------------- | -------------------------------------------- |
+| PCSX2    | A folder card, which keeps one folder per save (`BASLUS-20312AC04`) | A file card, PCSX2's default: one 8 MB image |
+| Dolphin  | Slot A as a GCI folder, Dolphin's default: one `.gci` per save    | Slot A as a raw memory card image            |
+
+A launch on a card that does not sync says so in the log, with the setting that
+changes it. PCSX2 converts a file card to a folder card from its Memory Cards
+settings, keeping what is on it. A PS2 save only comes down into a folder card
+PCSX2 has already formatted: one that does not exist, is not formatted, or is a
+file card is left alone, and what that run writes is filed beside RomM's slot
+rather than over it, since it was played on the older save.
+
+#### RomM's memory card library
+
+RomM also keeps whole memory cards, per user and emulator, which is what its
+streaming plays PS2 and GameCube games on. With `syncMemoryCards` on (the
+default, alongside `syncSaves`), a PS2 or GameCube launch keeps the card it uses
+in step with that library, so progress made in a browser session and on this
+machine reaches the other:
+
+| Emulator | Card on this machine                                          | Card in the library                       |
+| -------- | ------------------------------------------------------------- | ----------------------------------------- |
+| PCSX2    | Slot 1's folder card (`Slot1_Filename`, `Mcd001.ps2` default) | `pcsx2`, the folder card's files          |
+| Dolphin  | The GCI folder's saves, GameCube only                         | `dolphin`, its `GC/<region>/Card A` saves |
+
+The card used is the one streaming would use, the most recently synced one for
+the emulator, created on the first upload when there is none. Before the
+emulator starts, the library's newest version is merged into this machine's
+card; after it exits, this machine's card is merged into the library's and sent
+as a new version. What the server won after exit comes down at the next launch.
+
+A card holds many games, so the merge is per save, against what both sides
+last agreed the card held (kept under `<saveDataPath>/.cards/`):
+
+- **A save changed on one side only** takes that side's.
+- **A save changed on both** keeps the newer, by when its files were written.
+- **A save on one side only** is copied to the other. A deletion is not
+  propagated.
+- **Nothing is lost.** RomM keeps every version of a card, so a server copy
+  that loses is still in its history; a local one that loses is sent as a
+  version of its own before it is replaced.
+
+Only a PCSX2 folder card or Dolphin's GCI folder can be merged; a file card or a
+raw Dolphin card is left alone and the log says so. Dolphin's GC folder also
+holds firmware and card images, which are never sent: only its `.gci` saves are
+merged, and the library card's other files are kept as they are.
+
+The per-game saves above still sync alongside, after the card, so other RomM
+clients that sync per game see the same progress.
 
 ### Standalone emulator savestates
 
