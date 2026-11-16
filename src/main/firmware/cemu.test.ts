@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -65,6 +65,16 @@ test("adds RomM's keys to Cemu's template keys.txt", async () => {
   assert.ok(text.startsWith(TEMPLATE));
   assert.ok(text.includes(KEY_A));
   assert.equal(await f.supply(), 0, "a second launch adds nothing");
+});
+
+test("two launches at once merge keys.txt once and leave no temporary file", async () => {
+  const f = fixture();
+  writeFileSync(join(f.user, "keys.txt"), TEMPLATE);
+  writeFileSync(join(f.mirrorDir, "keys.txt"), `${KEY_A}\n${KEY_B}\n`);
+  await Promise.all([f.supply(), f.supply(), f.supply()]);
+  const keys = parseCemuKeys(readFileSync(join(f.user, "keys.txt"), "utf8"));
+  assert.deepEqual(keys, ["541b9889519b27d363cd21604b97c67a", KEY_A, KEY_B]);
+  assert.deepEqual(readdirSync(f.user), ["keys.txt"]);
 });
 
 test("creates keys.txt when Cemu has not written one yet", async () => {

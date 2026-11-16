@@ -11,12 +11,14 @@
 // RomM holds that the file lacks are appended under a comment, and the user's
 // own lines are never changed or reordered.
 
-import { readFile, rename, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type DesktopConfig } from "../../shared/types.ts";
 import { standaloneData } from "../standalone/data.ts";
 import { copyIfMissing, type MirrorSummary, mirroredFiles } from "./place.ts";
+import { oneAtATime } from "./queue.ts";
 
 /** The console files and the size Cemu rejects any other size of. */
 const CONSOLE_FILES: ReadonlyMap<string, number> = new Map([
@@ -77,9 +79,14 @@ async function supplyKeys(source: string, folder: string): Promise<boolean> {
   const merged = mergeCemuKeys(await readIfPresent(target), incoming);
   if (merged === null) return false;
   // Renamed into place, so an interrupted write never leaves a truncated file.
-  const temporary = `${target}.romm-part`;
-  await writeFile(temporary, merged, "utf8");
-  await rename(temporary, target);
+  const temporary = `${target}.${randomUUID()}.romm-part`;
+  try {
+    await writeFile(temporary, merged, { encoding: "utf8", flag: "wx" });
+    await rename(temporary, target);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
   return true;
 }
 
@@ -88,6 +95,7 @@ export async function supplyCemuFirmware(options: {
   mirror: MirrorSummary | null;
   command: string;
   args: readonly string[];
+  signal?: AbortSignal;
   home?: string;
 }): Promise<number> {
   const { config, mirror, command, args } = options;
@@ -102,18 +110,27 @@ export async function supplyCemuFirmware(options: {
   });
   // Do not create a user folder before Cemu has initialized itself.
   if (!data?.exists) return 0;
-  let placed = 0;
-  for (const name of await mirroredFiles(mirror.directory)) {
-    const source = join(mirror.directory, name);
-    const lower = name.toLowerCase();
-    if (lower === KEYS_FILE) {
-      if (await supplyKeys(source, data.folder)) placed++;
-      continue;
-    }
-    const size = CONSOLE_FILES.get(lower);
-    if (size === undefined) continue;
-    if ((await stat(source).catch(() => null))?.size !== size) continue;
-    if (await copyIfMissing(source, data.folder, lower)) placed++;
-  }
-  return placed;
+  const folder = data.folder;
+  // Two Wii U launches would otherwise read, merge and write keys.txt at once,
+  // and the later rename would drop the earlier one's keys.
+  return oneAtATime(
+    `cemu:${folder}`,
+    options.signal ?? new AbortController().signal,
+    async () => {
+      let placed = 0;
+      for (const name of await mirroredFiles(mirror.directory)) {
+        const source = join(mirror.directory, name);
+        const lower = name.toLowerCase();
+        if (lower === KEYS_FILE) {
+          if (await supplyKeys(source, folder)) placed++;
+          continue;
+        }
+        const size = CONSOLE_FILES.get(lower);
+        if (size === undefined) continue;
+        if ((await stat(source).catch(() => null))?.size !== size) continue;
+        if (await copyIfMissing(source, folder, lower)) placed++;
+      }
+      return placed;
+    },
+  );
 }

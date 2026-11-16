@@ -8,6 +8,7 @@ import {
   devFlashDirectory,
   pickPup,
   rpcs3Invocation,
+  yamlScalar,
   type RunInstaller,
   supplyRpcs3Firmware,
 } from "./rpcs3.ts";
@@ -57,6 +58,19 @@ test("dev_flash is in RPCS3's folder unless vfs.yml moves it", () => {
   assert.equal(devFlashDirectory("/c", "/dev_flash/: relative/flash/\n"), null);
 });
 
+test("vfs.yml comments and quotes are decoded, and anything unclear declined", () => {
+  assert.equal(
+    devFlashDirectory("/c", "/dev_flash/: /games/flash/ # external drive\n"),
+    "/games/flash/",
+  );
+  assert.equal(devFlashDirectory("/c", "/dev_flash/: '/games/it''s/'\n"), null);
+  assert.equal(devFlashDirectory("/c", '/dev_flash/: "/games/flash/ # not a comment"\n'),
+    "/games/flash/ # not a comment");
+  assert.equal(devFlashDirectory("/c", '/dev_flash/: "/unterminated\n'), null);
+  assert.equal(yamlScalar("/a#b"), "/a#b");
+  assert.equal(yamlScalar('"C:\\\\x"'), undefined);
+});
+
 test("prefers PS3UPDAT.PUP over any other .pup", () => {
   assert.equal(pickPup(["a.PUP", "ps3updat.pup", "bios.bin"]), "ps3updat.pup");
   assert.equal(pickPup(["4.91.pup"]), "4.91.pup");
@@ -72,6 +86,30 @@ test("a flatpak run row keeps everything up to the app id", () => {
     rpcs3Invocation("flatpak", ["run", "--branch=stable", "net.rpcs3.RPCS3", "--no-gui", "x"]),
     { command: "flatpak", args: ["run", "--branch=stable", "net.rpcs3.RPCS3"] },
   );
+  assert.deepEqual(
+    rpcs3Invocation("flatpak", ["run", "--arch", "x86_64", "net.rpcs3.RPCS3", "--no-gui", "x"]),
+    { command: "flatpak", args: ["run", "--arch", "x86_64", "net.rpcs3.RPCS3"] },
+  );
+  assert.equal(rpcs3Invocation("flatpak", ["run", "org.other.App", "x"]), null);
+});
+
+test("two launches at once run one installer", async () => {
+  const f = fixture();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let installs = 0;
+  const slow: RunInstaller = async (...call) => {
+    installs++;
+    await gate;
+    const flash = join(f.user, "dev_flash", ...MARKER.slice(0, -1));
+    mkdirSync(flash, { recursive: true });
+    writeFileSync(join(flash, MARKER.at(-1)!), "");
+    void call;
+  };
+  const both = Promise.all([f.supply(slow), f.supply(slow)]);
+  release();
+  assert.deepEqual(await both, [true, true]);
+  assert.equal(installs, 1);
 });
 
 test("installs the mirrored PUP headlessly when firmware is missing", async () => {

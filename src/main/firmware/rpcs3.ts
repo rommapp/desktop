@@ -18,8 +18,9 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, posix, win32 } from "node:path";
 import { type DesktopConfig } from "../../shared/types.ts";
-import { standaloneData } from "../standalone/data.ts";
+import { flatpakAppId, standaloneData } from "../standalone/data.ts";
 import { type MirrorSummary, mirroredFiles } from "./place.ts";
+import { oneAtATime } from "./queue.ts";
 
 /** What RPCS3 checks before it boots anything. */
 const FIRMWARE_MARKER = ["sys", "external", "liblv2.sprx"];
@@ -28,18 +29,36 @@ const FIRMWARE_MARKER = ["sys", "external", "liblv2.sprx"];
  *  build that ignores the flags does not hold the launch for good. */
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 
-/** One value out of vfs.yml's flat `key: value` lines, unquoted. */
-function vfsValue(yml: string, key: string): string | null {
+/**
+ * A scalar as YAML writes it: quoted, or plain with an optional trailing
+ * comment. Undefined for a form this does not decode, so the caller can
+ * decline rather than guess.
+ */
+export function yamlScalar(raw: string): string | undefined {
+  const text = raw.trim();
+  const quote = text[0];
+  if (quote === '"' || quote === "'") {
+    const end = text.indexOf(quote, 1);
+    if (end < 0) return undefined;
+    const value = text.slice(1, end);
+    // Escapes and doubled quotes are not decoded.
+    if (quote === '"' && value.includes("\\")) return undefined;
+    if (text[end + 1] === quote) return undefined;
+    const rest = text.slice(end + 1).trim();
+    return rest === "" || rest.startsWith("#") ? value : undefined;
+  }
+  // A plain scalar's comment starts at a "#" after whitespace.
+  return text.replace(/(^|\s)#.*$/, "").trim();
+}
+
+/** One value out of vfs.yml's flat `key: value` lines: null when the key is
+ *  absent, undefined when its value cannot be decoded. */
+function vfsValue(yml: string, key: string): string | null | undefined {
   for (const line of yml.split(/\r?\n/)) {
     const separator = line.indexOf(": ");
     if (separator < 0) continue;
-    const name = line.slice(0, separator).trim().replace(/^"(.*)"$/, "$1");
-    if (name !== key) continue;
-    return line
-      .slice(separator + 2)
-      .trim()
-      .replace(/^"(.*)"$/, "$1")
-      .replace(/^'(.*)'$/, "$1");
+    if (yamlScalar(line.slice(0, separator)) !== key) continue;
+    return yamlScalar(line.slice(separator + 2));
   }
   return null;
 }
@@ -52,12 +71,16 @@ export function devFlashDirectory(
   folder: string,
   vfsYml: string | null,
 ): string | null {
-  const emulatorDir = (vfsYml && vfsValue(vfsYml, "$(EmulatorDir)")) || folder;
+  const emulatorDirValue = vfsYml ? vfsValue(vfsYml, "$(EmulatorDir)") : null;
+  const devFlashValue = vfsYml ? vfsValue(vfsYml, "/dev_flash/") : null;
+  if (emulatorDirValue === undefined || devFlashValue === undefined) {
+    return null;
+  }
+  const emulatorDir = emulatorDirValue || folder;
   const withSlash = /[/\\]$/.test(emulatorDir)
     ? emulatorDir
     : `${emulatorDir}/`;
-  const configured =
-    (vfsYml && vfsValue(vfsYml, "/dev_flash/")) || "$(EmulatorDir)dev_flash/";
+  const configured = devFlashValue || "$(EmulatorDir)dev_flash/";
   const path = configured.split("$(EmulatorDir)").join(withSlash);
   return isAbsolute(path) || win32.isAbsolute(path) ? path : null;
 }
@@ -73,17 +96,19 @@ export function pickPup(names: readonly string[]): string | null {
 
 /**
  * The command and leading arguments that start RPCS3 itself, without the
- * launch's own. A `flatpak run` row keeps everything up to the app id.
+ * launch's own, or null when they cannot be told apart. A `flatpak run` row
+ * keeps everything up to RPCS3's app id, which also skips any option values
+ * between them.
  */
 export function rpcs3Invocation(
   command: string,
   args: readonly string[],
-): { command: string; args: string[] } {
+): { command: string; args: string[] } | null {
   if (posix.basename(command) !== "flatpak") return { command, args: [] };
+  const appId = flatpakAppId("rpcs3");
   const run = args.indexOf("run");
-  if (run < 0) return { command, args: [] };
-  const appId = args.findIndex((arg, i) => i > run && !arg.startsWith("-"));
-  return { command, args: appId < 0 ? [] : args.slice(0, appId + 1) };
+  const at = appId ? args.indexOf(appId, run + 1) : -1;
+  return run < 0 || at < 0 ? null : { command, args: args.slice(0, at + 1) };
 }
 
 async function readVfsYml(folder: string): Promise<string | null> {
@@ -139,22 +164,33 @@ export async function supplyRpcs3Firmware(options: {
   if (!data) return false;
   const devFlash = devFlashDirectory(data.folder, await readVfsYml(data.folder));
   if (!devFlash) return false;
-  const marker = join(devFlash, ...FIRMWARE_MARKER);
-  if (existsSync(marker)) return false;
-  const pup = pickPup(await mirroredFiles(mirror.directory));
-  if (!pup) return false;
-
-  options.onInstall?.(pup);
   const invocation = rpcs3Invocation(command, args);
-  await (options.run ?? runInstaller)(
-    invocation.command,
-    [...invocation.args, "--headless", "--installfw", join(mirror.directory, pup)],
-    options.signal,
-  );
-  // An exit code says little about a build that predates the flag, so the
-  // firmware itself is what counts.
-  if (!existsSync(marker)) {
-    throw new Error(`RPCS3 exited without installing ${pup}`);
-  }
-  return true;
+  if (!invocation) return false;
+  const marker = join(devFlash, ...FIRMWARE_MARKER);
+  // Two PS3 launches would otherwise both find the marker missing and run
+  // two installers into one dev_flash. The second waits for the first, and
+  // checks again only if that one failed.
+  return oneAtATime(`rpcs3:${devFlash}`, options.signal, async () => {
+    if (existsSync(marker)) return false;
+    const pup = pickPup(await mirroredFiles(mirror.directory));
+    if (!pup) return false;
+
+    options.onInstall?.(pup);
+    await (options.run ?? runInstaller)(
+      invocation.command,
+      [
+        ...invocation.args,
+        "--headless",
+        "--installfw",
+        join(mirror.directory, pup),
+      ],
+      options.signal,
+    );
+    // An exit code says little about a build that predates the flag, so the
+    // firmware itself is what counts.
+    if (!existsSync(marker)) {
+      throw new Error(`RPCS3 exited without installing ${pup}`);
+    }
+    return true;
+  });
 }
