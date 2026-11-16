@@ -939,10 +939,21 @@ settings rather than editing your `retroarch.cfg`. A hand-configured one needs
 `{biosconfig}` is safe on every platform, including the many with no firmware;
 remove it if you set `useRommFirmware` to `false`.
 
-Two limits. PCSX2, Dolphin, RPCS3 and Cemu take no BIOS directory on the command
-line, so for those the mirror is a staging directory you point the emulator at
-once in its own settings. And it is flat, while a few cores want a subdirectory
-(Flycast looks for `dc/dc_boot.bin`) -- put those outside `<biosPath>`.
+PCSX2, Dolphin, RPCS3 and Cemu take no BIOS directory on the command line, so
+before each launch the shell puts the mirror where the emulator already looks.
+Files are only copied into a user folder the emulator has already created, and
+RPCS3 runs its own installer. A file you already have is never replaced, and no
+emulator setting is changed:
+
+| Emulator | What is placed                                                                                                               |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| PCSX2    | Every mirrored file, into its BIOS folder (the `[Folders] Bios` path in `PCSX2.ini` when set)                                |
+| Dolphin  | `dsp_rom.bin`, `dsp_coef.bin` and the fonts into `GC/`; a retail IPL dump, recognised by its checksum, as `GC/<region>/IPL.bin` |
+| RPCS3    | A `.pup` (preferably `PS3UPDAT.PUP`), installed with `rpcs3 --headless --installfw` when its `dev_flash` has no firmware    |
+| Cemu     | Keys from `keys.txt` that its own `keys.txt` lacks, appended under a comment; `otp.bin` and `seeprom.bin` when missing        |
+
+The mirror is flat, while a few cores want a subdirectory (Flycast looks for
+`dc/dc_boot.bin`) -- put those outside `<biosPath>`.
 
 ### Queued device installs
 

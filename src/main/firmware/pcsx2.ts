@@ -1,16 +1,12 @@
 // Supply PCSX2's default BIOS folder from RomM's existing firmware mirror.
 // Never replace a file the user already has, or touch PCSX2's settings.
-import { constants } from "node:fs";
-import { copyFile, mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve, win32 } from "node:path";
 import { homedir } from "node:os";
 import { type DesktopConfig } from "../../shared/types.ts";
 import { standaloneData } from "../standalone/data.ts";
-/** Only the mirror fields PCSX2 needs; avoids importing the Electron-backed sync module. */
-export interface Pcsx2FirmwareMirror {
-  directory: string;
-  count: number;
-}
+import { copyIfMissing, type MirrorSummary, mirroredFiles } from "./place.ts";
+export type Pcsx2FirmwareMirror = MirrorSummary;
 
 
 /** Read PCSX2's configured BIOS search directory without modifying its INI. */
@@ -64,19 +60,10 @@ export async function supplyPcsx2Firmware(options: {
   // Do not create an emulator profile before PCSX2 has initialized itself.
   if (!data?.exists) return 0;
   const target = await biosDestination(data.folder);
-  const entries = await readdir(mirror.directory, { withFileTypes: true });
   let copied = 0;
-  await mkdir(target, { recursive: true });
-  for (const entry of entries) {
-    if (!entry.isFile() || entry.name.startsWith(".")) continue;
-    const source = join(mirror.directory, entry.name);
-    // The mirror may change while a launch is being prepared.
-    if (!(await stat(source).catch(() => null))) continue;
-    try {
-      await copyFile(source, join(target, entry.name), constants.COPYFILE_EXCL);
+  for (const name of await mirroredFiles(mirror.directory)) {
+    if (await copyIfMissing(join(mirror.directory, name), target, name)) {
       copied++;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
   }
   return copied;
