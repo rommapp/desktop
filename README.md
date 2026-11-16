@@ -194,6 +194,11 @@ Config lives in `desktop-config.json` in Electron's `userData` directory:
 It is re-read whenever it changes on disk, so an edit takes effect on the next
 launch attempt without a restart.
 
+The file holds only what you set. A path left `null` is detected again on every
+read and never written back, so an emulator installed, moved or removed later
+is noticed rather than pinned to wherever it was first found. What detection
+settled on is in the log whenever the settings are opened.
+
 | Key                        | Default            | What it does                                                                     |
 | -------------------------- | ------------------ | -------------------------------------------------------------------------------- |
 | `retroarchPath`            | autodetected       | RetroArch executable, for an install somewhere unusual                           |

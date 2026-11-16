@@ -1,6 +1,6 @@
 import { BrowserWindow, ipcMain, shell } from "electron";
 import { replyWith } from "../shared/ipc.ts";
-import { configPath, loadConfig, saveConfig } from "./config.ts";
+import { ensureConfigFile } from "./config.ts";
 import { type Launcher } from "./launcher.ts";
 import {
   validateLaunchRequest,
@@ -49,12 +49,7 @@ export function registerIpc(launcher: Launcher): void {
 
   ipcMain.handle("romm:open-settings", () =>
     replyWith(async () => {
-      // A config that has only ever been defaults was never written, so there
-      // would be nothing to open. Writing it first also shows the user what
-      // autodetection actually found.
-      await saveConfig(await loadConfig());
-
-      const target = configPath();
+      const target = await ensureConfigFile();
       // openPath does nothing when the OS has no handler for .json, which is
       // common on Windows, so fall back to revealing it in the file manager.
       const failure = await shell.openPath(target);
