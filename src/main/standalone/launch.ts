@@ -25,9 +25,11 @@ import {
 import { apiRequest } from "../saves/http.ts";
 import { saveBaseName } from "../saves/paths.ts";
 import { completeSync } from "../saves/sync.ts";
+import { memoryCardHint, pcsx2RestoreRefusal } from "./cards.ts";
 import { claimFolder } from "./claims.ts";
 import { dataPath, standaloneData } from "./data.ts";
 import { parseRomIdentity, type RomIdentity } from "./identity.ts";
+import { readTextSafe } from "./moved.ts";
 import { describeAfter, describeBefore } from "./report.ts";
 import { pullSet, pushSet, type SetPullResult } from "./saves.ts";
 import {
@@ -201,6 +203,13 @@ export async function startStandaloneSaves(
           emulatorId: options.emulatorId,
           saveRoot,
           layout: data.layout,
+          // A PS2 save only lands in a card PCSX2 will read as one.
+          ...(options.emulatorId === "pcsx2"
+            ? {
+                canRestore: (members: readonly string[]) =>
+                  pcsx2RestoreRefusal(saveRoot, members),
+              }
+            : {}),
           target,
           base,
           signal: options.signal,
@@ -216,6 +225,15 @@ export async function startStandaloneSaves(
       ? await readStateFolder(stateSync.stateRoot)
       : null;
     console.info(describeBefore(romId, data, savesBefore, identity));
+    const hint = await memoryCardHint({
+      emulatorId: options.emulatorId,
+      platformSlug: options.platformSlug,
+      folder: data.folder,
+      saveRoot,
+      platform: process.platform,
+      read: readTextSafe,
+    }).catch(() => null);
+    if (hint) console.info(`[standalone] rom ${romId}: ${hint}`);
 
     return {
       finish: () =>

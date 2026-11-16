@@ -806,6 +806,26 @@ The rules the set sync keeps, which are not the ones the RetroArch path keeps:
 - **Two games on one emulator at once**: the second leaves the folder alone, as
   before, and syncs nothing that run.
 
+#### Memory cards
+
+PS2 and GameCube saves live on a memory card, and a card holds many games. They
+sync per game only where the emulator keeps each game apart on disk:
+
+| Emulator | Syncs per game                                                    | Does not                                     |
+| -------- | ----------------------------------------------------------------- | -------------------------------------------- |
+| PCSX2    | A folder card, which keeps one folder per save (`BASLUS-20312AC04`) | A file card, PCSX2's default: one 8 MB image |
+| Dolphin  | Slot A as a GCI folder, Dolphin's default: one `.gci` per save    | Slot A as a raw memory card image            |
+
+A launch on a card that does not sync says so in the log, with the setting that
+changes it. PCSX2 converts a file card to a folder card from its Memory Cards
+settings, keeping what is on it. A PS2 save only comes down into a folder card
+PCSX2 has already formatted: one that does not exist, is not formatted, or is a
+file card is left alone, and what that run writes is filed beside RomM's slot
+rather than over it, since it was played on the older save.
+
+RomM's own memory card library, which its streaming uses, holds whole cards per
+user and emulator rather than per game, and is not synced here yet.
+
 ### Standalone emulator savestates
 
 PCSX2's and Dolphin's savestates sync too, with `syncStates` on. They sit in

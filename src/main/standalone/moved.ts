@@ -21,11 +21,21 @@
 // Pure: the config text arrives through a reader, so every case is testable
 // without a filesystem.
 
+import { readFileSync } from "node:fs";
 import { posix, win32 } from "node:path";
 import { type MemberLayout } from "./set.ts";
 
 /** Reads a config file's text, or null when it is not there. */
 export type ReadText = (path: string) => string | null;
+
+/** ReadText from the filesystem. */
+export const readTextSafe: ReadText = (path) => {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+};
 
 export interface MovedFolders {
   /** This platform's saves, absolute, when the config moves them. */

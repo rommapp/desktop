@@ -21,10 +21,10 @@
 // Platform, home and environment are parameters, like the detection beside it,
 // so every platform's answer can be exercised from any machine.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { isAbsolute, join, posix, win32 } from "node:path";
 import { STANDALONE_EMULATORS } from "../emulator/standalone.ts";
-import { movedFolders, type ReadText } from "./moved.ts";
+import { movedFolders, readTextSafe, type ReadText } from "./moved.ts";
 import { type MemberLayout } from "./set.ts";
 
 /** Where a data folder came from, for the log. */
@@ -59,13 +59,6 @@ export function dataPath(data: StandaloneData, root: string): string {
   return isAbsolute(root) ? root : join(data.folder, root);
 }
 
-const readTextSafe: ReadText = (path) => {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
-};
 
 interface PathContext {
   platform: NodeJS.Platform;

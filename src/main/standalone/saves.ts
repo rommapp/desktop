@@ -133,6 +133,9 @@ export interface SetSyncOptions {
   saveRoot: string;
   /** How that folder is laid out, when not as the emulator's default is. */
   layout: MemberLayout | null;
+  /** Why the folder cannot take these members, or null when it can. Asked
+   *  before a restore writes anything; see cards.ts for why it exists. */
+  canRestore?: (members: readonly string[]) => Promise<string | null>;
   target: SaveTarget;
   /** The ROM's name without its extension, which the archive is named for. */
   base: string;
@@ -284,11 +287,17 @@ async function runPullSet(options: SetSyncOptions): Promise<SetPullResult> {
       romId,
       saveRoot,
       layout: options.layout,
+      ...(options.canRestore ? { canRestore: options.canRestore } : {}),
       target,
       replacing: local.paths,
       signal,
     });
-    if (restored === "partial") {
+    if (restored === "refused") {
+      // The server's save is the newer one and this machine cannot take it,
+      // so what the run writes is built on the older one. Filed beside the
+      // slot rather than over it, as a conflict is.
+      allowance = "conflict";
+    } else if (restored === "partial") {
       // Part this machine's and part the server's, with nothing on disk to
       // say which is which. The emulator still boots it, because refusing to
       // launch over a save is worse than launching on a mixed one, but what
@@ -351,9 +360,11 @@ async function unsafeDestination(
  * wrote anything leaves the set the emulator was going to boot anyway; one
  * that failed after is a set that is partly the server's and partly this
  * machine's, and nothing on disk says which files are which. That mixture is
- * not this run's to offer to the slot, so the caller sends nothing.
+ * not this run's to offer to the slot, so the caller sends nothing. The
+ * fourth is the folder declining the archive outright (`canRestore`), which
+ * writes nothing but leaves the server's copy newer than the one that boots.
  */
-type RestoreOutcome = "restored" | "untouched" | "partial";
+type RestoreOutcome = "restored" | "untouched" | "partial" | "refused";
 
 /**
  * Write the server's archive over this game's set.
@@ -372,6 +383,7 @@ async function restoreSet(options: {
   romId: number;
   saveRoot: string;
   layout: MemberLayout | null;
+  canRestore?: (members: readonly string[]) => Promise<string | null>;
   target: SaveTarget;
   /** The set on disk, by member name, which is what the archive replaces. */
   replacing: readonly string[];
@@ -441,6 +453,16 @@ async function restoreSet(options: {
         `[standalone] rom ${romId}: the server's archive named none of this game's save files`,
       );
       return "untouched";
+    }
+
+    const unfit = options.canRestore
+      ? await options.canRestore(plan.write.map((member) => member.name))
+      : null;
+    if (unfit) {
+      console.warn(
+        `[standalone] rom ${romId}: nothing is restored, since ${unfit}`,
+      );
+      return "refused";
     }
 
     // The names were checked as names; this checks the paths they became,
