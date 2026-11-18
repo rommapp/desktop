@@ -96,4 +96,39 @@ const bridge: RommNativeBridge = {
   openSettings: (): Promise<void> => invoke("romm:open-settings"),
 };
 
-contextBridge.exposeInMainWorld("rommNative", bridge);
+/**
+ * Runs in the page's own world, so it is serialized and may reference nothing
+ * outside itself.
+ *
+ * The context bridge copies every argument the page passes, and it refuses a
+ * Proxy outright, synchronously, with "An object could not be cloned". RomM's
+ * frontend is a Vue app, so the core lists it sends are reactive proxies, and
+ * exposing the bridge directly made every support probe throw: the frontend
+ * caught it, kept an empty support table, and hid native play for every game.
+ * Copying to plain data on the page's side of the bridge, before the crossing,
+ * is the only place that can fix it, since the preload never sees the call.
+ * JSON is enough for these arguments, and the main process validates them
+ * whatever they contain.
+ */
+function installBridge(raw: RommNativeBridge): void {
+  const plain = <T>(value: T): T =>
+    value === undefined ? value : (JSON.parse(JSON.stringify(value)) as T);
+  const api: RommNativeBridge = Object.freeze({
+    shellVersion: raw.shellVersion,
+    os: raw.os,
+    capabilities: Object.freeze([...raw.capabilities]) as ShellCapability[],
+    launch: (request: LaunchRequest) => raw.launch(plain(request)),
+    cancel: (romId: number) => raw.cancel(plain(romId)),
+    getPlatformSupport: (query: PlatformSupportQuery) =>
+      raw.getPlatformSupport(plain(query)),
+    getPlatformSupportAll: (queries: PlatformSupportQuery[]) =>
+      raw.getPlatformSupportAll(plain(queries)),
+    onLaunchState: (listener: (state: LaunchState) => void) =>
+      raw.onLaunchState(listener),
+    openSettings: () => raw.openSettings(),
+  });
+  // Read-only and fixed, as exposeInMainWorld would have left it.
+  Object.defineProperty(window, "rommNative", { value: api, enumerable: true });
+}
+
+contextBridge.executeInMainWorld({ func: installBridge, args: [bridge] });

@@ -42,6 +42,16 @@ test("the preload imports nothing but types, which is what sandbox allows", () =
   }
 });
 
+test("the bridge copies the page's arguments before they cross", () => {
+  // exposeInMainWorld hands the page the bridge itself, and the context bridge
+  // throws on a Proxy argument. RomM's Vue frontend passes reactive arrays, so
+  // a direct exposure silently hid native play for every game.
+  const source = preloadSource();
+  assert.doesNotMatch(source, /exposeInMainWorld\(/);
+  assert.match(source, /executeInMainWorld\(\{ func: installBridge/);
+  assert.match(source, /JSON\.parse\(JSON\.stringify\(value\)\)/);
+});
+
 test("the capability list is the preload's own, not imported", () => {
   // The values ship from here because a value import is what the test above
   // forbids, so the list has to be visible in this file.
