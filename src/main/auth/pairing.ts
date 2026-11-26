@@ -102,7 +102,8 @@ export async function pairDevice(options: {
     const data = object(reply.body);
     if (reply.status === 200) {
       const record = readPairingRecord({
-        server, userId: 1, deviceId: data.device_id, tokenId: data.id,
+        server, userId: 1, deviceId: data.device_id,
+        tokenId: typeof data.id === "number" ? data.id : 1, // server releases don't return the token id yet
         token: data.access_token, expiresAt: data.expires_at,
       }, server);
       const { userId: _userId, ...result } = record;
